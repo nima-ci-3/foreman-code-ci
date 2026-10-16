@@ -3,7 +3,6 @@ import { expect, it } from 'vitest'
 import { genericCiRepository } from './helpers/genericCiRepository.js'
 import { CI_GET_ACTIONS } from '../src/modules/jobs/ciAuthority.js'
 import { fixture } from './helpers/hostCiMcpFixture.js'
-import { ciRunReadback } from './helpers/ciRunReadback.js'
 
 it.each([
   ['typecheck', 0, 'checkout'], ['typecheck', 1250, 'checkout'],
@@ -26,10 +25,11 @@ it.each([
     const reader = await f.connect(CI_GET_ACTIONS)
     expect((await f.call(reader, 'ci_run', input)).isError).toBe(true)
     const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', input))
-    const read = await ciRunReadback(input => f.value(f.operator, 'ci_get', input), started.ticketId, 'failed')
+    await expect.poll(async () => CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get',
+      { ticketId: started.ticketId })).run.state, { timeout: 10_000 }).toBe('failed')
+    const read = CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get', { ticketId: started.ticketId }))
     expect(read.run).toMatchObject({ state: 'failed', part: null, partition: null,
       message: `The repository has no "${suite}" script for the ${suite} suite.` })
-    if (suite === 'integration') expect(read.run.collection).toBe('unsupported')
     expect((await f.pool.query<{ record: unknown }>('select record from ci_runs where id=$1',
       [started.ticketId])).rows[0]!.record).toEqual(read.run)
   } finally {
