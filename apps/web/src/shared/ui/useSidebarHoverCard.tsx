@@ -24,7 +24,6 @@ export function useSidebarHoverCard(options: { label?: string } = {}) {
     if (!open) return
     function escape(event: KeyboardEvent) {
       if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
       if (surface.current?.contains(document.activeElement)) anchor.current?.focus()
       clearTimeout(timer.current)
       setOpen(false)
