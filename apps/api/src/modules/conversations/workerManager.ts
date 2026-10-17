@@ -8,7 +8,7 @@ import { readProductEnvironment } from '@foreman-code/contracts/product-environm
 import { APP_MCP_TOKEN_NAMES } from '@foreman-code/contracts/product'
 import type { NativeMessageSubmission } from '@foreman-code/contracts/claude'
 import {
-  compactionBlocksSend, CompactionStateSchema, ContextSnapshotSchema, McpDetectionSchema, NativeHarnessCapabilitiesSchema,
+  CompactionStateSchema, ContextSnapshotSchema, McpDetectionSchema, NativeHarnessCapabilitiesSchema,
   PendingNativeInteractionSchema, SessionControlCapabilitiesSchema, SessionPreferencesSchema,
   type CompactionState, type ContextSnapshot, type NativeSessionReference, type SessionPreferences,
 } from '@foreman-code/contracts'
@@ -60,7 +60,6 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
   private credentialLease: ReturnType<MainWorkerConversationBridge['capture']> | undefined
   private readonly recoveredCallbacks = new Map<string, ReturnType<MainWorkerConversationBridge['capture']>>()
   private preparationActive = false
-  private runtimeAcquired = false
   private reconnecting: Promise<void> | undefined
   private readonly lifetime = new AbortController()
 
@@ -128,15 +127,7 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
         }
       } })
     const lease = { ...captured, request: async (signal?: AbortSignal) => {
-      let raw: unknown
-      try {
-        raw = await captured.request(signal)
-      } catch (error) {
-        // A failed process change leaves its native owner unconfirmed.
-        if (['conversation.preferences', 'conversation.open', 'conversation.initial-turn', 'conversation.start-turn']
-          .includes(frame.method)) this.runtimeAcquired = false
-        throw error
-      }
+      const raw = await captured.request(signal)
       if (frame.method === 'conversation.response-continuation') return raw
       const parsed = WorkerConversationResponsePageSchema.safeParse(raw)
       if (!parsed.success) return raw
@@ -259,7 +250,6 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
         delete this.options.previousBinding
         delete this.options.previousConfiguration
       }
-      this.runtimeAcquired = true
       return receipt.session
     } finally { await this.release(lease) }
   }
@@ -396,7 +386,6 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
         sequence = (history.nextSequence ?? Math.max(-1, ...history.events.map(event => event.sequence)) + 1) - 1
       }
       this.adopt(await lease.request(pollSignal))
-      this.runtimeAcquired = true
       this.checkRejection(input.clientCorrelationId)
       while (true) {
         pollSignal.throwIfAborted()
@@ -405,11 +394,10 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
           this.checkRejection(input.clientCorrelationId)
           if (!this.session) { await delay(100, undefined, { signal: pollSignal }); continue }
         }
-        const readStarted = performance.now()
         const value = z.object({ history: WorkerConversationHistorySchema, context: ContextSnapshotSchema.nullable(),
           receipt: WorkerConversationReceiptSchema }).parse(await this.request({ method: 'conversation.history',
           session: this.session, correlationId: input.clientCorrelationId,
-          afterSequence: sequence ?? -1, waitForEvents: true }, pollSignal))
+          afterSequence: sequence ?? -1 }, pollSignal))
         this.adopt(value)
         this.checkRejection(input.clientCorrelationId)
         this.context = value.context
@@ -426,9 +414,7 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
           && (value.history.nextSequence === undefined || (sequence ?? -1) >= value.history.nextSequence - 1)) return
         if (turn?.status === 'uncertain') conflict('The original worker turn needs native recovery; input was not replayed.')
         pollDelayMs = sequence === previousSequence ? Math.min(2000, pollDelayMs * 2) : 100
-        // The event wait consumes the read interval; bursts still obey the existing request rate limit.
-        const remainingDelay = pollDelayMs - (performance.now() - readStarted)
-        if (remainingDelay > 0) await delay(remainingDelay, undefined, { signal: pollSignal })
+        await delay(pollDelayMs, undefined, { signal: pollSignal })
       }
     } finally { await this.release(lease) }
   }
@@ -629,19 +615,8 @@ export class WorkerConversationManager implements NativeHarnessSessionManager {
     this.assertSession(session)
     this.adopt(await this.request({ method: 'conversation.close', session }))
   }
-  async closeForResume(session: NativeSessionReference) {
-    this.assertSession(session)
-    this.adopt(await this.request({ method: 'conversation.release-runtime', session }))
-    this.runtimeAcquired = false
-  }
   async closeForRestart(session: NativeSessionReference) { this.assertSession(session); await this.dispose() }
   async dispose() {
-    if (this.runtimeAcquired && !this.lifetime.signal.aborted && this.session && this.receipt && !this.receipt.closed
-      && !this.receipt.closing && !this.receipt.runtimeReleased
-      && this.receipt.turns.every(turn => ['completed', 'rejected'].includes(turn.status))
-      && this.receipt.compactions.every(control => !compactionBlocksSend(control.state))) {
-      await this.closeForResume(this.session)
-    }
     if (this.preparationActive && !this.session && !this.lifetime.signal.aborted) {
       await this.request({ method: 'conversation.release-preparation' })
       this.preparationActive = false
