@@ -13,6 +13,7 @@ import { Badge, Button, IconButton, Tooltip } from '../../shared/ui/nocturne'
 import { UnsavedEditorGuard } from '../../shared/ui/unsavedChanges'
 import { askOperator } from '../operator-chat/operatorChatStore'
 import { MainRuntimeSetup } from '../runtime-qualification/MainRuntimeSetup'
+import { ComputerName } from './ComputerName'
 import { ComputerUtilization } from './ComputerUtilization'
 import { ComputerStatusChips } from './ComputerStatusChips'
 import { deriveStatusChips, workerBehind } from './statusChips'
@@ -67,7 +68,8 @@ export function ComputerCards({ mainId, devices, onSelectComputer, only }: {
     {start.isError ? <small role="alert">{start.error.message}</small> : null}
     {start.data?.flatMap(result => result.computers).filter(computer => computer.error).map((computer, index) =>
       <small role="alert" key={`${computerKey(computer.target)}:${index}`}>
-        {computerDisplayName(computer.target.hostRef)}: {computer.error}
+        {activity.data?.computers.find(known => computerKey(known.target) === computerKey(computer.target))?.name
+          ?? computerDisplayName(computer.target.hostRef)}: {computer.error}
       </small>)}
     <ul className="computer-card-grid" aria-label="Computers">
       {cards.filter(card => visibleTargets.includes(card.target)).map(card => {
@@ -129,7 +131,7 @@ function ComputerCard({ card, observed, fresh, activityComplete, connections, ma
   return <article className="computer-card" aria-label={name}>
     <header className="computer-card-header">
       <Monitor size={20} aria-hidden="true" />
-      <h3>{name}</h3>
+      <ComputerName name={name} target={card.target} />
       <Badge tone={online ? 'success' : 'neutral'} dot>{presenceLabel(observed, fresh)}</Badge>
       <Badge>Agent host</Badge>
       {card.build?.preference.buildEnabled ? <Badge>CI</Badge> : null}
