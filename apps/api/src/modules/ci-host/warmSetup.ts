@@ -3,7 +3,6 @@ import { createReadStream, existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parse } from 'yaml'
-import { errorMessage } from '../../shared/errorMessage.js'
 
 export const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
@@ -64,13 +63,9 @@ async function dependencyInputs(source: string) {
 /** Prefetches in an isolated tree so pnpm fetch cannot purge a live checkout's modules or hoist settings. */
 export async function pnpmInstall(source: string, cache: string, messageFile: string,
   options: { offlineOnly?: boolean } = {}): Promise<string[]> {
-  let inputs: Awaited<ReturnType<typeof dependencyInputs>> | undefined
-  let diagnostic = ''
-  try {
-    inputs = await dependencyInputs(source)
-  } catch (error) {
-    diagnostic = errorMessage(error, 'Could not snapshot dependency inputs.')
-  }
+  // Repository hooks can import arbitrary files that are absent from a dependency-only snapshot.
+  const repositoryHook = existsSync(join(source, '.pnpmfile.cjs'))
+  const inputs = repositoryHook ? undefined : await dependencyInputs(source)
   const staging = inputs ? join(cache, 'pnpm-fetch', inputs.key) : undefined
   const complete = pnpmFetchRecord(cache)
   const store = ` --store-dir ${shellQuote(join(cache, 'pnpm-store'))}`
@@ -98,8 +93,8 @@ export async function pnpmInstall(source: string, cache: string, messageFile: st
     `rm -rf ${shellQuote(join(cache, 'modules'))}`,
     // Another request may have filled these inputs while this checkout waited for the lock.
     `${ready} && ${install} --offline || {`,
-    '(',
     ...(inputs && staging ? [
+      '(',
       `rm -rf -- ${shellQuote(staging)} ${shellQuote(complete)} || exit $?`,
       `mkdir -p ${shellQuote(staging)} || exit $?`,
       ...inputs.files.flatMap(file => [
@@ -110,20 +105,19 @@ export async function pnpmInstall(source: string, cache: string, messageFile: st
       `rm -rf -- ${shellQuote(staging)} || exit $?`,
       `printf '%s\\n' ${shellQuote(inputs.key)} > ${shellQuote(complete + '.pending')} || exit $?`,
       `mv -- ${shellQuote(complete + '.pending')} ${shellQuote(complete)} || exit $?`,
-    ] : [
-      `printf '%s\\n' ${shellQuote('[ci-cache] prefetch input snapshot failed: ' + diagnostic)} >&2`,
-      'exit 1',
-    ]),
-    ')',
-    'prefetch_code=$?',
-    'if [ "$prefetch_code" != 0 ]; then',
-    ...(staging ? [
+      ')',
+      'prefetch_code=$?',
+      'if [ "$prefetch_code" != 0 ]; then',
       `rm -rf -- ${shellQuote(staging)}`
         + " || echo '[ci-cache] failed to remove prefetch staging directory' >&2",
-    ] : []),
-    'echo "[ci-cache] isolated prefetch failed (exit $prefetch_code); continuing with normal install" >&2',
-    'fi',
-    `{ ${normalInstall}; } || finish $?`,
+      'echo "[ci-cache] full lockfile prefetch failed (exit $prefetch_code); suite will not run" >&2',
+      'finish "$prefetch_code"',
+      'fi',
+      `${install} --offline || finish $?`,
+    ] : [
+      "echo '[ci-cache] prefetch unsupported for this layout (.pnpmfile.cjs); using normal install' >&2",
+      `{ ${normalInstall}; } || finish $?`,
+    ]),
     '}',
     'flock -u "$cache_lock"',
     'exec {cache_lock}>&-',
