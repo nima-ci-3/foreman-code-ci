@@ -132,3 +132,72 @@ it('rejects individually valid message and System prompt sizes whose Worker enve
     expect(f.provider.prompts).toHaveLength(0)
   } finally { await f.close() }
 }, 30_000)
+
+it.each(['codex', 'claude'] as const)('delivers Worker %s follow-ups with a large saved system prompt', async harness => {
+  const f = await remoteAgentConversation(harness)
+  try {
+    const systemPrompt = { value: { text: '界'.repeat(100_000) }, revision: 1, versionId: 'saved-system-prompt' }
+    await f.db.pool.query('update operator_conversations set record=record || $2::jsonb where id=$1',
+      [f.conversation.id, JSON.stringify({ systemPrompt })])
+    await f.send('Establish the session')
+    const sent = await f.send('Continue the same task')
+    expect(sent.turn?.delivery).toBe('completed')
+    expect(await f.repository.turnContent(f.conversation.id, sent.requestId)).toBe('Continue the same task')
+    expect(f.frames).toEqual(expect.arrayContaining([expect.objectContaining({
+      method: 'conversation.start-turn', prompt: 'Continue the same task',
+      binding: expect.objectContaining({ systemPrompt }),
+    })]))
+    for (const frame of f.frames) {
+      expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThanOrEqual(1024 * 1024)
+      const callback = { method: 'conversation.authorize', admissionId: frame.admissionId,
+        binding: frame.binding, request: frame }
+      expect(Buffer.byteLength(JSON.stringify(callback))).toBeLessThanOrEqual(1024 * 1024)
+    }
+  } finally { await f.close() }
+}, 30_000)
+
+it.each(['http', 'mcp'] as const)('recovers a historical large Agent message through %s without admitting another turn', async transport => {
+  const f = await remoteAgentConversation('codex')
+  try {
+    const { workspaceId, ...context } = f.context
+    const request = { requestId: randomUUID(), content: 'x'.repeat(800_000), intent: 'next_turn' as const,
+      expectedConversationId: f.conversation.id, context }
+    const row = (await f.repository.get(f.conversation.id))!
+    await f.repository.admit({ key: row.agent_key, request, context: f.context, delivery: 'queued',
+      ownerPrincipalId: f.writer.principal.id })
+    expect(await f.repository.claim(f.conversation.id, request.requestId)).toBe(true)
+    expect(await f.repository.finish(f.conversation.id, request.requestId, { outcome: 'succeeded' })).toBe(true)
+    const before = AgentChatStateSchema.parse(await f.value('agent_chat_read', { query: f.context }))
+    if (transport === 'http') {
+      const send = (input: typeof request, token = f.writer.token) => f.app.inject({ method: 'POST',
+        url: `/api/workspaces/${workspaceId}/agent-chat/messages`, headers: graphHeaders(token), payload: input })
+      expect((await send(request, f.reader.token)).statusCode).toBe(403)
+      const recovered = await send(request)
+      expect(recovered.statusCode, recovered.body).toBe(200)
+      expect(SendAgentChatMessageResponseSchema.parse(recovered.json())).toMatchObject({
+        replayed: true, turn: { requestId: request.requestId, delivery: 'completed' },
+      })
+      const conflict = await send({ ...request, content: `${request.content.slice(0, -1)}y` })
+      expect(conflict.statusCode, conflict.body).toBe(409)
+      expect(conflict.body).toContain('AGENT_CHAT_REQUEST_CONFLICT')
+      const fresh = await send({ ...request, requestId: randomUUID() })
+      expect(fresh.statusCode, fresh.body).toBe(400)
+      expect(fresh.body).toContain('768 KiB')
+    } else {
+      const denied = await f.call('agent_chat_send', { request }, f.reader.token)
+      expect(denied.error || denied.result?.isError).toBeTruthy()
+      const recovered = SendAgentChatMessageResponseSchema.parse(await f.value('agent_chat_send', { request }))
+      expect(recovered).toMatchObject({ replayed: true, turn: { requestId: request.requestId, delivery: 'completed' } })
+      const conflict = await f.call('agent_chat_send', { request: { ...request, content: `${request.content.slice(0, -1)}y` } })
+      expect(conflict.result?.isError).toBe(true)
+      expect(JSON.stringify(conflict)).toContain('AGENT_CHAT_REQUEST_CONFLICT')
+      const fresh = await f.call('agent_chat_send', { request: { ...request, requestId: randomUUID() } })
+      expect(fresh.error || fresh.result?.isError).toBeTruthy()
+      expect(JSON.stringify(fresh)).toContain('768 KiB')
+    }
+    expect(AgentChatStateSchema.parse(await f.value('agent_chat_read', { query: f.context }))).toEqual(before)
+    expect(await f.repository.turnContent(f.conversation.id, request.requestId)).toBe(request.content)
+    expect(f.provider.prompts).toHaveLength(0)
+    expect(f.frames).toHaveLength(0)
+  } finally { await f.close() }
+}, 30_000)
