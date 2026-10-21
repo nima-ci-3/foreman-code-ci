@@ -818,9 +818,7 @@ export class HostCiService {
       const active = (await this.pool.query<{ id: string; host_key: string; record: unknown }>(
         `select id,host_key,record from ci_runs where state in ('starting','running') and host_key is not null
           order by created_at,id`)).rows
-      // Ask every computer at once: one slow or offline host must not serialize the whole listing.
-      // Build participation is live; planning can still reuse bounded readiness snapshots.
-      const result = await Promise.all((await this.endpoint.computers()).map(async computer => {
+      const readComputer = async (computer: HostCiComputer) => {
         const assigned = active.filter(run => run.host_key === computer.key)
         // A starting ticket needs a live status: it can acknowledge a start whose reply was lost.
         const starting = assigned.some(run => CiRunRecordSchema.parse(run.record).state === 'starting')
@@ -846,7 +844,14 @@ export class HostCiService {
             ...(status.userSystemd ? { userSystemd: status.userSystemd } : {}),
             slotsUsed: Math.max(running.length, status.slotsUsed ?? 0), slotsTotal: status.slotsTotal ?? 1,
             running } : null
-      }))
+      }
+      const fleet = await this.endpoint.computers()
+      // Bound status requests and ticket readback before they acquire shared-pool connections.
+      const concurrency = Math.min(8, Math.max(1, Math.floor((this.pool.options?.max ?? 10) / 2)))
+      const result: Awaited<ReturnType<typeof readComputer>>[] = []
+      for (let offset = 0; offset < fleet.length; offset += concurrency) {
+        result.push(...await Promise.all(fleet.slice(offset, offset + concurrency).map(readComputer)))
+      }
       const readings = new Map<string, Promise<CircleCreditsReading>>()
       const computers = result.flatMap(computer => {
         if (!computer) return []
