@@ -65,9 +65,9 @@ function useSkillMutation<T>(send: (input: T) => Promise<SkillMutationResult>) {
     // The server response is the only source of saved truth.
     // Every mutation returns the head and its version; exact-version and history reads refresh.
     client.setQueryData(skillKeys.detail(skill.workspaceId, skill.skillId), { skill, version })
-    void client.invalidateQueries({ queryKey: skillKeys.versions(skill.workspaceId, skill.skillId) }).catch(() => undefined)
-    void client.invalidateQueries({ queryKey: skillKeys.usage(skill.workspaceId, skill.skillId) }).catch(() => undefined)
-    void client.invalidateQueries({ queryKey: skillKeys.lists() }).catch(() => undefined)
+    void client.invalidateQueries({ queryKey: skillKeys.versions(skill.workspaceId, skill.skillId) }).catch(() => { /* ignore: a failed refresh keeps the cached list */ })
+    void client.invalidateQueries({ queryKey: skillKeys.usage(skill.workspaceId, skill.skillId) }).catch(() => { /* ignore: a failed refresh keeps the cached list */ })
+    void client.invalidateQueries({ queryKey: skillKeys.lists() }).catch(() => { /* ignore: a failed refresh keeps the cached list */ })
   } })
 }
 export function useCreateSkillMutation() {
@@ -91,7 +91,7 @@ export function useArchiveSkillMutation() {
 
 /** Agents still on an older version of this skill, and the workflows that use them. */
 export function useSkillUsageQuery(workspaceId: string, skillId: string) {
-  return useQuery({ queryKey: skillKeys.usage(workspaceId, skillId), retry: false,
+  return useQuery({ queryKey: skillKeys.usage(workspaceId, skillId),
     queryFn: ({ signal }) => apiClient.request(`${skillPath(workspaceId, skillId)}/usage`, SkillUsageSchema, { signal }) })
 }
 export function useUpdateSkillUsersMutation(workspaceId: string, skillId: string) {

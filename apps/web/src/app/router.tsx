@@ -5,6 +5,7 @@ import {
   createRouter,
   redirect,
 } from '@tanstack/react-router'
+import { PageNotFound } from '../shared/ui/PageNotFound'
 import { ApprovalInboxSearchSchema, UrlSearchSelectionSchema, BrowserProfilesSettingsSearchSchema } from '@foreman-code/contracts'
 import { RunsSelectorSearchSchema } from '../features/runs-selector'
 import { RootShell } from './RootShell'
@@ -261,7 +262,7 @@ export const routeTree = rootRoute.addChildren([
   workspaceApprovalsRoute,
 ])
 
-export const router = createRouter({ routeTree })
+export const router = createRouter({ routeTree, defaultNotFoundComponent: PageNotFound })
 
 declare module '@tanstack/react-router' {
   interface Register {
