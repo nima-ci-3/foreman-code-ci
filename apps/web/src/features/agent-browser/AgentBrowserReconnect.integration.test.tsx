@@ -31,7 +31,7 @@ it('stops automatic reconnect after forty attempts even when recovery succeeds b
       await act(async () => { await vi.advanceTimersByTimeAsync(3_050) })
     }
     expect(fake.port.reconnect).toHaveBeenCalledTimes(40)
-    fireEvent.click(screen.getByRole('button', { name: 'Reconnect', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(50) })
     expect(fake.port.reconnect).toHaveBeenCalledTimes(41)
     view.unmount()
@@ -54,7 +54,7 @@ it('settles the original browser command before automatically reconnecting a los
     await act(async () => { await vi.advanceTimersByTimeAsync(3_050) })
     expect(fake.port.reconnect).not.toHaveBeenCalled()
     expect(fake.port.openView).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: 'Reconnect', exact: true })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled()
     await act(async () => { response.reject(new TypeError('Failed to fetch')) })
     expect(await screen.findByRole('button', { name: 'Check original browser action' })).toBeVisible()
     await act(async () => { await vi.advanceTimersByTimeAsync(3_050) })
