@@ -10,7 +10,7 @@ import { pendingControl, reservePendingControl, clearPendingControl, recoverPend
 import { useSessionControls } from './useSessionControls'
 import { SessionContext } from './SessionControls'
 import { ApiError } from '../../../shared/api/client'
-import { OperatorComposer } from '../../operator-chat/OperatorComposer'
+import { OperatorComposer } from '../../operator-chat'
 import { ConversationComposer } from '../ConversationComposer'
 import { deferred } from '../../../test/deferred'
 

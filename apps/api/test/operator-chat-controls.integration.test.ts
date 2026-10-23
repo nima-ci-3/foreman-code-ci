@@ -219,7 +219,8 @@ describe.skipIf(!postgresEnabled)('Operator chat persistence and native binding 
       } }, signal)
     }
     pool.query = (async (text: string, values?: unknown[]) => {
-      if (!paused && acknowledgeSettings && text.includes('update conversation_session_controls')) {
+      // The acknowledgement write binds five values, the last being the applied mode and preferences it records.
+      if (!paused && acknowledgeSettings && values?.length === 5 && String(values[4]).includes('"appliedMode"')) {
         paused = true
         reached()
         await released
