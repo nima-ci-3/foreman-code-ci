@@ -1,4 +1,3 @@
-import { INSTALLATION_NAMES } from '../../contracts/src/installationNames.mjs'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statfsSync } from 'node:fs'
@@ -128,10 +127,12 @@ export function expectedPortions(root, suite) {
   }
   if (suite === 'integration') return [bootstrap,
     { key: portionKey('packages/contracts', 'build'), kind: 'command' },
+    { key: portionKey('packages/contracts-node', 'build'), kind: 'command' },
     { key: portionKey('', 'test:integration'), kind: 'integration' },
   ]
   if (suite === 'unit') return [bootstrap, { key: 'root:worker-artifact', kind: 'bootstrap' },
     { key: portionKey('packages/contracts', 'test'), kind: 'vitest' },
+    { key: portionKey('packages/contracts-node', 'test'), kind: 'vitest' },
     { key: portionKey('apps/api', 'test'), kind: 'vitest' },
     { key: portionKey('apps/web', 'test:unit'), kind: 'vitest' },
     { key: portionKey('apps/web', 'test:run-graph-smoke'), kind: 'node' },
@@ -139,7 +140,10 @@ export function expectedPortions(root, suite) {
     { key: portionKey('', 'test:scripts'), kind: 'node' },
   ]
   const portions = [bootstrap]
-  if (suite !== 'build') portions.push({ key: portionKey('packages/contracts', 'build'), kind: 'command' })
+  if (suite !== 'build') portions.push(
+    { key: portionKey('packages/contracts', 'build'), kind: 'command' },
+    { key: portionKey('packages/contracts-node', 'build'), kind: 'command' },
+  )
   for (const base of ['apps', 'packages']) for (const name of readdirSync(join(root, base)).sort()) {
     const directory = `${base}/${name}`
     const path = join(root, directory, 'package.json')
@@ -474,14 +478,14 @@ export async function verifyRepository(context, { root = process.cwd(), signal }
       verifyEffectivePackagePolicy(root, environment)
       if (context.requiredPortions.some(portion => portion.key === 'root:worker-artifact')) {
         const tool = context.unitCodex
-        if (tool?.executable !== INSTALLATION_NAMES.paths.ciCodex
+        if (tool?.executable !== '/opt/graphql-ci/tools/codex'
           || createHash('sha256').update(readFileSync(tool.executable)).digest('hex') !== tool.binarySha256) {
           throw new Error('The qualified Codex schema binary is unavailable or changed')
         }
         const artifact = join(context.mutableDirectory, 'worker-artifact')
-        environment[INSTALLATION_NAMES.environment.WORKER_BUILD_COMMIT] = context.privateGit.generatedCommit
-        environment[INSTALLATION_NAMES.environment.WORKER_ARTIFACT_DIRECTORY] = artifact
-        environment[INSTALLATION_NAMES.environment.WORKER_CODEX_BINARY] = tool.executable
+        environment.FOREMAN_CODE_WORKER_BUILD_COMMIT = context.privateGit.generatedCommit
+        environment.FOREMAN_CODE_WORKER_ARTIFACT_DIRECTORY = artifact
+        environment.FOREMAN_CODE_WORKER_CODEX_BINARY = tool.executable
         const startedAt = new Date().toISOString()
         result = await execute(['node', 'scripts/build-worker-artifact.mjs',
           'apps/worker/artifacts/test-hosts/ubuntu-24.04-x64-target.json', artifact], 'worker-artifact')
