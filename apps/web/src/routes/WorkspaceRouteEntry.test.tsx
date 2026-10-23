@@ -1,4 +1,3 @@
-import { writeSync } from 'node:fs'
 import { installBrowserLocks } from '../test/browserLocks'
 import { nativeNode } from '../shared/mocks/nativeFixtureTypes'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -203,7 +202,7 @@ describe('WorkspaceRouteEntry integration', () => {
       initialWorkflow: graph })
     server.use(...service.handlers)
     server.use(http.get('*/api/management/workspaces/:workspaceId/workflows/:workflowId/nodes/:nodeId/placement-choices',
-      () => new HttpResponse(null, { status: 500 })))
+      () => HttpResponse.json({ error: { code: 'UNAVAILABLE', message: 'Choices are unavailable.' } }, { status: 500 })))
     const entry = '/workspaces/workspace-1?workflowId=workflow-content-pipeline'
     const first = await renderWorkspace(entry)
     const user = userEvent.setup()
@@ -225,15 +224,6 @@ describe('WorkspaceRouteEntry integration', () => {
     expect(node).toHaveAttribute('aria-pressed', 'false')
     await user.hover(node)
     const actions = within(screen.getByLabelText('Editable workflow graph')).getByRole('group', { name: `${title} actions` })
-    {
-      const originalError = console.error.bind(console)
-      let seen = 0
-      console.error = (...args: unknown[]) => {
-        seen += 1
-        if (seen < 60) writeSync(2, `\nCE ${seen} ${args.map(arg => String(arg).slice(0, 400)).join(' ')}\n`)
-        originalError(...args)
-      }
-    }
     await user.click(within(actions).getByRole('button', { name: `Open ${title} settings` }))
     const rail = await screen.findByRole('complementary', { name: 'Workflow side panel' })
     expect(rail).toBeVisible()
