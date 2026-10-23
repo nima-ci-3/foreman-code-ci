@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConversationComposer } from './ConversationComposer'
 import { AgentChatComposer } from './agentChat/AgentChatComposer'
 import { OperatorComposer } from '../operator-chat/OperatorComposer'
-import { useConversationDraftStore } from './conversationDraftStore'
+import { useConversationDraftStore } from '../chat-core'
 
 afterEach(() => { cleanup(); useConversationDraftStore.getState().clearAllDrafts() })
 
