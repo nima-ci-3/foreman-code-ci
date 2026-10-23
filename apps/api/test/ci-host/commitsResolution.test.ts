@@ -63,7 +63,7 @@ it('resolves a missing non-tip commit without pushing until dispatch pins it', a
   expect(f.git.mock.calls.filter(([args]) => args[0] === 'push')).toHaveLength(0)
   const fetches = f.git.mock.calls.filter(([args]) => args[0] === 'fetch')
   expect(fetches).toHaveLength(1)
-  expect(f.run(f.clone, 'rev-parse', '--is-shallow-repository')).toBe('true')
+  expect(fetches[0]![0]).toEqual(expect.arrayContaining(['--depth=1', 'origin', f.commit]))
   await f.commits.publish('octo/site', f.commit)
   expect(f.run(f.origin, 'rev-parse', `refs/heads/foreman/ci/${f.commit}`)).toBe(f.commit)
 })
@@ -113,7 +113,7 @@ it('does not treat a stale remote-tracking branch as published', async () => {
 it('reports a commit absent from both the shallow clone and origin without attempting a push', async () => {
   const f = await shallowFixture()
   await expect(f.commits.resolve('octo/site', 'main', 'f'.repeat(40), null))
-    .rejects.toMatchObject({ code: 'SOURCE_GITHUB_UNAVAILABLE' })
+    .rejects.toMatchObject({ code: 'SOURCE_WORKTREE_FAILED' })
   expect(f.git.mock.calls.filter(([args]) => args[0] === 'push')).toHaveLength(0)
   expect(f.run(f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/')).toBe('refs/heads/main')
 })
