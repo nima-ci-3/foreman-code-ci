@@ -166,7 +166,7 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
       throw shown
     } finally { startLock.current = false }
   } })
-  const recovery = useMutation({ retry: false, mutationFn: async () => {
+  const recovery = useMutation({ retry: false, mutationFn: async (options?: { navigate?: boolean }) => {
     if (startLock.current) return
     const selectionToken = latestBoard.current?.getSelectionToken?.()
     startLock.current = true
@@ -180,7 +180,7 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
       if (!alive.current || acknowledgement === 'superseded'
         || useGraphDraftStore.getState().nextDrafts[draftKey]?.instanceId !== instanceId) return
       if (result.status === 'accepted') {
-        if (latestBoard.current?.getSelectionToken?.() === selectionToken) {
+        if (options?.navigate !== false && latestBoard.current?.getSelectionToken?.() === selectionToken) {
           const board = latestBoard.current
           if (board?.showRunOnBoard) board.showRunOnBoard(result.run.id)
           else board?.selectRun(scopeForBoardRun(result.run))
@@ -218,8 +218,8 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
   useEffect(() => {
     if (checkedRetainedStart.current || storageFailed || !canStart) return
     checkedRetainedStart.current = true
-    // Resolve only the journal restored on load, never a Start being sent on this Board.
-    if (pendingStart) void resolveStart().catch(report)
+    // Resolve only the journal restored on load, without navigating away from the selected Run.
+    if (pendingStart) void resolveStart({ navigate: false }).catch(report)
   }, [canStart, storageFailed, pendingStart, resolveStart, report])
   const start = () => readBoardStart(draftKey) ? recovery.mutateAsync() : startMutation.mutateAsync()
   const recoverStart = () => recovery.mutateAsync()
