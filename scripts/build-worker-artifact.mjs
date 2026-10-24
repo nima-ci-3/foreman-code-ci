@@ -24,7 +24,7 @@ import {
   copySharpPackagesFromStore, copyClaudeSdkPackagesFromStore, artifactFiles, assertWorkerDependency,
   committedWorkerInputPath, workerReleaseVersion, validateWorkerTarget, assertWorkerUpdateToolchain,
 } from './worker-artifact-files.mjs';
-const [targetFile, outputDirectory, runtimeFile] = process.argv.slice(2);
+const [targetFile, outputDirectory, runtimeFile = 'apps/worker/artifacts/node-24.22.1-linux-x64.json', bootstrapNode] = process.argv.slice(2);
 if (!targetFile || !outputDirectory) throw new Error('Usage: build-worker-artifact.mjs apps/worker/artifacts/approved-target.json /new-output-directory [apps/worker/artifacts/reviewed-runtime.json]');
 const requestedCommit = readProductEnvironment(process.env, 'WORKER_BUILD_COMMIT');
 if (requestedCommit && !/^[a-f0-9]{40}$/.test(requestedCommit)) throw new Error('Invalid captured commit');
@@ -60,16 +60,17 @@ function reviewedInput(input) {
 }
 assertWorkerUpdateToolchain(JSON.parse(snapshotSource('package.json')));
 const targetInput = reviewedInput(targetFile);
-const target = targetInput.value;
-validateWorkerTarget(target);
+if (bootstrapNode && !['v22.23.2', 'v22.23.3'].includes(bootstrapNode)) throw new Error('Unsupported Worker bootstrap runtime');
+const target = { ...targetInput.value, ...(bootstrapNode ? { node: bootstrapNode } : {}) };
+validateWorkerTarget(targetInput.value);
 const runtimeInput = runtimeFile ? reviewedInput(runtimeFile) : null;
 const runtime = runtimeInput?.value;
-if (runtime && (runtime.format !== 1 || runtime.runtime !== 'node' || runtime.platform !== 'linux' || runtime.arch !== target.arch || runtime.version !== target.node
+if (runtime && (runtime.format !== 1 || runtime.runtime !== 'node' || runtime.platform !== 'linux' || runtime.arch !== target.arch || runtime.version !== targetInput.value.node
   || !/^[a-f0-9]{64}$/.test(runtime.archive?.sha256) || !/^[a-f0-9]{64}$/.test(runtime.nodeExecutable?.sha256)
   || !/^[A-F0-9]{40}$/.test(runtime.trustedRelease?.primarySignerFingerprint))) throw new Error('Reviewed runtime does not match target');
 // Fresh directories only: never mix files from another release or ship credentials.
 const output = resolve(outputDirectory); await mkdir(output, { mode: 0o700 }); await mkdir(join(output, 'src'));
-const buildOptions = { absWorkingDir: root, outdir: join(output, 'src'), outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', target: 'node22', metafile: true, sourcemap: false, packages: 'bundle', external: ['sharp'],
+const buildOptions = { absWorkingDir: root, outdir: join(output, 'src'), outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', target: 'node24', metafile: true, sourcemap: false, packages: 'bundle', external: ['sharp'],
   alias: workerPackageAliases({ contracts: JSON.parse(snapshotSource('packages/contracts/package.json')).exports,
     'contracts-node': JSON.parse(snapshotSource('packages/contracts-node/package.json')).exports,
     ci: JSON.parse(snapshotSource('apps/ci/package.json')).exports,
@@ -84,7 +85,10 @@ const buildOptions = { absWorkingDir: root, outdir: join(output, 'src'), outExte
   } }],
   define: { 'process.env.WS_NO_BUFFER_UTIL': '"1"', 'process.env.WS_NO_UTF_8_VALIDATE': '"1"' },
   banner: { js: "import { createRequire as workerCreateRequire } from 'node:module'; const require = workerCreateRequire(import.meta.url);" } };
-const built = await build({ ...buildOptions, entryPoints: workerEntryPoints });
+const entryPoints = { ...workerEntryPoints, 'cli-main': workerEntryPoints.cli };
+delete entryPoints.cli;
+const built = await build({ ...buildOptions, entryPoints });
+await writeFile(join(output, 'src/cli.mjs'), `import { fileURLToPath } from 'node:url';\nimport { bootstrapWorkerRuntime } from './runtimeBootstrap.mjs';\nawait bootstrapWorkerRuntime(fileURLToPath(new URL('../', import.meta.url)));\nawait import('./cli-main.mjs');\n`, { mode: 0o600 });
 if (rsyncWriterEntrypoint in built.metafile.inputs) throw new Error('Standalone rsync writer imported by normal worker graph');
 const writer = await build({ ...buildOptions, entryPoints: { 'rsync-writer': rsyncWriterEntrypoint } });
 const schemaWorker = await build({ ...buildOptions,
@@ -96,9 +100,10 @@ for (const entry of [...Object.values(built.metafile.outputs), ...Object.values(
   if (dependency.external && !isBuiltin(dependency.path) && dependency.path !== 'sharp') throw new Error(`Unbundled dependency: ${dependency.path}`);
 }
 for (const name of ['installation.mjs', 'diagnostics.mjs', 'service.mjs', 'install-cli.mjs', 'runtime.mjs', 'setup.mjs', 'companion.mjs', 'setupInput.mjs', 'companionServer.mjs', 'companionService.mjs', 'companionLauncher.mjs', 'harnessPath.mjs',
-  'updateSupervisor.mjs', 'update-supervisor-cli.mjs', 'updateOperation.mjs', 'ciSmokeTiming.mjs', 'browserRuntimeInstall.mjs', 'browserRuntime.mjs', 'browserDeviceExtension.mjs']) {
-  await writeFile(join(output, 'src', name), standaloneInstallationSource(snapshotSource(`apps/worker/src/${name}`).toString('utf8')), { mode: 0o600 });
+  'updateSupervisor.mjs', 'update-supervisor-cli.mjs', 'updateOperation.mjs', 'ciSmokeTiming.mjs', 'browserRuntimeInstall.mjs', 'browserRuntime.mjs', 'browserDeviceExtension.mjs', 'nodeRuntime.mjs', 'runtimeBootstrap.mjs']) {
+  await writeFile(join(output, 'src', name === 'companion.mjs' ? 'companion-main.mjs' : name), standaloneInstallationSource(snapshotSource(`apps/worker/src/${name}`).toString('utf8')), { mode: 0o600 });
 }
+await writeFile(join(output, 'src/companion.mjs'), `import { fileURLToPath } from 'node:url';\nimport { bootstrapWorkerRuntime } from './runtimeBootstrap.mjs';\nawait bootstrapWorkerRuntime(fileURLToPath(new URL('../', import.meta.url)));\nawait import('./companion-main.mjs');\n`, { mode: 0o600 });
 await mkdir(join(output, 'artifacts'));
 const quotaQuerySource = 'apps/worker/artifacts/job-quota-query.c';
 const quotaQueryPath = join(output, 'artifacts/job-quota-query.c');
@@ -148,7 +153,6 @@ try {
     commit, target, output: join(output, 'artifacts/browser-runtime') });
   browserRuntimeStatus = { state: 'ready', retryable: false, reason: null };
 } catch (error) {
-  if (process.env.FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS) throw error;
   browserRuntimeStatus = { state: 'failed', retryable: true, reason: error.message };
   console.warn(`Core Worker artifact built; browser runtime unavailable: ${error.message}`);
 }

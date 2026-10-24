@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { BROWSER_RUNTIME_MAGIC, BROWSER_RUNTIME_CHUNK_BYTES, hashBrowserRuntimeFile,
   validateBrowserRuntimeManifest, checkBrowserRuntimeReadiness, createBrowserRuntimeDirectory,
-  removeBrowserRuntimeDirectory, copyBuiltBrowserRuntime, matchesBrowserRuntimeTarget } from '../apps/worker/src/browserRuntimeInstall.mjs';
+  removeBrowserRuntimeDirectory } from '../apps/worker/src/browserRuntimeInstall.mjs';
 import { cfworkerLicense, validateWorkerTarget } from './worker-artifact-files.mjs';
 import { assertWorkerSnapshotSource, workerPackageAliases } from './worker-snapshot-policy.mjs';
 
@@ -255,7 +255,7 @@ async function bundleNativeHost({ repository, unit, snapshot }) {
   const nodeContracts = JSON.parse(await snapshot.read('packages/contracts-node/package.json')).exports;
   const ci = JSON.parse(await snapshot.read('apps/ci/package.json')).exports;
   const result = await build({ absWorkingDir: repository, entryPoints: ['apps/api/src/modules/browser-runtime/hostFactory.ts'],
-    outfile: join(unit, 'native-host.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node22', metafile: true,
+    outfile: join(unit, 'native-host.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node24', metafile: true,
     legalComments: 'linked', sourcemap: false, alias: workerPackageAliases({ contracts, 'contracts-node': nodeContracts, ci }),
     define: { 'process.env.WS_NO_BUFFER_UTIL': '"1"', 'process.env.WS_NO_UTF_8_VALIDATE': '"1"' },
     banner: { js: "import { createRequire as runtimeRequire } from 'node:module'; const require = runtimeRequire(import.meta.url);" },
@@ -424,47 +424,15 @@ export async function assembleBrowserRuntime({ repository, commit, target, forem
   finally { if (temporary) await rm(temporary, { recursive: true, force: true }); }
 }
 
-/** Collect native runner outputs for Main without relabelling or launching their executables. */
-export async function collectBrowserRuntimeArtifacts({ directories, output, commit }) {
-  invariant(directories.length > 0, 'native runner artifacts required');
-  await mkdir(output, { mode: 0o700 });
-  try {
-    const artifacts = [];
-    for (const directory of directories) {
-      const index = JSON.parse(await readFile(join(directory, 'index.json'), 'utf8'));
-      invariant(index.format === 1 && index.sourceCommit === commit && Array.isArray(index.artifacts)
-        && index.artifacts.length > 0, 'build index source mismatch');
-      for (const entry of index.artifacts) {
-        validateWorkerTarget(entry.target);
-        invariant(!artifacts.some(artifact => matchesBrowserRuntimeTarget(artifact.target, entry.target)),
-          'duplicate native browser target');
-        const name = `runtime-${artifacts.length}`;
-        const copied = await copyBuiltBrowserRuntime({ directory, output: join(output, name), target: entry.target, commit });
-        artifacts.push({ directory: name, target: copied.descriptor.target, descriptorSha256: copied.descriptorSha256 });
-      }
-    }
-    const index = { format: 1, sourceCommit: commit, artifacts };
-    await writeFile(join(output, 'index.json'), `${JSON.stringify(index)}\n`, { flag: 'wx', mode: 0o600 });
-    return index;
-  } catch (error) { await rm(output, { recursive: true, force: true }); throw error; }
-}
-
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, targetFile, output, lockFile] = process.argv.slice(2);
+  invariant(command === 'assemble' && targetFile && output, 'usage: browser-runtime-install.mjs assemble <approved-target.json> <new-output-directory> [resolved-lock.json]');
   const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const { stdout } = await execute('git', ['rev-parse', 'HEAD'], { cwd: repository });
   const commit = String(stdout).trim();
-  if (command === 'collect') {
-    invariant(targetFile && output, 'usage: browser-runtime-install.mjs collect <new-output-directory> <native-artifact-directory>...');
-    const index = await collectBrowserRuntimeArtifacts({ output: resolve(targetFile), commit,
-      directories: process.argv.slice(4).map(directory => resolve(directory)) });
-    process.stdout.write(`${JSON.stringify(index)}\n`);
-  } else {
-    invariant(command === 'assemble' && targetFile && output, 'usage: browser-runtime-install.mjs assemble <approved-target.json> <new-output-directory> [resolved-lock.json]');
-    const target = JSON.parse(await readFile(resolve(repository, targetFile), 'utf8'));
-    const foremanVersion = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).version;
-    const result = await assembleBrowserRuntime({ repository, commit, target, foremanVersion, output: resolve(output),
-      ...(lockFile ? { resolvedLock: JSON.parse(await readFile(resolve(lockFile), 'utf8')) } : {}) });
-    process.stdout.write(`${JSON.stringify({ descriptorSha256: result.descriptorSha256, manifestSha256: result.descriptor.manifestSha256 })}\n`);
-  }
+  const target = JSON.parse(await readFile(resolve(repository, targetFile), 'utf8'));
+  const foremanVersion = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).version;
+  const result = await assembleBrowserRuntime({ repository, commit, target, foremanVersion, output: resolve(output),
+    ...(lockFile ? { resolvedLock: JSON.parse(await readFile(resolve(lockFile), 'utf8')) } : {}) });
+  process.stdout.write(`${JSON.stringify({ descriptorSha256: result.descriptorSha256, manifestSha256: result.descriptor.manifestSha256 })}\n`);
 }

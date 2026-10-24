@@ -158,9 +158,9 @@ test('a session spanning an installed target change reports the new target and d
   const second = join(root, 'release-b');
   await mkdir(first, { recursive: true, mode: 0o700 });
   await mkdir(second, { mode: 0o700 });
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2' };
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0' };
   await writeFile(join(first, 'manifest.json'), JSON.stringify({ target }));
-  const nextTarget = { ...target, node: 'v22.23.3' };
+  const nextTarget = { ...target, node: 'v24.22.1' };
   await writeFile(join(second, 'manifest.json'), JSON.stringify({ target: nextTarget }));
   await symlink('release-a', join(root, 'current'));
   const commands = [];

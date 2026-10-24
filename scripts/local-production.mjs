@@ -4,13 +4,14 @@ import { randomBytes } from 'node:crypto'
 import { access, chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { runProductionCiSmoke } from './install-ci-smoke.mjs'
 import { readProductEnvironment } from '../packages/contracts/src/productEnvironment.mjs'
 import { renderUserService } from '../apps/worker/src/service.mjs'
 import { workerPath } from '../apps/worker/src/harnessPath.mjs'
+import { installPinnedNodeRuntime } from '../apps/worker/src/nodeRuntime.mjs'
 import { buildWorkerReleaseArtifacts, workerPublicationServiceTemplate } from './worker-release-artifacts.mjs'
 import {
   copyVerificationRuntime, deployProductionApi, desktopLaunchEnvironment, localProductionEnvironment, preserveOperatorConfiguration, publish, readEnvironment,
@@ -79,7 +80,7 @@ async function configureEnvironment(buildSource) {
   return environment
 }
 
-async function stageRelease({ source: buildSource, commit }, runBuild, previousRelease) {
+async function stageRelease({ source: buildSource, commit }, runBuild, previousRelease, node) {
   const releases = join(app, 'releases')
   await mkdir(releases, { recursive: true, mode: 0o700 })
   const release = await mkdtemp(join(releases, 'release-'))
@@ -100,14 +101,14 @@ async function stageRelease({ source: buildSource, commit }, runBuild, previousR
       await copyFile(join(buildSource, 'packages/contracts/src', name), join(contractsSource, name))
     }
     await mkdir(join(release, 'apps/worker/src'), { recursive: true })
-    for (const name of ['service.mjs', 'diagnostics.mjs', 'harnessPath.mjs', 'browserRuntimeInstall.mjs']) {
+    for (const name of ['service.mjs', 'diagnostics.mjs', 'harnessPath.mjs', 'browserRuntimeInstall.mjs', 'nodeRuntime.mjs']) {
       await copyFile(join(buildSource, 'apps/worker/src', name), join(release, 'apps/worker/src', name))
     }
     const { stdout: remote } = await capture('git', ['remote', 'get-url', 'origin'], { cwd: buildSource })
     const repository = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\s*$/.exec(remote)?.[1]
     if (!repository) throw new Error('Production CI smoke requires a GitHub origin repository.')
     await publish(join(release, 'ci-smoke.json'), JSON.stringify({ commit, repository }))
-    await copyFile(process.execPath, join(release, 'node'))
+    await copyFile(node, join(release, 'node'))
     await chmod(join(release, 'node'), 0o700)
     // Devices wait for the background publisher to verify GitHub assets before selecting this Worker target.
     await measureProductionStep('Worker artifacts', () => buildWorkerReleaseArtifacts({ repository: buildSource, expectedCommit: commit,
@@ -257,13 +258,16 @@ async function install(timeoutMs) {
   const previousRelease = await readReleaseSelection(current)
   const firstInstall = await needsStartupConfiguration(startupFile, { previousRelease })
   await withProductionSourceSnapshot(source, join(state, 'builds'), async snapshot => {
-    const runBuild = (command, args, options = {}) => run(command, args, { cwd: snapshot.source, ...options })
+    const metadata = JSON.parse(await readFile(join(snapshot.source, 'apps/worker/artifacts/node-24.22.1-linux-x64.json'), 'utf8'))
+    const node = await installPinnedNodeRuntime(join(app, 'node-runtimes'), metadata)
+    const runBuild = (command, args, options = {}) => run(command === process.execPath ? node : command, args,
+      { cwd: snapshot.source, ...options, env: { ...process.env, ...options.env, PATH: `${dirname(node)}:${process.env.PATH}` } })
     await installProductionDependencies(runBuild)
     let release
     let environment
     try {
       await buildProductionSource(runBuild, { stage: async () => {
-        release = await stageRelease(snapshot, runBuild, previousRelease)
+        release = await stageRelease(snapshot, runBuild, previousRelease, node)
       } })
       environment = await configureEnvironment(snapshot.source)
     } catch (error) {

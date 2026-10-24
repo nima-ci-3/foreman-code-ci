@@ -14,8 +14,8 @@ const native = await nativeWorkerTarget(repository);
 const host = await browserHostTarget();
 const candidates = [
   { runtime: native.target.node.slice(1), target: native.file },
-  { runtime: '22.23.3', target: 'apps/worker/artifacts/ubuntu-26.04-x64-target.json' },
-  { runtime: '22.23.2', target: 'apps/worker/artifacts/test-hosts/ubuntu-26.04-x64-node-22.23.2-target.json' },
+  { runtime: '24.22.1', target: 'apps/worker/artifacts/ubuntu-26.04-x64-target.json' },
+  { runtime: '24.22.1', target: 'apps/worker/artifacts/test-hosts/ubuntu-26.04-x64-node-24.22.1-target.json' },
 ];
 for (const { runtime, target } of candidates.filter((candidate, index) => candidates.findIndex(value => value.target === candidate.target) === index)) {
   const expected = JSON.parse(await readFile(join(repository, target), 'utf8'));
@@ -29,7 +29,7 @@ for (const { runtime, target } of candidates.filter((candidate, index) => candid
     const output = join(directory, 'release');
     execFileSync(process.execPath, [join(repository, 'scripts/build-worker-artifact.mjs'),
       target, output,
-      ...(runtime === '22.23.3' ? ['apps/worker/artifacts/node-22.23.3-linux-x64.json'] : [])],
+      ...(runtime === '24.22.1' ? ['apps/worker/artifacts/node-24.22.1-linux-x64.json'] : [])],
     { cwd: join(repository, 'apps/worker'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
     const product = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
