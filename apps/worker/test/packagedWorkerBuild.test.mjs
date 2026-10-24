@@ -1,7 +1,7 @@
 import { browserHostTarget, matchesBrowserTarget, nativeWorkerTarget } from './fixtures/browserTarget.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -48,5 +48,19 @@ for (const { runtime, target } of candidates.filter((candidate, index) => candid
     });
     assert.equal(connection.status().phase, 'disconnected');
     await connection.stop();
+    const transition = join(directory, 'transition');
+    execFileSync(process.execPath, [join(repository, 'scripts/build-worker-artifact.mjs'), target, transition,
+      'apps/worker/artifacts/node-24.22.1-linux-x64.json', 'v22.23.3'],
+    { cwd: join(repository, 'apps/worker'), stdio: ['ignore', 'pipe', 'pipe'] });
+    const bridge = JSON.parse(await readFile(join(transition, 'manifest.json'), 'utf8'));
+    const pin = JSON.parse(await readFile(join(transition, bridge.runtime.metadataPath), 'utf8'));
+    const archive = await readFile(join(transition, bridge.runtime.archivePath));
+    assert.equal(bridge.target.node, 'v22.23.3');
+    assert.equal(archive.length, pin.archive.bytes);
+    assert.equal(createHash('sha256').update(archive).digest('hex'), pin.archive.sha256);
+    assert.deepEqual(bridge.files.find(file => file.path === bridge.runtime.archivePath), {
+      path: bridge.runtime.archivePath, size: pin.archive.bytes, sha256: pin.archive.sha256,
+    });
+    assert.match(execFileSync(process.execPath, [join(transition, 'src/cli.mjs'), '--help'], { encoding: 'utf8' }), /Foreman Code worker/);
   });
 }

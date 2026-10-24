@@ -385,7 +385,8 @@ export class WorkerUpdater {
       }));
       const nodeMetadata = await readArtifactNodeRuntime(downloading, manifest);
       const node = nodeMetadata ? await run(() => installPinnedNodeRuntime(join(launch.root, 'node-runtimes'), nodeMetadata,
-        { signal, fetchRuntime: this.options.fetchRuntime })) : undefined;
+        { signal, fetchRuntime: this.options.fetchRuntime,
+          archivePath: manifest.runtime.archivePath ? join(downloading, manifest.runtime.archivePath) : undefined })) : undefined;
       // Browser extraction/import readiness runs while ordinary work remains admitted.
       browserRuntimeRoot = join(launch.root, 'browser-runtime');
       const browserPreparation = await run(() => prepareBundledBrowserRuntime({ root: launch.root, artifact: downloading,

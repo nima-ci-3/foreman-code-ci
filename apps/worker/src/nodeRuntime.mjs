@@ -23,6 +23,11 @@ export async function readArtifactNodeRuntime(directory, manifest) {
   const metadata = JSON.parse(bytes);
   if (metadata.version !== pin.version || metadata.archive?.sha256 !== pin.archiveSha256
     || metadata.nodeExecutable?.sha256 !== pin.executableSha256) throw new WorkerError('node_runtime_metadata_mismatch');
+  if (pin.archivePath) {
+    const archive = manifest.files.find(file => file.path === pin.archivePath);
+    if (pin.archivePath !== 'artifacts/node-runtime.tar.xz' || archive?.sha256 !== metadata.archive.sha256
+      || archive.size !== metadata.archive.bytes) throw new WorkerError('node_runtime_archive_metadata_mismatch');
+  }
   return metadata;
 }
 
@@ -36,8 +41,31 @@ async function verifyNode(path, metadata, signal) {
   if (result.stdout.trim() !== metadata.version) throw new WorkerError('node_runtime_version_mismatch');
 }
 
+/** Both network downloads and bundled archives use the signed release's size and checksum. */
+export async function downloadPinnedNodeArchive(destination, metadata, { fetchRuntime = fetch, signal, archivePath } = {}) {
+  const transferSignal = AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]);
+  let source;
+  if (archivePath) {
+    if (!(await lstat(archivePath)).isFile()) throw new WorkerError('node_runtime_archive_invalid');
+    source = createReadStream(archivePath);
+  } else {
+    const response = await fetchRuntime(metadata.archive.url, { signal: transferSignal });
+    if (!response.ok || !response.body) throw new WorkerError('node_runtime_download_failed');
+    source = Readable.fromWeb(response.body);
+  }
+  const digest = createHash('sha256');
+  let size = 0;
+  await pipeline(source, new Transform({ transform(bytes, _encoding, done) {
+    size += bytes.length;
+    if (size > metadata.archive.bytes) { done(new WorkerError('node_runtime_archive_size_mismatch')); return; }
+    digest.update(bytes); done(null, bytes);
+  } }), createWriteStream(destination, { flags: 'wx', mode: 0o600 }), { signal: transferSignal });
+  if (size !== metadata.archive.bytes) throw new WorkerError('node_runtime_archive_size_mismatch');
+  if (digest.digest('hex') !== metadata.archive.sha256) throw new WorkerError('node_runtime_archive_checksum_mismatch');
+}
+
 /** The signed release's pinned archive and executable must both match before activation. */
-export async function installPinnedNodeRuntime(root, metadata, { fetchRuntime = fetch, signal } = {}) {
+export async function installPinnedNodeRuntime(root, metadata, { fetchRuntime = fetch, signal, archivePath } = {}) {
   if (metadata.format !== 1 || metadata.runtime !== 'node' || metadata.platform !== process.platform || metadata.arch !== process.arch
     || !/^v\d+\.\d+\.\d+$/.test(metadata.version) || !/^[a-f0-9]{64}$/.test(metadata.archive?.sha256)
     || !/^[a-f0-9]{64}$/.test(metadata.nodeExecutable?.sha256)
@@ -52,18 +80,8 @@ export async function installPinnedNodeRuntime(root, metadata, { fetchRuntime = 
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const stage = await mkdtemp(join(root, '.node-'));
   try {
-    const response = await fetchRuntime(metadata.archive.url, { signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]) });
-    if (!response.ok || !response.body) throw new WorkerError('node_runtime_download_failed');
-    const digest = createHash('sha256');
-    let size = 0;
     const archive = join(stage, 'archive');
-    await pipeline(Readable.fromWeb(response.body), new Transform({ transform(bytes, _encoding, done) {
-      size += bytes.length;
-      if (size > metadata.archive.bytes) { done(new WorkerError('node_runtime_archive_size_mismatch')); return; }
-      digest.update(bytes); done(null, bytes);
-    } }), createWriteStream(archive, { flags: 'wx', mode: 0o600 }), { signal });
-    if (size !== metadata.archive.bytes) throw new WorkerError('node_runtime_archive_size_mismatch');
-    if (digest.digest('hex') !== metadata.archive.sha256) throw new WorkerError('node_runtime_archive_checksum_mismatch');
+    await downloadPinnedNodeArchive(archive, metadata, { fetchRuntime, signal, archivePath });
     await execute('/usr/bin/tar', ['-xf', archive, '-C', stage, '--no-same-owner', '--no-same-permissions', metadata.nodeExecutable.archivePath],
       { signal, timeout: 60_000, maxBuffer: 4096 });
     const extracted = join(stage, metadata.nodeExecutable.archivePath);

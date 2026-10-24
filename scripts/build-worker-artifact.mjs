@@ -3,6 +3,7 @@ import { INSTALLATION_NAMES, standaloneInstallationSource } from '../packages/co
 import { readProductEnvironment } from '../packages/contracts/src/productEnvironment.mjs'
 import { inspectQuotaHelperAbi } from './quota-helper-abi.mjs';
 import { copyBuiltBrowserRuntime } from '../apps/worker/src/browserRuntimeInstall.mjs';
+import { downloadPinnedNodeArchive } from '../apps/worker/src/nodeRuntime.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -133,6 +134,9 @@ if (verificationScripts.every(path => committedScripts.has(path))) {
 }
 await writeFile(join(output, 'install'), snapshotSource('apps/worker/artifacts/install.sh.in').toString('utf8').replaceAll('@NODE_VERSION@', target.node), { mode: 0o700 });
 if (runtime) await writeFile(join(output, 'artifacts/node-runtime.json'), snapshotSource(runtimeInput.path), { mode: 0o600 });
+// Old updaters verify and download ordinary manifest files before starting their readiness window.
+const runtimeArchivePath = bootstrapNode ? 'artifacts/node-runtime.tar.xz' : undefined;
+if (runtimeArchivePath) await downloadPinnedNodeArchive(join(output, runtimeArchivePath), runtime);
 const { storeDir: store } = parse(await readFile(join(root, 'node_modules/.modules.yaml'), 'utf8'));
 const nativePackages = await copySharpPackagesFromStore({
   root,
@@ -164,6 +168,6 @@ const manifest = { format: 1, version: releaseVersion, commit, lockfileSha256: h
   browserRuntimeStatus,
   ...(browserRuntime ? { browserRuntime: { descriptorPath: 'artifacts/browser-runtime/browser-runtime.json', descriptorSha256: browserRuntime.descriptorSha256,
     manifestSha256: browserRuntime.descriptor.manifestSha256, sourceInputs: browserRuntime.descriptor.sourceInputs } } : {}),
-  ...(runtime ? { runtime: { metadataPath: 'artifacts/node-runtime.json', version: runtime.version, archiveSha256: runtime.archive.sha256, executableSha256: runtime.nodeExecutable.sha256, qualification: 'future installation requires actual target readback' } } : {}), files };
+  ...(runtime ? { runtime: { metadataPath: 'artifacts/node-runtime.json', ...(runtimeArchivePath ? { archivePath: runtimeArchivePath } : {}), version: runtime.version, archiveSha256: runtime.archive.sha256, executableSha256: runtime.nodeExecutable.sha256, qualification: 'future installation requires actual target readback' } } : {}), files };
 await writeFile(join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 console.log(JSON.stringify({ manifestSha256: hash(await readFile(join(output, 'manifest.json'))), version: releaseVersion, commit: manifest.commit, files: files.length }));
