@@ -34,18 +34,20 @@ it('reconciles an accepted Start on remount without leaving the selected histori
     expectedAgentConfigurationVersionIds: after.agentConfigurationVersionIds,
     expectedLocationRevision: mock.controls.locationRevision, commandId: crypto.randomUUID(), input: {} })
   await reserveBoardStart(key, pending)
+  const accepted = { ...runs.after.run, executionLocation: { runnerId: 'runner-synthetic', rootPath: '/synthetic/board',
+    locationRevision: mock.controls.locationRevision, identityHash: `sha256:${'0'.repeat(64)}` } }
   const reply = deferred<Response>(), resolved: unknown[] = [], sent: unknown[] = []
   server.use(http.post(`${runsPath()}/start-resolution`, async ({ request }) => {
     resolved.push(await request.json())
     return reply.promise
   }), http.post(runsPath(), async ({ request }) => {
     sent.push(await request.json())
-    return HttpResponse.json({ accepted: true, replayed: true, run: runs.after.run })
+    return HttpResponse.json({ accepted: true, replayed: true, run: accepted })
   }))
   const reopened = await mountMeasuredBoard(`${href()}&selectedRunId=${runs.before.run.id}`)
   await screen.findByRole('region', { name: 'Selected Run board' })
   await waitFor(() => expect(resolved).toEqual([pending]))
-  await act(async () => { reply.resolve(HttpResponse.json({ status: 'accepted', run: runs.after.run })) })
+  await act(async () => { reply.resolve(HttpResponse.json({ status: 'accepted', run: accepted })) })
   await waitFor(() => {
     expect(readBoardStart(key)).toBeUndefined()
     expect(reopened.router.state.status).toBe('idle')
