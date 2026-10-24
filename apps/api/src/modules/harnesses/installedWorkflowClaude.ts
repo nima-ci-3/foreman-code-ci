@@ -126,7 +126,9 @@ export function installedWorkflowClaudeCallbackJournal(path: string): ClaudeCall
           ...(previous?.retired || record.retired ? { retired: true } : {}) }
         await writeDurableFile(path, JSON.stringify({ records }), { createParent: true })
       })
-      writes = write.catch(() => undefined)
+      writes = write.catch(() => {
+        // ignore: the caller awaits `write` and sees its failure; this chain only serializes later writes.
+      })
       return write
     },
     async forTool(identity) {
@@ -206,7 +208,6 @@ export function allocateInstalledWorkflowClaude(input: {
         answer: { outcome: answer.outcome, ...(answer.reason !== undefined ? { reason: answer.reason } : {}) } }, signalNever)
     },
   }, policy)
-  let manager: ClaudeNativeSessionManager
   const runner = createClaudeSdkRunner({ loadClient: async () => {
     await input.before()
     return loadOfficialClaudeSdk(compiled.configuration.configDirectory, input.recovery, binary, target.sdk.entrypoint)
@@ -218,7 +219,7 @@ export function allocateInstalledWorkflowClaude(input: {
   delete sdkOptions.qualification
   const session: NativeSessionReference = { harness: 'claude', providerVersion: pin.cliVersion, nativeSessionId: randomUUID() }
   let admission: z.infer<typeof AdmissionSchema> | undefined
-  manager = allocateClaudeNativeHarness({ harness: 'claude', role: 'workflow', workingDirectory: input.workingDirectory,
+  const manager = allocateClaudeNativeHarness({ harness: 'claude', role: 'workflow', workingDirectory: input.workingDirectory,
     ownerAgentId: capture.facts.configuration.agentId, processRecovery: input.recovery, appMcpAccess: 'scoped',
     scope: { deviceId: input.deviceId, profilePath: compiled.configuration.configDirectory,
       configRevision: pin.configRevision, cwd: input.workingDirectory },
