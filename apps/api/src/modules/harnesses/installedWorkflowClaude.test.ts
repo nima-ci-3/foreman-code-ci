@@ -13,9 +13,15 @@ vi.mock('./claudeSdk/configuration.js', () => ({
   }),
 }))
 vi.mock('./claudeSdk/official.js', () => ({ loadOfficialClaudeSdk: async () => provider.client }))
+const tools = vi.hoisted(() => ({ discovered: [] as { servers: unknown; token: unknown }[] }))
+vi.mock('./claudeSdk/mcpPolicy.js', () => ({ acceptedClaudeAppTools: async (input: { servers: unknown; token: unknown }) => {
+  tools.discovered.push({ servers: input.servers, token: input.token })
+  return [{ serverName: 'graphql', tools: ['interaction_get'] }]
+} }))
 
 function sdk() {
   const frames = new ClaudeBoundedQueue<unknown>(32)
+  const closed = { count: 0 }
   const queries: Record<string, unknown>[] = []
   let servers: Readonly<Record<string, unknown>> = {}
   let messages: AsyncIterator<ClaudeSdkUserMessage> | undefined
@@ -28,14 +34,14 @@ function sdk() {
         initializationResult: async () => ({ models: [], account: {} }),
         mcpServerStatus: async () => [{ name: 'graphql', status: 'connected', source: 'dynamic', config: servers.graphql }],
         setMcpServers: async value => { servers = value; return { added: ['graphql'], removed: [], errors: {} } },
-        close: () => frames.close() }
+        close: () => { closed.count++; frames.close() } }
     }, getSessionInfo: async sessionId => ({ sessionId }), getSessionMessages: async () => [],
     forkSession: async () => { throw new Error('No fork expected') },
   }
-  return { client, frames, queries, servers: () => servers, nextMessage: async () => (await messages!.next()).value! }
+  return { client, frames, queries, closed, servers: () => servers, nextMessage: async () => (await messages!.next()).value! }
 }
 
-function allocate() {
+function allocate(options: { prepared?: boolean } = {}) {
   const request = workflowRequest()
   const configuration = { ...request.configuration, harness: { ...request.configuration.harness,
     mcpServers: { graphql: { type: 'http' as const, url: 'http://127.0.0.1:3041/mcp' } } } }
@@ -47,7 +53,8 @@ function allocate() {
     ? { ownerPrincipalId: 'principal', attemptId: '1', autoAllowTools: true } : { authorized: true })
   const claude = allocateInstalledWorkflowClaude({ capture, workingDirectory: '/work', recovery: { owner: 'execution:execution' } as never,
     environment: {}, before: async () => undefined, mcpEndpoint: 'http://127.0.0.1:41000/mcp', credential: () => 'scoped-token',
-    inspectionStart: () => ({ request: { ...request, configuration }, correlationId: 'execution:execution' }),
+    inspectionStart: () => options.prepared === false ? undefined
+      : { request: { ...request, configuration }, correlationId: 'execution:execution' },
     authority, callbackJournal: { read: async () => undefined, write: async () => undefined,
       forTool: async () => undefined, acknowledged: async () => [] }, deviceId: 'device' })
   return { claude, authority, start: { request: { ...request, configuration }, correlationId: 'execution:execution',
@@ -79,6 +86,7 @@ it('sends the first input on the prepared process and acknowledges it by its mes
   const message = await fake.nextMessage()
   await fake.frames.offer({ type: 'system', subtype: 'init', session_id: session.nativeSessionId,
     claude_code_version: '2.1.284', cwd: '/work' })
+  await fake.frames.offer({ type: 'assistant', session_id: session.nativeSessionId, uuid: 'reply', user_message_uuid: message.uuid })
   await fake.frames.offer({ type: 'result', session_id: session.nativeSessionId, uuid: 'result',
     user_message_uuid: message.uuid, subtype: 'success', is_error: false, result: 'done' })
   await events
@@ -87,5 +95,73 @@ it('sends the first input on the prepared process and acknowledges it by its mes
   expect(submitted).toHaveBeenCalledWith(message.uuid)
   expect(authority).toHaveBeenCalledWith({ phase: 'admission' }, expect.anything())
   expect(claude.manager.hasResidentSession(session)).toBe(true)
+  await claude.manager.dispose?.()
+})
+
+async function completeFirstTurn(fake: ReturnType<typeof sdk>, claude: ReturnType<typeof allocate>['claude'],
+  session: Awaited<ReturnType<typeof claude.manager.createSession>>) {
+  const events = (async () => { for await (const event of claude.manager.startTurn(session,
+    { prompt: 'do the work', clientCorrelationId: 'execution:execution' })) void event })()
+  const message = await fake.nextMessage()
+  await fake.frames.offer({ type: 'system', subtype: 'init', session_id: session.nativeSessionId,
+    claude_code_version: '2.1.284', cwd: '/work' })
+  await fake.frames.offer({ type: 'assistant', session_id: session.nativeSessionId, uuid: 'reply', user_message_uuid: message.uuid })
+  await fake.frames.offer({ type: 'result', session_id: session.nativeSessionId, uuid: 'result',
+    user_message_uuid: message.uuid, subtype: 'success', is_error: false, result: 'done' })
+  await events
+  return message
+}
+
+it('answers Main route discovery before preparation without opening Claude', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  const { claude } = allocate({ prepared: false })
+  expect(await claude.manager.inspectMcp()).toMatchObject({ harness: 'claude', serverName: 'graphql', endpointMatches: true })
+  expect(fake.queries).toHaveLength(0)
+})
+
+it('binds the application tools the scoped credential lists through the Worker endpoint', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  tools.discovered.length = 0
+  const { claude, start } = allocate()
+  await claude.manager.createSession(start)
+  expect(tools.discovered).toEqual([{ token: 'scoped-token', servers: { graphql: expect.objectContaining({
+    url: 'http://127.0.0.1:41000/mcp', headers: { Authorization: 'Bearer scoped-token' } }) } }])
+  await claude.manager.dispose?.()
+})
+
+it('reads, stops and closes the reported session before its first input', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  const { claude, start } = allocate()
+  const session = await claude.manager.createSession(start)
+  expect(await claude.manager.history(session)).toMatchObject({ events: [], pendingInteractions: [] })
+  expect(await claude.manager.reconcile(session, 'execution:execution')).toMatchObject({ events: [] })
+  expect(await claude.manager.cancel(session)).toBe(false)
+  await claude.manager.close(session)
+  expect(fake.closed.count).toBe(1)
+})
+
+it('names the completed turn by the acknowledged input message', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  const { claude, start } = allocate()
+  const session = await claude.manager.createSession(start)
+  const message = await completeFirstTurn(fake, claude, session)
+  const history = await claude.manager.reconcile(session, 'execution:execution')
+  expect(history.terminalTurn?.providerId).toBe(message.uuid)
+  expect(history.nativeTurnId).toBe(message.uuid)
+  await claude.manager.dispose?.()
+})
+
+it('owns a continued session it attached instead of the one it would have chosen', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  const { claude, start } = allocate()
+  const continued = { harness: 'claude' as const, providerVersion: '2.1.284', nativeSessionId: 'continued-session' }
+  await claude.manager.attachSession(continued, start)
+  expect(claude.session).toEqual(continued)
+  expect(claude.ownsSession(continued)).toBe(true)
   await claude.manager.dispose?.()
 })

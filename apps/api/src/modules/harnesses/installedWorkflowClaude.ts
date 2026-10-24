@@ -24,7 +24,8 @@ import type { ClaudeCallbackJournal, ClaudeCallbackRecord } from './claudeSdk/ca
 import type { ClaudeNativeSessionManager } from './claudeSdk/sessionManager.js'
 import { appMcpServerName } from './appMcpLauncher.js'
 import type { NativeProcessRecovery } from './recovery/processRegistry.js'
-import type { NativeSessionStart, NativeTurnInput } from './port.js'
+import type { NativeHistory, NativeSessionStart, NativeTurnInput } from './port.js'
+import { acceptedClaudeAppTools } from './claudeSdk/mcpPolicy.js'
 import { readBoundedTextIfPresent, writeDurableFile } from '../../shared/durableFile.js'
 
 const unavailable = (): never => { throw new DomainError('HARNESS_PROFILE_UNAVAILABLE',
@@ -147,8 +148,8 @@ const AdmissionSchema = z.object({ ownerPrincipalId: z.string().min(1), attemptI
 
 export interface InstalledWorkflowClaude {
   manager: ClaudeNativeSessionManager
-  /** The session ID chosen before the first input; the Worker reports it at preparation. */
-  session: NativeSessionReference
+  /** The session this execution owns: chosen before the first input, or the continued one. */
+  readonly session: NativeSessionReference
   /** True while this manager still owns that session, before and after its first input. */
   ownsSession(session: NativeSessionReference): boolean
 }
@@ -167,7 +168,8 @@ export function allocateInstalledWorkflowClaude(input: {
   mcpEndpoint: string
   /** The execution's current scoped Main credential. */
   credential(): string | undefined
-  inspectionStart(): NativeSessionStart
+  /** The accepted start once Main prepared the execution; absent during earlier discovery. */
+  inspectionStart(): NativeSessionStart | undefined
   authority(request: WorkerClaudeAuthorityRequest, signal: AbortSignal): Promise<unknown>
   callbackJournal: ClaudeCallbackJournal
   deviceId: string
@@ -217,7 +219,7 @@ export function allocateInstalledWorkflowClaude(input: {
     ...createClaudeSdkCallbacks({ manager: () => manager, bridge }) }
   delete sdkOptions.configuration
   delete sdkOptions.qualification
-  const session: NativeSessionReference = { harness: 'claude', providerVersion: pin.cliVersion, nativeSessionId: randomUUID() }
+  let session: NativeSessionReference = { harness: 'claude', providerVersion: pin.cliVersion, nativeSessionId: randomUUID() }
   let admission: z.infer<typeof AdmissionSchema> | undefined
   const manager = allocateClaudeNativeHarness({ harness: 'claude', role: 'workflow', workingDirectory: input.workingDirectory,
     ownerAgentId: capture.facts.configuration.agentId, processRecovery: input.recovery, appMcpAccess: 'scoped',
@@ -227,7 +229,9 @@ export function allocateInstalledWorkflowClaude(input: {
     qualification: { sdkVersion: pin.sdkVersion, cliVersion: pin.cliVersion, basicTurns: compiled.qualification.basicTurns,
       resume: compiled.qualification.resume, fork: compiled.qualification.fork, history: compiled.qualification.history,
       interactions: compiled.qualification.policy.alwaysAppliedToolHook },
-    inspectionStart: input.inspectionStart, expectedMcp: { serverName, url: input.mcpEndpoint },
+    inspectionStart: () => input.inspectionStart() ?? (() => { throw new DomainError('CLAUDE_INSPECTION_CONTEXT_REQUIRED',
+      'Claude inspection needs the prepared workflow start.', 409) })(),
+    expectedMcp: { serverName, url: input.mcpEndpoint },
     interactionPort: {
       async pending(native, signal) { signal?.throwIfAborted(); return bridge.pendingInteractions(native)[0] },
       respond: bridge.respond.bind(bridge),
@@ -246,15 +250,39 @@ export function allocateInstalledWorkflowClaude(input: {
       generation: input.recovery.launchId ?? admission?.attemptId ?? 'session-control' }),
   }).manager
   bridge.subscribePending(notification => manager.notifyPendingChanged(notification))
-  const readHistory = manager.history.bind(manager)
-  manager.history = async (native, signal) => ({ ...await readHistory(native, signal),
-    responseDeliveries: await bridge.deliveryEvidence(native) })
-  const reconcile = manager.reconcile.bind(manager)
-  manager.reconcile = async (native, correlationId, signal) => ({ ...await reconcile(native, correlationId, signal),
-    responseDeliveries: await bridge.deliveryEvidence(native) })
 
   let start: NativeSessionStart | undefined
   let opened = false
+  // The first input is in flight and Claude has not reported the chosen session yet.
+  let initializing = false
+  /** The reported session exists only as an ID until Claude initializes it with the first input. */
+  const beforeInit = (native: NativeSessionReference) => same(native, session) && (!opened || initializing)
+    && !manager.hasResidentSession(native)
+  // The remote protocol names a turn by the ID its submission was acknowledged with; for Claude that is the input message.
+  const remoteHistory = async (native: NativeSessionReference, read: () => Promise<NativeHistory>): Promise<NativeHistory> => {
+    if (beforeInit(native)) return { events: [], pendingInteractions: [], firstRetainedSequence: 0, nextSequence: 0 }
+    const history = await read()
+    const turnId = history.nativeTurnId ?? history.terminalTurn?.providerId ?? history.nativeSubmission?.nativeMessageId
+    return { ...history, ...(turnId ? { nativeTurnId: turnId } : {}), responseDeliveries: await bridge.deliveryEvidence(native) }
+  }
+  const readHistory = manager.history.bind(manager)
+  manager.history = (native, signal) => remoteHistory(native, () => readHistory(native, signal))
+  const reconcile = manager.reconcile.bind(manager)
+  manager.reconcile = (native, correlationId, signal) => remoteHistory(native, () => reconcile(native, correlationId, signal))
+  const reconcileResponse = manager.reconcileResponse.bind(manager)
+  manager.reconcileResponse = (native, response, signal) => remoteHistory(native, () => reconcileResponse(native, response, signal))
+  const cancel = manager.cancel.bind(manager)
+  manager.cancel = async (native, signal, nativeMessageId) => !opened && same(native, session)
+    ? false : cancel(native, signal, nativeMessageId)
+  const close = manager.close.bind(manager)
+  // Before its first input the session is only the inspected process; closing it ends that process.
+  manager.close = async native => { if (!opened && same(native, session)) await manager.dispose?.(); else await close(native) }
+  const inspectMcp = manager.inspectMcp.bind(manager)
+  // Main checks the route before it prepares the execution; the Worker serves that route itself and proves it with the
+  // credential and tool discovery when it opens the session.
+  manager.inspectMcp = async signal => input.inspectionStart() ? inspectMcp(signal) : { harness: 'claude', serverName,
+    state: 'status_unavailable', endpointMatches: true, credentialEnvironmentVariable: null,
+    checkedAt: new Date().toISOString(), detail: 'The Worker checks this route when it opens the Claude session.' }
   const admit = async (message: NativeTurnInput, signal?: AbortSignal) => {
     const { onSubmitted, ...rest } = message
     admission = AdmissionSchema.parse(await input.authority({ phase: 'admission' }, signal ?? signalNever))
@@ -265,17 +293,27 @@ export function allocateInstalledWorkflowClaude(input: {
   }
   const createSession = manager.createSession.bind(manager)
   manager.createSession = async (sessionStart, signal) => {
-    if ('sessionContinuation' in sessionStart && sessionStart.sessionContinuation) return createSession(sessionStart, signal)
+    if ('sessionContinuation' in sessionStart && sessionStart.sessionContinuation) {
+      const continued = await createSession(sessionStart, signal)
+      session = structuredClone(continued)
+      start = structuredClone(sessionStart)
+      opened = true
+      return continued
+    }
     if (start) throw new DomainError('CLAUDE_CREATION_IDENTITY_CONFLICT', 'This execution already chose its Claude session.', 409)
     const token = input.credential()
     if (!token) throw new DomainError('HARNESS_ROLE_AUTHORITY_INVALID', 'The Worker has no scoped Main credential for this execution.', 403)
     await input.before(signal)
-    await manager.inspectMcp(signal)
+    await inspectMcp(signal)
+    const scopedServer = { ...localServer, headers: { Authorization: `Bearer ${token}` } }
     const snapshot = await manager.refreshInspectionCredentials(sessionStart,
-      { ...sdkOptions.mcpServers as Record<string, unknown>, [serverName]: { ...localServer, headers: { Authorization: `Bearer ${token}` } } },
-      signal)
+      { ...sdkOptions.mcpServers as Record<string, unknown>, [serverName]: scopedServer }, signal)
     if (snapshot.httpCredentialAcknowledgement?.endpoint !== input.mcpEndpoint) throw new DomainError(
       'CLAUDE_MCP_CREDENTIAL_DELIVERY_UNCONFIRMED', 'The SDK has not acknowledged the scoped Worker credential.', 409)
+    // The bridge allows only the application tools this credential can list through the Worker endpoint.
+    bridge.bindMcpTools(await acceptedClaudeAppTools({ configuration: { ...compiled.configuration,
+      mcpServers: { ...compiled.configuration.mcpServers, [serverName]: localServer } },
+    servers: { [serverName]: scopedServer }, token, signal }))
     start = structuredClone(sessionStart)
     return structuredClone(session)
   }
@@ -285,6 +323,7 @@ export function allocateInstalledWorkflowClaude(input: {
   manager.attachSession = async (native, sessionStart, signal) => {
     const attached = await attachSession(native, sessionStart, signal)
     start ??= structuredClone(sessionStart)
+    session = structuredClone(attached)
     opened = true
     return attached
   }
@@ -293,15 +332,19 @@ export function allocateInstalledWorkflowClaude(input: {
     const admitted = await admit(message, signal)
     if (!opened && native.nativeSessionId === session.nativeSessionId) {
       opened = true
-      yield* startInitialTurn(start, { ...admitted, onSessionObserved: async observed => {
-        if (!same(observed, session)) throw new DomainError('CLAUDE_SESSION_MISMATCH',
-          'Claude started another session than the one this execution reported.', 409)
-      } }, signal)
+      initializing = true
+      try {
+        yield* startInitialTurn(start, { ...admitted, onSessionObserved: async observed => {
+          if (!same(observed, session)) throw new DomainError('CLAUDE_SESSION_MISMATCH',
+            'Claude started another session than the one this execution reported.', 409)
+          initializing = false
+        } }, signal)
+      } finally { initializing = false }
       return
     }
     const attached = await attachSession(native, start, signal)
     yield* startTurn(attached, admitted, signal)
   }
-  return { manager, session: structuredClone(session),
+  return { manager, get session() { return structuredClone(session) },
     ownsSession: native => same(native, session) && (manager.hasResidentSession(native) || !!start && !opened) }
 }

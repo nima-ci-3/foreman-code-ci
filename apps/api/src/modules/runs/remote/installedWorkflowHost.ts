@@ -777,8 +777,7 @@ class InstalledWorkflowHostRuntime {
       || configurationContext.workingDirectory !== capture.facts.executionPlacement.workingTree.canonicalCwd) {
       unavailable('accepted_configuration_conflict')
     }
-    const request = configurationContext.workflowRequest
-    if (!actual.mcp || !request) unavailable('original_native_start_missing')
+    if (!actual.mcp) unavailable('original_native_start_missing')
     // Declared artifact outputs are captured from Codex native file contexts only.
     if (actual.placement.payload.kind === 'agent' && actual.placement.payload.artifactOutputs) {
       unavailable('claude_artifact_outputs_unsupported')
@@ -793,7 +792,8 @@ class InstalledWorkflowHostRuntime {
         await this.reserveResidentLaunch(actual)
       },
       mcpEndpoint: actual.mcp!.endpoint, credential: () => actual.applicationAccess?.token,
-      inspectionStart: () => ({ request: structuredClone(request!), correlationId: `execution:${actual.intent.executionId}` }),
+      // Main sends the accepted request with prepare; discovery before it has none yet.
+      inspectionStart: () => actual.nativeStart && structuredClone(actual.nativeStart),
       authority: async (claudeRequest, signal) => {
         const reply = await this.forBinding(actual.context.binding)(EXECUTION_AUTHORITY_EXTENSION.namespace, {
           method: 'claude-authority', request: claudeRequest,
