@@ -4,8 +4,8 @@ import { lstat, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkerError } from './diagnostics.mjs';
 
-/** Called under the installation lock; keep the launcher's approved Node and environment. */
-export async function migratePinnedCompanionLauncher(root) {
+/** Keep the launcher's environment while following the installed release and verified runtime. */
+export async function migratePinnedCompanionLauncher(root, { node } = {}) {
   const launcher = join(root, INSTALLATION_NAMES.launchers.companion);
   let info;
   try { info = await lstat(launcher); }
@@ -25,9 +25,12 @@ export async function migratePinnedCompanionLauncher(root) {
       pinnedRoots.set(installedRoot, await realpath(installedRoot));
     }
   }
-  const migrated = script.replace(pinned, (entry, installedRoot) =>
+  let migrated = script.replace(pinned, (entry, installedRoot) =>
     pinnedRoots.get(installedRoot) === canonicalRoot
       ? `'${join(canonicalRoot, 'current/src/companion.mjs')}'` : entry);
+  if (node) migrated = migrated.replace(/exec '[^'\n]+' '([^'\n]+)\/current\/src\/companion\.mjs'/g,
+    (entry, installedRoot) => installedRoot === canonicalRoot
+      ? `exec '${node}' '${join(canonicalRoot, 'current/src/companion.mjs')}'` : entry);
   if (migrated === script) return;
   const temporary = `${launcher}.${randomUUID()}`;
   try {

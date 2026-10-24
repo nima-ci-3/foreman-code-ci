@@ -14,7 +14,7 @@ import { WORKER_UPDATE_ATTEMPT_TIMEOUT_MS } from '@foreman-code/contracts/worker
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const facts = {
-  os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
+  os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
   rootPersistent: true, homePersistent: true,
 };
 const expected = { protocolVersion: 1, identityFormat: 1 };

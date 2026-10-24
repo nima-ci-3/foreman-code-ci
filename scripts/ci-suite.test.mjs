@@ -340,7 +340,7 @@ function runNodeBootstrap(t, failedAttempts, restoredNode = false) {
   mkdirSync(home)
   mkdirSync(join(directory, '.logs'))
   if (restoredNode) {
-    const bin = join(home, '.nvm/versions/node/v22.23.2/bin')
+    const bin = join(home, '.nvm/versions/node/v24.22.1/bin')
     mkdirSync(bin, { recursive: true })
     writeFileSync(join(bin, 'node'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
   }
@@ -386,8 +386,8 @@ test('cloud Node bootstrap recovers from a transient version lookup failure usin
   const { result, calls, shellEnvironment } = runNodeBootstrap(t, 1)
   assert.equal(result.status, 0, result.stderr)
   const installs = calls.filter(call => call.startsWith('nvm install '))
-  assert.deepEqual(installs, ['nvm install 22.23.2', 'nvm install 22.23.2'])
-  assert.ok(calls.includes('nvm which 22.23.2'))
+  assert.deepEqual(installs, ['nvm install 24.22.1', 'nvm install 24.22.1'])
+  assert.ok(calls.includes('nvm which 24.22.1'))
   assert.ok(calls.includes('corepack enable'))
   assert.ok(calls.includes('node --version'))
   assert.ok(shellEnvironment.includes(process.execPath.slice(0, process.execPath.lastIndexOf('/'))))
@@ -396,10 +396,10 @@ test('cloud Node bootstrap recovers from a transient version lookup failure usin
 test('cloud Node bootstrap stops after three failed installs before enabling the package manager', t => {
   const { result, calls, shellEnvironment } = runNodeBootstrap(t, 10)
   assert.equal(result.status, 3)
-  assert.equal(calls.filter(call => call === 'nvm install 22.23.2').length, 3)
+  assert.equal(calls.filter(call => call === 'nvm install 24.22.1').length, 3)
   assert.equal(calls.some(call => call.startsWith('corepack ')), false)
   assert.equal(shellEnvironment, '')
-  assert.match(result.stderr, /Version '22\.23\.2' not found/)
+  assert.match(result.stderr, /Version '24\.22\.1' not found/)
 })
 
 for (const provider of ['github', 'circleci', 'circleci-ssh']) {
@@ -521,7 +521,7 @@ test('cloud Node bootstrap uses the cached toolchain without invoking nvm', t =>
   assert.equal(calls.some(call => call.startsWith('nvm ')), false)
   assert.ok(calls.includes('corepack enable'))
   assert.ok(calls.includes('node --version'))
-  assert.match(shellEnvironment, /\.nvm\/versions\/node\/v22\.23\.2\/bin/)
+  assert.match(shellEnvironment, /\.nvm\/versions\/node\/v24\.22\.1\/bin/)
 })
 
 test('cloud startup installs the harness CLIs once into a cacheable prefix and reuses them', async t => {
