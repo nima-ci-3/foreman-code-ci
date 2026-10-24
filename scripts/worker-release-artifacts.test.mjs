@@ -365,6 +365,22 @@ test('publishes a GitHub asset for each committed production target', async t =>
   assert.deepEqual(uploaded, targets)
 })
 
+test('refuses to publish an Ubuntu 24.04 Worker without a verified native browser unit', async t => {
+  const f = await fixture(t)
+  const run = async (...args) => {
+    await f.run(...args)
+    const directory = args[1][2]
+    const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
+    delete manifest.browserRuntime
+    manifest.browserRuntimeStatus = { state: 'failed', retryable: true, reason: 'Native browser artifact unavailable' }
+    manifest.files = manifest.files.filter(file => !file.path.startsWith('artifacts/browser-runtime/'))
+    await rm(join(directory, 'artifacts/browser-runtime'), { recursive: true, force: true })
+    await writeFile(join(directory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  }
+  await assert.rejects(buildWorkerReleaseArtifacts({ ...f, run }), /Ubuntu 24.04 Worker publication requires a verified browser runtime/)
+  await assert.rejects(stat(f.directory), { code: 'ENOENT' })
+})
+
 function commitFixture(repository) {
   execFileSync('git', ['add', '-u'], { cwd: repository })
   execFileSync('git', ['add', 'apps/api'], { cwd: repository })
