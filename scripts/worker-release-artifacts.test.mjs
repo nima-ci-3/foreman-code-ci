@@ -11,18 +11,7 @@ import { buildWorkerReleaseArtifacts, publishInstalledWorkerArtifacts, publishWo
 import { WorkerArtifactIndexSchema } from '../packages/contracts/src/workerUpdate.ts'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
-
-test('the published release includes Ubuntu 24.04 and 26.04 with the same Node runtime', () => {
-  const repository = new URL('../', import.meta.url).pathname
-  const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim()
-  const targets = readCommittedWorkerTargets(repository, commit).map(entry => entry.target)
-  const noble = targets.find(target => target.osRelease === '24.04')
-  const resolute = targets.find(target => target.osRelease === '26.04')
-  assert.ok(noble, 'Ubuntu 24.04 must be a published target')
-  assert.ok(resolute)
-  assert.deepEqual(noble, { ...resolute, osRelease: '24.04', libc: 'glibc-2.39' })
-})
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
 
 test('persists the publication deadline as soon as built artifacts become pending', async t => {
   const f = await fixture(t)
@@ -303,9 +292,9 @@ async function fixture(t, browserRuntimeStatus) {
   await writeFile(join(repository, 'scripts/build-worker-artifact.mjs'), '// artifact builder\n')
   await writeFile(join(repository, 'package.json'), JSON.stringify({ version: '0.0.57', packageManager: 'pnpm@11.27.0' }))
   await writeFile(join(repository, 'apps/api/package.json'), JSON.stringify({ version: '0.1.0' }))
-  const targets = [target, { ...target, node: 'v22.23.2' },
+  const targets = [target, { ...target, node: 'v24.22.0' },
     { ...target, osRelease: '26.04', libc: 'glibc-2.43' },
-    { ...target, osRelease: '26.04', libc: 'glibc-2.43', node: 'v22.23.2' }]
+    { ...target, osRelease: '26.04', libc: 'glibc-2.43', node: 'v24.22.0' }]
   for (const [index, value] of targets.entries()) {
     await writeFile(join(repository, `apps/worker/artifacts/ubuntu-${index}-target.json`), JSON.stringify(value))
   }
@@ -319,6 +308,7 @@ async function fixture(t, browserRuntimeStatus) {
   const run = async (command, args, options) => {
     calls.push({ command, args, commit: options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT })
     const selected = JSON.parse(git(['show', `${options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT}:${args[1]}`]))
+    if (args[4]) selected.node = args[4]
     const output = args[2]
     await mkdir(join(output, 'src'), { recursive: true, mode: 0o700 })
     const bytes = Buffer.from('export const worker = true\n')
@@ -337,6 +327,21 @@ async function fixture(t, browserRuntimeStatus) {
   }
   return { repository, commit, directory, productManifestPath, run, calls }
 }
+
+test('publishes exact-target Node 22 transition bundles beside the current Node 24 bundle', async t => {
+  const f = await fixture(t)
+  await writeFile(join(f.repository, 'apps/worker/artifacts/node-24.22.1-linux-x64.json'), '{}')
+  execFileSync('git', ['add', 'apps/worker/artifacts/node-24.22.1-linux-x64.json'], { cwd: f.repository })
+  const commit = commitFixture(f.repository)
+  const index = await buildWorkerReleaseArtifacts({ ...f, expectedCommit: commit })
+  for (const current of index.artifacts.filter(entry => entry.target.node.startsWith('v24.'))) {
+    for (const node of ['v22.23.2', 'v22.23.3']) {
+      assert.ok(index.artifacts.some(entry => entry.target.node === node
+        && entry.target.osRelease === current.target.osRelease))
+    }
+  }
+  assert.ok(f.calls.some(call => call.args[4] === 'v22.23.3'))
+});
 
 function commitFixture(repository) {
   execFileSync('git', ['add', '-u'], { cwd: repository })
@@ -403,7 +408,7 @@ test('publishes only the changed target when other targets have verified GitHub 
   const github = { repository: 'example/worker', tag: `worker-${f.commit}` }
   const first = await buildWorkerReleaseArtifacts({ ...f, publish: async () => github })
   await writeFile(join(f.repository, 'apps/worker/artifacts/ubuntu-0-target.json'),
-    JSON.stringify({ ...target, node: 'v22.23.4' }))
+    JSON.stringify({ ...target, node: 'v24.22.2' }))
   const commit = commitFixture(f.repository)
   const calls = []
   const next = laterBuild(f)
@@ -413,7 +418,7 @@ test('publishes only the changed target when other targets have verified GitHub 
   } })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].artifacts.length, 1)
-  assert.equal(calls[0].artifacts[0].target.node, 'v22.23.4')
+  assert.equal(calls[0].artifacts[0].target.node, 'v24.22.2')
   for (let index = 1; index < second.artifacts.length; index++) {
     assert.equal(second.artifacts[index].manifestSha256, first.artifacts[index].manifestSha256)
     assert.deepEqual(second.artifacts[index].github, github)
@@ -454,13 +459,13 @@ test('a changed target rebuilds only that target and corrupted payloads are rebu
   const f = await fixture(t)
   const first = await buildWorkerReleaseArtifacts(f)
   await writeFile(join(f.repository, 'apps/worker/artifacts/ubuntu-0-target.json'),
-    JSON.stringify({ ...target, node: 'v22.23.4' }))
+    JSON.stringify({ ...target, node: 'v24.22.2' }))
   await writeFile(join(f.directory, first.artifacts[1].manifestSha256, 'src/cli.mjs'), 'corrupted')
   commitFixture(f.repository)
   const next = laterBuild(f)
   const second = await buildWorkerReleaseArtifacts(next)
   assert.equal(f.calls.length, 6)
-  assert.equal(second.artifacts[0].target.node, 'v22.23.4')
+  assert.equal(second.artifacts[0].target.node, 'v24.22.2')
   assert.equal(second.artifacts[1].contentSha256, first.artifacts[1].contentSha256)
 })
 

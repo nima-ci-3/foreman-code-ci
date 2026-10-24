@@ -7,7 +7,7 @@ import { persistentFixtureRoot } from './fixtureStorage.mjs';
 import { WorkerUpdater, downloadWorkerArtifact } from '../src/update.mjs';
 import { WorkerError } from '../src/diagnostics.mjs';
 
-const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
+const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
   rootPersistent: true, homePersistent: true, storagePersistent: true };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 

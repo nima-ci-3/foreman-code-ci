@@ -5,6 +5,7 @@ import { WorkerArtifactManifestSchema, WorkerArtifactReplySchema, WorkerUpdateSt
   WORKER_UPDATE_NAMESPACE, WORKER_UPDATE_VERSION, WORKER_UPDATE_MAX_BINARY_BYTES,
   WORKER_UPDATE_MAX_JSON_BYTES, WORKER_UPDATE_ATTEMPT_TIMEOUT_MS } from '../../../packages/contracts/src/workerUpdate.ts';
 import { readWorkerSmokeConfiguration } from './ciInstallSmoke.mjs';
+import { installPinnedNodeRuntime, readArtifactNodeRuntime } from './nodeRuntime.mjs';
 import { waitForUpdateOperation } from './updateOperation.mjs';
 import { workerArtifactContentSha256 } from '../../../packages/contracts/src/workerArtifactContentNode.mjs';
 import { WorkerError, workerUpdateErrorMessage } from './diagnostics.mjs';
@@ -382,6 +383,9 @@ export class WorkerUpdater {
         timeoutMs: this.options.downloadTimeoutMs, log: (msg, fields) => log(msg, { ...fields, ...targetFields }),
         onDownloadComplete: ({ source }) => this.save({}, { downloadSource: source }),
       }));
+      const nodeMetadata = await readArtifactNodeRuntime(downloading, manifest);
+      const node = nodeMetadata ? await run(() => installPinnedNodeRuntime(join(launch.root, 'node-runtimes'), nodeMetadata,
+        { signal, fetchRuntime: this.options.fetchRuntime })) : undefined;
       // Browser extraction/import readiness runs while ordinary work remains admitted.
       browserRuntimeRoot = join(launch.root, 'browser-runtime');
       const browserPreparation = await run(() => prepareBundledBrowserRuntime({ root: launch.root, artifact: downloading,
@@ -418,6 +422,7 @@ export class WorkerUpdater {
       }
       this.handoff = randomUUID();
       await this.save({ state: 'restarting' }, { restart: { ...launch, directory: installed.directory,
+        ...(node ? { node } : {}),
         ...(browserActivation ? { browserRuntime: { runtimeRoot: browserRuntimeRoot, ...browserActivation } } : {}),
         ...(ciSmoke ? { ciSmoke } : {}),
         requestId: this.handoff, restartAttempted: false, previousVersion: version,

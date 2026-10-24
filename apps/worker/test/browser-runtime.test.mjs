@@ -15,7 +15,7 @@ import { browserHostTarget } from './fixtures/browserTarget.mjs';
 import { createWorkerBrowserRuntime } from '../src/browserRuntime.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const target = { os: 'ubuntu', osRelease: '26.04', arch: 'x64', libc: 'glibc-2.43', node: 'v22.23.2' };
+const target = { os: 'ubuntu', osRelease: '26.04', arch: 'x64', libc: 'glibc-2.43', node: 'v24.22.0' };
 const expected = { protocolVersion: 1, identityFormat: 1 };
 const ready = async () => ({ ready: true });
 
@@ -107,7 +107,7 @@ test('a verified browser unit accepts a compatible Node patch without accepting 
   const directory = await fixture(t);
   const packed = await artifact(directory, 'runtime');
   const installed = await stageBrowserRuntime({ runtimeRoot: join(directory, 'runtime-root'), artifact: packed.output,
-    expectedSha256: packed.descriptorSha256, target: { ...target, node: 'v22.23.3' }, readiness: ready, activate: false });
+    expectedSha256: packed.descriptorSha256, target: { ...target, node: 'v24.22.1' }, readiness: ready, activate: false });
   assert.equal(installed.runtimeVersion, '1.0.0');
   for (const incompatible of [{ ...target, arch: 'arm64' }, { ...target, libc: 'glibc-2.35' }, { ...target, node: 'v20.0.0' }]) {
     assert.throws(() => validateBrowserRuntimeManifest(packed.manifest, incompatible), /target mismatch/);
@@ -120,7 +120,7 @@ test('consumes runner artifacts by source and native target and rejects corrupt 
   await writeFile(join(packed.output, 'index.json'), JSON.stringify({ format: 1, sourceCommit: commit,
     artifacts: [{ directory: '.', target, descriptorSha256: packed.descriptorSha256 }] }));
   const output = join(directory, 'consumed');
-  const copied = await copyBuiltBrowserRuntime({ directory: packed.output, output, target: { ...target, node: 'v22.23.3' }, commit });
+  const copied = await copyBuiltBrowserRuntime({ directory: packed.output, output, target: { ...target, node: 'v24.22.1' }, commit });
   assert.equal(copied.descriptorSha256, packed.descriptorSha256);
   assert.equal((await stage(join(directory, 'installed'), { output, ...copied })).runtimeVersion, '1.0.0');
   await assert.rejects(copyBuiltBrowserRuntime({ directory: packed.output, output: join(directory, 'wrong-source'),
