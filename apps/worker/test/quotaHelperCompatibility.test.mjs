@@ -11,7 +11,7 @@ import { persistentFixtureRoot } from './fixtureStorage.mjs';
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const targets = [
-  'test-hosts/ubuntu-24.04-x64-target.json', 'ubuntu-26.04-x64-target.json',
+  'ubuntu-24.04-x64-target.json', 'ubuntu-26.04-x64-target.json',
   'test-hosts/ubuntu-24.04-x64-node-22.23.2-target.json', 'test-hosts/ubuntu-26.04-x64-node-22.23.2-target.json',
 ];
 
@@ -40,15 +40,17 @@ for (const name of targets) {
     const directory = await mkdtemp(join(containers, 'release-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const output = join(directory, 'release');
+    const targetFile = `apps/worker/artifacts/${name}`;
+    const target = JSON.parse(await readFile(join(repository, targetFile), 'utf8'));
     const build = spawnSync(process.execPath, [join(repository, 'scripts/build-worker-artifact.mjs'),
-      native.file, output], { cwd: repository, encoding: 'utf8', timeout: 120_000 });
+      targetFile, output], { cwd: repository, encoding: 'utf8', timeout: 120_000 });
     assert.ifError(build.error);
     assert.equal(build.status, 0, build.stderr);
     const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.target, target);
     const helper = join(output, 'artifacts/job-quota-query');
-    const target = JSON.parse(await readFile(join(repository, 'apps/worker/artifacts', name), 'utf8'));
     const requirements = await inspectQuotaHelperAbi(helper, target);
-    t.diagnostic(JSON.stringify({ buildTarget: manifest.target, testedTarget: target, requirements }));
+    t.diagnostic(JSON.stringify({ buildHost: native.target, buildTarget: manifest.target, testedTarget: target, requirements }));
     const image = `docker.io/library/ubuntu:${target.osRelease}`;
     if (!images.has(image)) {
       const pull = podman(['pull', image], 120_000);

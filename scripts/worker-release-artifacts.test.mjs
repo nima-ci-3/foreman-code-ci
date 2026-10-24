@@ -288,7 +288,7 @@ function assetSimulator() {
   }
 }
 
-async function fixture(t, browserRuntimeStatus) {
+async function fixture(t, browserRuntimeStatus, reviewedTargets) {
   const cache = join(homedir(), '.cache', 'foreman-tmp')
   await mkdir(cache, { recursive: true })
   const repository = await mkdtemp(join(cache, 'worker-release-artifacts-'))
@@ -303,7 +303,7 @@ async function fixture(t, browserRuntimeStatus) {
   await writeFile(join(repository, 'scripts/build-worker-artifact.mjs'), '// artifact builder\n')
   await writeFile(join(repository, 'package.json'), JSON.stringify({ version: '0.0.57', packageManager: 'pnpm@11.27.0' }))
   await writeFile(join(repository, 'apps/api/package.json'), JSON.stringify({ version: '0.1.0' }))
-  const targets = [target, { ...target, node: 'v22.23.2' },
+  const targets = reviewedTargets ?? [target, { ...target, node: 'v22.23.2' },
     { ...target, osRelease: '26.04', libc: 'glibc-2.43' },
     { ...target, osRelease: '26.04', libc: 'glibc-2.43', node: 'v22.23.2' }]
   for (const [index, value] of targets.entries()) {
@@ -337,6 +337,33 @@ async function fixture(t, browserRuntimeStatus) {
   }
   return { repository, commit, directory, productManifestPath, run, calls }
 }
+
+test('publishes a GitHub asset for each committed production target', async t => {
+  const repository = new URL('../', import.meta.url).pathname
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim()
+  const targets = readCommittedWorkerTargets(repository, commit).map(entry => entry.target)
+  const f = await fixture(t, undefined, targets)
+  const index = await buildWorkerReleaseArtifacts(f)
+  const simulate = assetSimulator()
+  const uploaded = []
+  const run = async (command, args) => {
+    if (command === 'tar') return execFileSync(command, args)
+    if (command === 'gh' && args[1] === 'upload') {
+      for (const path of args.slice(3, args.indexOf('--repo'))) {
+        uploaded.push(JSON.parse(execFileSync('tar', ['-xOzf', path, './manifest.json'], { encoding: 'utf8' })).target)
+      }
+    }
+    return simulate(command, args)
+  }
+  const published = await publishInstalledWorkerArtifacts({ directory: f.directory, repositoryName: 'example/worker',
+    commit: f.commit, run })
+  assert.equal(published.publication.state, 'published')
+  assert.deepEqual(published.artifacts.map(artifact => artifact.target), targets)
+  assert.equal(index.artifacts.length, 2)
+  assert.deepEqual(new Set(published.artifacts.map(artifact => artifact.target.osRelease)), new Set(['24.04', '26.04']))
+  assert.equal(new Set(published.artifacts.map(artifact => artifact.manifestSha256)).size, 2)
+  assert.deepEqual(uploaded, targets)
+})
 
 function commitFixture(repository) {
   execFileSync('git', ['add', '-u'], { cwd: repository })

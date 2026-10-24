@@ -148,6 +148,7 @@ try {
     commit, target, output: join(output, 'artifacts/browser-runtime') });
   browserRuntimeStatus = { state: 'ready', retryable: false, reason: null };
 } catch (error) {
+  if (process.env.FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS) throw error;
   browserRuntimeStatus = { state: 'failed', retryable: true, reason: error.message };
   console.warn(`Core Worker artifact built; browser runtime unavailable: ${error.message}`);
 }
