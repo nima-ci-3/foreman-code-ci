@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import type { ClaudeSdkClient, ClaudeSdkUserMessage } from './claudeSdk/port.js'
 import { ClaudeBoundedQueue } from './claudeSdk/queue.js'
 import { workflowRequest } from './claudeSdk/__tests__/sessionManager.js'
@@ -50,7 +51,7 @@ function allocate() {
     authority, callbackJournal: { read: async () => undefined, write: async () => undefined,
       forTool: async () => undefined, acknowledged: async () => [] }, deviceId: 'device' })
   return { claude, authority, start: { request: { ...request, configuration }, correlationId: 'execution:execution',
-    environment: { agentId: 'agent', variables: {} } } }
+    environment: { agentId: 'agent', variables: { [INSTALLATION_NAMES.environment.MCP_TOKEN]: 'scoped-token' } } } }
 }
 
 it('reports the chosen session at preparation and delivers the scoped credential through the Worker MCP endpoint', async () => {

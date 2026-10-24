@@ -8,6 +8,7 @@ describe('Claude session chosen before the first input', () => {
     const output = drain(f.manager.startInitialTurn(start, { prompt: 'first', clientCorrelationId: 'operator:one',
       onSessionObserved: async session => { observed = session.nativeSessionId } }))
     const message = await f.nextMessage()
+    void f.frames.offer({ type: 'assistant', session_id: 'native-session', uuid: 'reply', user_message_uuid: message.uuid })
     void f.frames.offer({ type: 'result', session_id: 'native-session', uuid: 'result', user_message_uuid: message.uuid,
       subtype: 'success', is_error: false, result: 'done' })
     await output
