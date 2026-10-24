@@ -21,7 +21,7 @@ function safePath(path) {
 }
 export function matchesBrowserRuntimeTarget(actual, expected) {
   return ['os', 'osRelease', 'arch', 'libc'].every(key => actual?.[key] === expected?.[key])
-    && /^v24\./.test(actual?.node ?? '') && /^v24\./.test(expected?.node ?? '');
+    && /^v22\./.test(actual?.node ?? '') && /^v22\./.test(expected?.node ?? '');
 }
 
 export function validateBrowserRuntimeManifest(manifest, target) {
@@ -578,8 +578,18 @@ export async function pruneBrowserRuntimeVersions(runtimeRoot) {
 export async function stageBundledBrowserRuntime({ root, artifact, manifest, target, signal, readiness }) {
   const entry = manifest.files.find(file => file.path === 'artifacts/browser-runtime/browser-runtime.json');
   if (!entry) return null;
-  return stageBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), artifact: join(artifact, 'artifacts/browser-runtime'),
-    expectedSha256: entry.sha256, target, signal, readiness, activate: false });
+  try {
+    return await stageBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), artifact: join(artifact, 'artifacts/browser-runtime'),
+      expectedSha256: entry.sha256, target, signal, readiness, activate: false });
+  } catch (error) {
+    if (/No usable sandbox!/.test(`${error.message}\n${error.stderr ?? ''}`)) {
+      const profile = join(artifact, 'runtime/browser/apparmor/foreman-browser-runtime').replaceAll("'", "'\\''");
+      throw new Error('Browser sandbox needs the Foreman AppArmor user-namespace profile. Run:\n'
+        + `sudo install -m 0644 '${profile}' /etc/apparmor.d/foreman-browser-runtime && sudo apparmor_parser -r /etc/apparmor.d/foreman-browser-runtime`
+        + '\nThen retry the browser runtime; reinstalling the Worker is unnecessary.', { cause: error });
+    }
+    throw error;
+  }
 }
 
 /** Optional browser setup may fail independently of the verified core release. Cancellation is not optional. */

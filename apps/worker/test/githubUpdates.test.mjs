@@ -7,7 +7,7 @@ import { persistentFixtureRoot } from './fixtureStorage.mjs';
 import { WorkerUpdater, downloadWorkerArtifact } from '../src/update.mjs';
 import { WorkerError } from '../src/diagnostics.mjs';
 
-const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
+const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
   rootPersistent: true, homePersistent: true, storagePersistent: true };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -32,6 +32,32 @@ async function fixture(t) {
   };
   return { directory, release, request, requests };
 }
+
+test('an unmatched host fails visibly before downloading or staging another target', async t => {
+  const f = await fixture(t);
+  const stateDirectory = join(f.directory, 'state');
+  await mkdir(stateDirectory, { mode: 0o700 });
+  const requests = [];
+  const unsupported = { ...facts, osRelease: '22.04', libc: 'glibc-2.35' };
+  const request = async payload => {
+    requests.push(payload);
+    return { payload: { operation: 'release', release: null } };
+  };
+  const updater = await new WorkerUpdater({
+    stateDirectory, version: '1.0.0', manifestSha256: 'c'.repeat(64), facts: unsupported,
+    assertStateOwnership: () => {}, connection: () => ({ captureRequest: () => ({ request }) }),
+    locateLaunch: async () => assert.fail('An unmatched host must not begin installation'),
+    stage: async () => assert.fail('An unmatched host must not stage another target'),
+  }).initialize();
+  t.after(() => updater.close());
+  await assert.rejects(updater.start(), { code: 'worker_update_target_unavailable' });
+  assert.deepEqual(requests, [{ operation: 'release', target: { os: unsupported.os, osRelease: unsupported.osRelease,
+    arch: unsupported.arch, libc: unsupported.libc, node: unsupported.node } }]);
+  const status = await updater.status();
+  assert.equal(status.state, 'failed');
+  assert.match(status.lastError, /worker_update_target_unavailable/);
+  assert.equal(status.currentVersion, '1.0.0');
+});
 
 test('missing GitHub assets fail visibly without requesting any bundle bytes from Main', async t => {
   const f = await fixture(t);

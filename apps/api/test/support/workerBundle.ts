@@ -35,7 +35,7 @@ export async function workerBundleFixture() {
   const directory = await mkdtemp(join(parent, 'worker-bundle-'))
   const identity = { mainId: randomUUID(), deviceId: randomUUID(), workerInstallationId: randomUUID(),
     bootId: randomUUID(), keyRevision: 1, authorizationRevision: 1 }
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
   const manifest = { format: 1 as const, version: '1.1.0', commit: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64),
     packageManager: 'pnpm@11.27.0' as const, protocolVersion: 1 as const, identityFormat: 1 as const, target,
     files: [{ path: 'src/cli.mjs', size: 1, sha256: 'c'.repeat(64) }] }

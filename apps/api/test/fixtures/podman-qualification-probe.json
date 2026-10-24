@@ -3,7 +3,7 @@
   "containerId": "4402f498e1650a162f226686582daa6d2be05856ce88d0032369796d159cf760",
   "probe": {
     "toolchain": {
-      "node": "v24.22.1",
+      "node": "v22.23.3",
       "corepack": "0.36.0",
       "pnpm": "11.27.0",
       "git": "git version 2.39.5",

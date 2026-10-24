@@ -8,7 +8,7 @@ import { WorkerArtifactReplySchema } from '@foreman-code/contracts/computer-main
 import { createWorkerArtifactExtension, readWorkerBundleIdentity } from './workerArtifacts.js'
 import { createProductionWorkerArtifactExtension } from './workerArtifactsProduction.js'
 
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
 const context = { binding: {
   mainId: '11111111-1111-4111-8111-111111111111', deviceId: '22222222-2222-4222-8222-222222222222',
   workerInstallationId: '33333333-3333-4333-8333-333333333333', bootId: '44444444-4444-4444-8444-444444444444',
@@ -48,6 +48,32 @@ async function release() {
 }
 
 describe('production Worker artifact composition', () => {
+  it('selects the published Ubuntu 24.04 or 26.04 bundle for the requesting Worker and rejects an unmatched host', async () => {
+    const f = await release()
+    const nextTarget = { ...target, osRelease: '26.04', libc: 'glibc-2.43' }
+    const manifest = { ...f.manifest, target: nextTarget }
+    const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)
+    const manifestSha256 = createHash('sha256').update(bytes).digest('hex')
+    await mkdir(join(f.artifacts, manifestSha256), { mode: 0o700 })
+    await writeFile(join(f.artifacts, manifestSha256, 'manifest.json'), bytes)
+    await writeFile(join(f.artifacts, 'index.json'), JSON.stringify({ ...f.index,
+      artifacts: [...f.index.artifacts, { target: nextTarget, manifestSha256 }] }))
+    const extension = createProductionWorkerArtifactExtension({ environment: {}, releaseDirectory: f.directory })
+    for (const expected of [{ target, manifest: f.manifest, manifestSha256: f.manifestSha256 },
+      { target: nextTarget, manifest, manifestSha256 }]) {
+      const reply = WorkerArtifactReplySchema.parse((await extension.handle!({ operation: 'release', target: expected.target }, context)).payload)
+      expect(reply).toEqual({ operation: 'release', release: { version: f.manifest.version,
+        manifest: expected.manifest, manifestSha256: expected.manifestSha256, github: f.index.github } })
+      await expect(readWorkerBundleIdentity({ directory: f.artifacts, version: f.manifest.version }, expected.target))
+        .resolves.toMatchObject({ target: expected.target, manifestSha256: expected.manifestSha256 })
+    }
+    const unsupported = { ...target, osRelease: '22.04', libc: 'glibc-2.35' }
+    await expect(extension.handle!({ operation: 'release', target: unsupported }, context))
+      .resolves.toEqual({ payload: { operation: 'release', release: null } })
+    await expect(readWorkerBundleIdentity({ directory: f.artifacts, version: f.manifest.version }, unsupported))
+      .rejects.toMatchObject({ code: 'WORKER_BUNDLE_UNPUBLISHED' })
+  })
+
   it('serves product release 0.0.56 while the API package uses version 0.1.0', async () => {
     const f = await release()
     const extension = createProductionWorkerArtifactExtension({ environment: {}, releaseDirectory: f.directory })

@@ -18,7 +18,7 @@ const lifecycle = componentLogger('lifecycle')
 installProcessLifecycleLogging(lifecycle)
 
 async function main() {
-  // loadEnvFile is available at the declared Node 24.0 runtime baseline, unlike
+  // loadEnvFile is available at the declared Node 22.0 runtime baseline, unlike
   // --env-file-if-exists. Missing local configuration is normal in production.
   try {
     loadProductEnvFile()

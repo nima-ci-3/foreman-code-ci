@@ -10,6 +10,7 @@ export const schemaWorkerEntrypoint = 'apps/api/src/modules/harnesses/compatibil
 
 export const workerSnapshotFiles = [
   'apps/web/public/graphql.svg',
+  'runtime/browser/apparmor/foreman-browser-runtime',
   'scripts/build-worker-artifact.mjs',
   'scripts/quota-helper-abi.mjs',
   'scripts/worker-artifact-files.mjs',

@@ -11,7 +11,6 @@ import { pruneWorkerVersions } from './installation.mjs';
 import { readWorkerStatus } from './runtime.mjs';
 import { WORKER_UPDATE_STARTUP_TIMEOUT_MS } from './ciSmokeTiming.mjs';
 import { waitForUpdateOperation } from './updateOperation.mjs';
-import { migratePinnedCompanionLauncher } from './companionLauncher.mjs';
 import { offlineBrowserRuntimeLifecycle, rollbackBrowserRuntime, readInstalledBrowserRuntime,
   pruneBrowserRuntimeVersions } from './browserRuntimeInstall.mjs';
 
@@ -118,27 +117,24 @@ export async function migrateWorkerService(plan, { run = execute } = {}) {
     throw new WorkerError('worker_update_service_unsupported');
   }
   const [line, node, entrypoint] = starts[0];
-  plan.previousNode ??= node;
-  const selectedNode = plan.node ?? node;
   const stable = join(plan.root, 'current', 'src', 'cli.mjs');
-  if (entrypoint === stable && node === selectedNode) {
+  if (entrypoint === stable) {
     await run('/usr/bin/systemctl', ['--user', 'daemon-reload'], options);
     return;
   }
-  if (entrypoint !== stable && entrypoint !== join(plan.previousDirectory, 'src', 'cli.mjs')) {
+  if (entrypoint !== join(plan.previousDirectory, 'src', 'cli.mjs')) {
     throw new WorkerError('worker_update_service_unsupported');
   }
   const temporary = `${plan.unitPath}.${randomUUID()}`;
   const handle = await open(temporary, 'wx', 0o600);
   try {
-    await handle.writeFile(unit.replace(line, `ExecStart=${selectedNode} ${stable} run --state ${plan.stateDirectory}`));
+    await handle.writeFile(unit.replace(line, `ExecStart=${node} ${stable} run --state ${plan.stateDirectory}`));
     await handle.sync();
   } finally { await handle.close(); }
   try {
     await rename(temporary, plan.unitPath);
     await syncDirectory(dirname(plan.unitPath));
   } finally { await rm(temporary, { force: true }); }
-  if (plan.node) await migratePinnedCompanionLauncher(plan.root, { node: selectedNode });
   await run('/usr/bin/systemctl', ['--user', 'daemon-reload'], options);
 }
 
@@ -321,7 +317,6 @@ export async function superviseWorkerUpdate(record, ports = {}) {
         await persist(plan.stateDirectory, record);
       }
       await switchPointer(plan.pointer, plan.previousDirectory);
-      if (plan.previousNode) await prepareService({ ...plan, node: plan.previousNode });
       await restartWorker();
       await ready({ stateDirectory: plan.stateDirectory, version: plan.previousVersion,
         workerInstallationId: plan.workerInstallationId });
