@@ -1,17 +1,17 @@
 import { expect, it, vi } from 'vitest'
-import type { ClaudeSdkClient, ClaudeSdkUserMessage } from '../../harnesses/claudeSdk/port.js'
-import { ClaudeBoundedQueue } from '../../harnesses/claudeSdk/queue.js'
-import { workflowRequest } from '../../harnesses/claudeSdk/__tests__/sessionManager.js'
+import type { ClaudeSdkClient, ClaudeSdkUserMessage } from './claudeSdk/port.js'
+import { ClaudeBoundedQueue } from './claudeSdk/queue.js'
+import { workflowRequest } from './claudeSdk/__tests__/sessionManager.js'
 import { allocateInstalledWorkflowClaude, type InstalledClaudeWorkflowCapture } from './installedWorkflowClaude.js'
 
 const provider = vi.hoisted(() => ({ client: undefined as ClaudeSdkClient | undefined }))
-vi.mock('../../harnesses/claudeSdk/configuration.js', () => ({
+vi.mock('./claudeSdk/configuration.js', () => ({
   compileClaudeConfiguration: (configuration: { mcpServers: unknown }) => ({
     configuration, mcpServers: configuration.mcpServers, env: {},
     qualification: { basicTurns: true, resume: true, fork: true, history: true, policy: { alwaysAppliedToolHook: true } },
   }),
 }))
-vi.mock('../../harnesses/claudeSdk/official.js', () => ({ loadOfficialClaudeSdk: async () => provider.client }))
+vi.mock('./claudeSdk/official.js', () => ({ loadOfficialClaudeSdk: async () => provider.client }))
 
 function sdk() {
   const frames = new ClaudeBoundedQueue<unknown>(32)

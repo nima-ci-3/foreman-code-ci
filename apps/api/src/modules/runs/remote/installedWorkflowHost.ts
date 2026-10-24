@@ -43,9 +43,8 @@ import { CodexAppServerSessionManager, safeEnvironment } from '../../harnesses/c
 import { inspectInstalledCodex } from '../../harnesses/installedCodexInspection.js'
 import { PayloadFingerprintCache } from '../../harnesses/payloadFingerprintCache.js'
 import { createInstalledCodexQualificationReader } from '../../harnesses/installedCodexQualification.js'
-import { inspectInstalledClaude } from '../../harnesses/installedClaudeInspection.js'
-import { allocateInstalledWorkflowClaude, createInstalledClaudeWorkflowReader, installedWorkflowClaudeCallbackJournal,
-  type InstalledWorkflowClaude } from './installedWorkflowClaude.js'
+import { allocateInstalledWorkflowClaude, createInstalledClaudeWorkflowReader, inspectInstalledClaude,
+  installedWorkflowClaudeCallbackJournal, type InstalledWorkflowClaude } from '../../harnesses/index.js'
 import { createInstalledCodexDependencies } from '../../harnesses/installedCodexDependencies.js'
 import { normalizeHarnessVersion } from '../../harnesses/qualification/profiles.js'
 import { NativeProcessRegistry, type NativeLaunchObservation, type NativeProcessRecovery } from '../../harnesses/recovery/processRegistry.js'
