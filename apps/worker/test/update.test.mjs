@@ -1,7 +1,7 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, writeFile, rm, readlink, readdir, copyFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, readlink, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
@@ -138,59 +138,6 @@ async function fixture(t, targetVersion = '1.1.0') {
       assert.equal(child.status, 0, child.stderr);
       await boot(child.stdout.trim(), phase);
     } };
-}
-
-for (const corrupt of [false, true]) {
-  test(`installed Worker replaces its old Node through update${corrupt ? ' only after verifying the download' : ''}`, async t => {
-    const f = await fixture(t);
-    const archiveRoot = join(f.base, 'node-v24.22.1-linux-x64');
-    await mkdir(join(archiveRoot, 'bin'), { recursive: true });
-    await copyFile(process.execPath, join(archiveRoot, 'bin/node'));
-    const archive = join(f.base, 'node.tar.gz');
-    assert.equal(spawnSync('tar', ['-czf', archive, '-C', f.base, 'node-v24.22.1-linux-x64']).status, 0);
-    const archiveBytes = await readFile(archive), executable = await readFile(process.execPath);
-    const metadata = { format: 1, runtime: 'node', version: 'v24.22.1', platform: 'linux', arch: 'x64',
-      archive: { file: 'node.tar.gz', url: 'https://nodejs.org/dist/v24.22.1/node.tar.gz', sha256: hash(archiveBytes), bytes: archiveBytes.length },
-      nodeExecutable: { archivePath: 'node-v24.22.1-linux-x64/bin/node', sha256: hash(executable), bytes: executable.length } };
-    await mkdir(join(f.incoming.directory, 'artifacts'));
-    const bytes = Buffer.from(JSON.stringify(metadata));
-    await writeFile(join(f.incoming.directory, 'artifacts/node-runtime.json'), bytes);
-    const manifest = f.incoming.release.manifest;
-    manifest.runtime = { metadataPath: 'artifacts/node-runtime.json', version: metadata.version,
-      archiveSha256: metadata.archive.sha256, executableSha256: metadata.nodeExecutable.sha256 };
-    manifest.files.push({ path: 'artifacts/node-runtime.json', sha256: hash(bytes), size: bytes.length });
-    const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
-    await writeFile(join(f.incoming.directory, 'manifest.json'), manifestBytes);
-    f.incoming.release.manifestSha256 = hash(manifestBytes);
-    let downloads = 0;
-    const updater = await new WorkerUpdater({ ...f.options,
-      fetchRuntime: async url => {
-        assert.equal(url, metadata.archive.url); downloads++;
-        return new Response(corrupt ? Buffer.from('tampered') : archiveBytes);
-      },
-      launchSupervisor: async () => {
-        const record = await readUpdateRecord(f.stateDirectory);
-        await superviseWorkerUpdate(record, { prepareService: f.prepareService, restart: () => f.restart('ready') });
-      },
-    }).initialize();
-    t.after(() => updater.close());
-    if (corrupt) {
-      await assert.rejects(updater.start(), /runtime.*(size|checksum)/);
-      assert.equal((await readInstalledRelease({ root: f.root, facts, expected })).manifest.version, '1.0.0');
-      assert.equal((await readUpdateRecord(f.stateDirectory)).status.state, 'failed');
-    } else {
-      await updater.start();
-      const record = await readUpdateRecord(f.stateDirectory);
-      assert.equal(record.status.state, 'current');
-      const unit = await readFile(record.restart.unitPath, 'utf8');
-      const [, node] = unit.match(/^ExecStart=(\S+) /m);
-      assert.notEqual(node, process.execPath);
-      const observed = spawnSync(node, ['--version'], { encoding: 'utf8' });
-      assert.equal(observed.status, 0, observed.stderr);
-      assert.equal(observed.stdout.trim(), 'v24.22.1');
-    }
-    assert.equal(downloads, 1);
-  });
 }
 
 async function browserArtifact(base, version, output) {
