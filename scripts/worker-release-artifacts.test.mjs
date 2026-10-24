@@ -13,6 +13,17 @@ import { WorkerArtifactIndexSchema } from '../packages/contracts/src/workerUpdat
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
 
+test('the published release includes Ubuntu 24.04 and 26.04 with the same Node runtime', () => {
+  const repository = new URL('../', import.meta.url).pathname
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim()
+  const targets = readCommittedWorkerTargets(repository, commit).map(entry => entry.target)
+  const noble = targets.find(target => target.osRelease === '24.04')
+  const resolute = targets.find(target => target.osRelease === '26.04')
+  assert.ok(noble, 'Ubuntu 24.04 must be a published target')
+  assert.ok(resolute)
+  assert.deepEqual(noble, { ...resolute, osRelease: '24.04', libc: 'glibc-2.39' })
+})
+
 test('persists the publication deadline as soon as built artifacts become pending', async t => {
   const f = await fixture(t)
   const before = Date.now()
