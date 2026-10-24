@@ -103,6 +103,37 @@ read-only.
 
 ## Build and approve an artifact
 
+Published Worker releases include Ubuntu 24.04 x64 (`glibc-2.39`) and Ubuntu
+26.04 x64 (`glibc-2.43`), with the same reviewed Node version. Download the
+matching bundle from `worker-<commit>` and run `./install <manifest sha>` with
+that Node version installed. Updates select the exact host target; another
+Ubuntu release or libc does not select a nearby target.
+
+Browser units are built on native runners at the same source commit. On each
+matching Ubuntu runner, use the pinned pnpm installation and run:
+
+```sh
+node scripts/browser-runtime-install.mjs assemble apps/worker/artifacts/ubuntu-24.04-x64-target.json "$HOME/.cache/foreman-tmp/browser-24.04"
+```
+
+Use the 26.04 target on the 26.04 runner. Assembly verifies the native host,
+resolves and locks native wheels there, and launches the actual Chromium with
+its sandbox before emitting an artifact. Transfer both artifact directories to
+Main, retaining their indexes and chunks, then collect them at that same commit:
+
+```sh
+node scripts/browser-runtime-install.mjs collect "$HOME/.cache/foreman-tmp/browser-release" "$HOME/.cache/foreman-tmp/browser-24.04" "$HOME/.cache/foreman-tmp/browser-26.04"
+export FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS="$HOME/.cache/foreman-tmp/browser-release"
+```
+
+Main consumes each target's verified unit when building the Worker release.
+A configured collection with a missing, corrupt, duplicate, or wrong-commit
+unit fails the build. Publishing a 24.04 bundle requires a ready, verified
+browser unit even when no collection was configured. Collection never relabels
+a 26.04 unit as 24.04. The quota helper remains checked against each target's
+libc by `inspectQuotaHelperAbi`;
+newer symbol requirements fail packaging.
+
 Build on the source-pinned main checkout after the orchestrator integrates W07-A/B
 and the worker manifest. Use `corepack pnpm install --frozen-lockfile` with pnpm
 11.27.0 and the existing 48-hour policy. No laptop development-stack build or npm

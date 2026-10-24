@@ -66,13 +66,6 @@ export const WorkerArtifactManifestSchema = z.object({
   protocolVersion: z.literal(1),
   identityFormat: z.literal(1),
   target: WorkerArtifactTargetSchema,
-  runtime: z.object({
-    metadataPath: z.literal('artifacts/node-runtime.json'),
-    archivePath: z.literal('artifacts/node-runtime.tar.xz').optional(),
-    version: z.string().regex(/^v\d+\.\d+\.\d+$/u),
-    archiveSha256: digest,
-    executableSha256: digest,
-  }).passthrough().optional(),
   files: z.array(z.object({
     path: artifactPath,
     sha256: digest,
