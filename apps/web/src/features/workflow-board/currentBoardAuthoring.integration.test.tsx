@@ -684,15 +684,19 @@ describe('ENG-S3-ONLY actual registered Board / shared current HTTP', () => {
     if (mode !== 'lost') return
     expect(mock.runs.size).toBe(1)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled())
+    const resolutions: unknown[] = []
+    server.use(http.post(`*/api/management/workspaces/${mock.workspaceId}/workflows/${retained.workflowId}/runs/start-resolution`, async ({ request }) => {
+      resolutions.push(await request.json())
+      return HttpResponse.json({ status: 'accepted', run: [...mock.runs.values()][0]!.run })
+    }))
     mounted.unmount(); mounted.query.clear()
     act(() => useGraphDraftStore.setState({ nextDrafts: {} })); await mount(mock, href)
-    expect(readBoardStart(key)).toEqual(retained)
-    const reconcile = await screen.findByRole('button', { name: 'Check again' })
-    await waitFor(() => expect(reconcile).toBeEnabled())
-    await user.click(reconcile)
+    expect(await screen.findByText('The earlier Run was accepted.')).toBeVisible()
     await waitFor(() => expect(readBoardStart(key)).toBeUndefined())
+    expect(resolutions).toEqual([retained])
     const requests = mock.calls.filter((call) => call.method === 'POST' && call.path.endsWith('/runs'))
-    expect(requests.at(-1)!.body).toEqual(retained); expect(mock.runs.size).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]!.body).toEqual(retained); expect(mock.runs.size).toBe(1)
   }, 30_000)
   it('Stop receipt replay is not cleanup proof; Discard does not Stop and layout does not publish', async () => {
     const mock = newBoardMock({ allowSimulatedStart: true }), user = userEvent.setup(), mounted = await mount(mock)
