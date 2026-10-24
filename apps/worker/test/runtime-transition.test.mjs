@@ -148,11 +148,13 @@ process.on('SIGTERM', async () => { await runtime.stop(); process.exit(0); });
   };
   await restart();
   await old.waitForWorkerReady({ stateDirectory, version: '1.0.0', workerInstallationId, timeoutMs: 5000, pollMs: 10 });
+  const release = { version: incoming.version, manifest: incoming.manifest,
+    manifestSha256: incoming.manifestSha256, github: incoming.github };
   const updater = await new old.WorkerUpdater({ stateDirectory, version: '1.0.0',
     releaseDirectory: installed.directory, manifestSha256: previous.manifestSha256, workerInstallationId, facts,
     assertStateOwnership: () => {}, drain: async () => {}, resume: async () => {},
     connection: () => ({ captureRequest: () => ({ request: async payload => ({ payload: payload.operation === 'release'
-      ? { operation: 'release', release: incoming } : { operation: 'ci-smoke', ciSmoke: { repository: 'example/product', commit: incoming.manifest.commit } } }) }) }),
+      ? { operation: 'release', release } : { operation: 'ci-smoke', ciSmoke: { repository: 'example/product', commit: incoming.manifest.commit } } }) }) }),
     locateLaunch: async () => ({ service: INSTALLATION_NAMES.services.worker, root, stateDirectory, unitPath,
       pointer: { kind: 'symlink', path: join(root, 'current') }, previousDirectory: installed.directory }),
     fetchAsset: async ({ destination }) => {
@@ -178,7 +180,12 @@ process.on('SIGTERM', async () => { await runtime.stop(); process.exit(0); });
         await readiness;
       },
       readStartupFailure: async () => stderr,
-      smoke: async () => { if (failure === 'smoke') throw new Error('injected CI smoke failure'); },
+      smoke: async () => {
+        if (failure !== 'smoke') return;
+        await wait(1100);
+        assert.ok((await readFile(unitPath, 'utf8')).startsWith(`ExecStart=${oldNode} `));
+        throw new Error('injected CI smoke failure');
+      },
     }),
   }).initialize();
   t.after(() => updater.close());
