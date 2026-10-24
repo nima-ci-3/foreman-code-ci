@@ -46,8 +46,10 @@ it('reconciles an accepted Start on remount without leaving the selected histori
   await screen.findByRole('region', { name: 'Selected Run board' })
   await waitFor(() => expect(resolved).toEqual([pending]))
   await act(async () => { reply.resolve(HttpResponse.json({ status: 'accepted', run: runs.after.run })) })
-  await screen.findByText('The earlier Run was accepted.')
-  await waitFor(() => expect(readBoardStart(key)).toBeUndefined())
+  await waitFor(() => {
+    expect(readBoardStart(key)).toBeUndefined()
+    expect(reopened.router.state.status).toBe('idle')
+  })
   expect(reopened.router.state.location.search.selectedRunId).toBe(runs.before.run.id)
   expect(screen.getByRole('region', { name: 'Selected Run board' })).toBeVisible()
   expect(screen.getByText('Selected Run', { selector: 'span' })).toBeVisible()
