@@ -175,7 +175,7 @@ export class HostHarnessOverrideService {
   /** Placement prepares missing Worker profiles through the same exact-host save/check path as computer settings. */
   async prepareWorkerConfiguration(principal: ManagementPrincipal, source: 'http' | 'mcp',
     configuration: RecordedHarnessConfiguration, target: HostHarnessOverride['target']): Promise<void> {
-    if (configuration.harness !== 'codex' || target.hostRef.kind !== 'device') return
+    if ((configuration.harness !== 'codex' && configuration.harness !== 'claude') || target.hostRef.kind !== 'device') return
     requireAuthorization(principal, 'harnesses:read'); requireAuthorization(principal, 'harnesses:update')
     const canonical = withAdvancedDefaults(configuration)
     const identity = commandInputHash({ target, configuration: canonical })
@@ -191,7 +191,7 @@ export class HostHarnessOverrideService {
         occupied = existing.find(value => value.instanceId === instanceId)
       }
       await this.save(principal, source, { instanceId, target, configuration: canonical,
-        presetId: 'local-default:codex', expectedRevision: 0, enabled: true,
+        presetId: `local-default:${configuration.harness}`, expectedRevision: 0, enabled: true,
         commandId: nativeProfileCheckId(target.hostRef.mainId, 'placement-save', instanceId) })
       // Preserve edited profiles; creation receipts never substitute for current readback.
       profile = await this.repository.readAuthorized(client => this.repository.latest(client, instanceId)) ?? undefined

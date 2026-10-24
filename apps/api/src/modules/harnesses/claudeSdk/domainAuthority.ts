@@ -12,6 +12,7 @@ import type { RunOwnership } from '../../runs/index.js'
 import type { PostgresOperatorConversationRepository } from '../../conversations/operatorChatRepository.js'
 import type { PostgresAgentChatRepository } from '../../conversations/index.js'
 import { DomainError } from '../../errors.js'
+import type { WorkerClaudeAuthorityRequest } from '@foreman-code/contracts/remote-execution-rpc'
 import { PostgresClaudeCallbackJournal } from './callbackJournal.js'
 import { ClaudeInteractionBridge, type ClaudeCallbackIdentity, type ClaudeInteractionAnswer, type ClaudeInteractionAuthority } from './interactions.js'
 import type { ClaudeHarnessConfiguration } from '@foreman-code/contracts/claude'
@@ -109,6 +110,11 @@ export class PostgresClaudeInteractionAuthority implements ClaudeInteractionAuth
     const row = (await this.database.query<{ active_request_id: string | null }>(
       'select active_request_id from operator_conversations where id=$1', [this.binding.conversationId])).rows[0]
     return row?.active_request_id ? this.callbackAdmission() : undefined
+  }
+
+  /** A paired Worker's execution has already passed remote execution authority; Main still checks the Run principal. */
+  async remoteWorkflowAdmission(): Promise<{ ownerPrincipalId: string; attemptId: string }> {
+    return this.workflowAdmission(this.database)
   }
 
   private async workflowAdmission(database: Database): Promise<{ ownerPrincipalId: string; attemptId: string }> {
@@ -304,4 +310,36 @@ export function createPostgresClaudeInteractionBridge(input: {
       },
       stopAutomaticResponses() { bridge.close() },
     } }
+}
+
+/** Authorizes one Claude SDK callback of a workflow execution that runs on a paired Worker. The Worker keeps the
+ * callback; Main checks the Run principal, the execution's native session and the response receipt. */
+export async function authorizeRemoteWorkflowClaudeCallback(database: Database,
+  intent: { runId: string; executionId: string }, request: WorkerClaudeAuthorityRequest): Promise<unknown> {
+  const attempt = (await database.query<{ attempt: number }>('select attempt from harness_executions where id=$1 and run_id=$2',
+    [intent.executionId, intent.runId])).rows[0]?.attempt
+  if (attempt === undefined) denied()
+  const context = request.phase === 'admission' ? undefined : request.identity
+  const authority = new PostgresClaudeInteractionAuthority(database,
+    { kind: 'workflow', runId: intent.runId, executionId: intent.executionId, attempt: attempt!, getOwner: () => undefined },
+    { nativeCallbackContext: (sessionId, toolUseId) => context
+      && context.nativeSessionId === sessionId && context.toolUseId === toolUseId ? context : undefined })
+  if (request.phase === 'admission') {
+    // A workflow whose Agents handle approvals themselves runs this Claude Agent's tools without asking, as on Main.
+    const handler = (await database.query<{ handler: string | null }>(
+      `select v.record->'definition'->'approval'->>'handler' as handler from runs r
+        join workflow_versions v on v.id=r.workflow_version_id where r.id=$1`, [intent.runId])).rows[0]?.handler
+    return { ...await authority.remoteWorkflowAdmission(), autoAllowTools: handler === 'native' }
+  }
+  if (request.phase === 'file' || request.phase === 'pending') denied()
+  const { nativeTurnId, nativeRequestId, nativeRequestType, mcpServer, ...required } = request.identity
+  const identity: ClaudeCallbackIdentity = { ...required,
+    ...(mcpServer !== undefined ? { mcpServer } : {}),
+    ...(nativeTurnId !== undefined ? { nativeTurnId } : {}),
+    ...(nativeRequestId !== undefined ? { nativeRequestId } : {}),
+    ...(nativeRequestType !== undefined ? { nativeRequestType } : {}) }
+  if (request.phase === 'response') await authority.validateResponse(identity, { outcome: request.answer.outcome,
+    ...(request.answer.reason !== undefined ? { reason: request.answer.reason } : {}) })
+  else await authority.validate(identity)
+  return { authorized: true }
 }

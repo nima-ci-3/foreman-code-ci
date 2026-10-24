@@ -53,6 +53,7 @@ export { completedNativeAssistantMessage, nativeAssistantText } from './conversa
 export { harnessMaintenanceCapabilities } from './maintenanceCapabilities.js'
 export { assertActiveHarnessConfiguration, retiredHarnessError } from './retiredHarness.js'
 export { prepareClaudeWorkflowCredentials } from './claudeSdk/workflowCredentials.js'
+export { authorizeRemoteWorkflowClaudeCallback } from './claudeSdk/domainAuthority.js'
 export type { AppMcpRoutes } from './appMcpRoutes.js'
 export { workflowProfileSelection } from './workflowProfileSelection.js'
 export type { HostHarnessInstanceProfileChecks } from './instanceSettings/profileChecks.js'

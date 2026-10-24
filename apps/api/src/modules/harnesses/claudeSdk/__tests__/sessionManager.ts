@@ -12,7 +12,7 @@ export const qualification = { sdkVersion: '0.3.284', cliVersion: '2.1.284', bas
 
 export const start = { kind: 'operator', correlationId: 'operator:one', configuration: {}, workingDirectory: '/work' } as NativeSessionStart
 
-export function fixture(decodeFactory?: Parameters<typeof createClaudeNativeSessionManager>[0]['decodeFactory'], extra: Partial<Pick<Parameters<typeof createClaudeNativeSessionManager>[0], 'liveCallbacks' | 'interactionPort' | 'qualification' | 'pendingInteractions' | 'inspectionStart' | 'expectedMcp' | 'credentialEnvironmentVariables' | 'appMcpAccess' | 'sdkOptions' | 'initializationTimeoutMs' | 'scope'>> = {}, nativeVersion = '2.1.284') {
+export function fixture(decodeFactory?: Parameters<typeof createClaudeNativeSessionManager>[0]['decodeFactory'], extra: Partial<Pick<Parameters<typeof createClaudeNativeSessionManager>[0], 'liveCallbacks' | 'interactionPort' | 'qualification' | 'pendingInteractions' | 'inspectionStart' | 'expectedMcp' | 'credentialEnvironmentVariables' | 'appMcpAccess' | 'sdkOptions' | 'initializationTimeoutMs' | 'scope' | 'newSessionId'>> = {}, nativeVersion = '2.1.284') {
   const frames = new ClaudeBoundedQueue<unknown>(32)
   let messages: AsyncIterator<ClaudeSdkUserMessage>
   let ready!: () => void

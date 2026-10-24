@@ -30,6 +30,9 @@ export async function pump(ctx: ClaudeManagerContext, runtime: Runtime): Promise
       const frame = output.raw && typeof output.raw === 'object' ? output.raw as Record<string, unknown> : {}
       observeInitContract(ctx, runtime, frame)
       if (!runtime.session && frame.type === 'system' && frame.subtype === 'init' && typeof frame.session_id === 'string' && frame.session_id.length > 0) {
+        if (ctx.options.newSessionId && frame.session_id !== ctx.options.newSessionId) {
+          throw new HarnessExecutionError('CLAUDE_SESSION_MISMATCH', 'Claude started another session than the one chosen for it.')
+        }
         runtime.session = { harness: ctx.harness, providerVersion: String(frame.claude_code_version), nativeSessionId: frame.session_id }
         if (ctx.resident.has(frame.session_id)) throw new Error('Claude native session is already leased to another runtime')
         ctx.resident.set(frame.session_id, runtime)
