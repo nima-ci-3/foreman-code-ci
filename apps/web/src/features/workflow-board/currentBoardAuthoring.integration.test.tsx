@@ -691,7 +691,7 @@ describe('ENG-S3-ONLY actual registered Board / shared current HTTP', () => {
     }))
     mounted.unmount(); mounted.query.clear()
     act(() => useGraphDraftStore.setState({ nextDrafts: {} })); await mount(mock, href)
-    await waitFor(() => expect(resolutions, screen.queryAllByRole('alert').map(alert => alert.textContent).join('\n')).toEqual([retained]))
+    await waitFor(() => expect(resolutions).toEqual([retained]))
     await waitFor(() => expect(readBoardStart(key)).toBeUndefined())
     expect(await screen.findByText('The earlier Run was accepted.')).toBeVisible()
     const requests = mock.calls.filter((call) => call.method === 'POST' && call.path.endsWith('/runs'))
