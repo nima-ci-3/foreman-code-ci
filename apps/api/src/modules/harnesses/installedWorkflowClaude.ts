@@ -9,8 +9,8 @@ import { ExecutionFactsResultSchema } from '@foreman-code/contracts/execution-au
 import { WorkerClaudeAuthorizationSchema, WorkerClaudeCallbackIdentitySchema, WorkerClaudeCallbackRecordSchema,
   type WorkerClaudeAuthorityRequest } from '@foreman-code/contracts/remote-execution-rpc'
 import { DomainError } from '../errors.js'
-import { sameDeviceInstallation } from '../devices/index.js'
-import type { InstalledClaudeTarget } from './installedClaudeInspection.js'
+import { sameDeviceInstallation } from '../devices/deviceReconnect.js'
+import { inspectInstalledClaude, type InstalledClaudeTarget } from './installedClaudeInspection.js'
 import { installedClaudeProfilePin } from './claudeSdk/installedProfilePin.js'
 import { HarnessInstanceRegistry, localHarnessDrivers } from './instanceRegistry.js'
 import { HarnessInstallationRegistry } from './installationRegistry.js'
@@ -349,4 +349,17 @@ export function allocateInstalledWorkflowClaude(input: {
   }
   return { manager, get session() { return structuredClone(session) },
     ownsSession: native => same(native, session) && (manager.hasResidentSession(native) || !!start && !opened) }
+}
+
+/** What the Worker workflow host needs to run Claude; the Worker composition passes this module's functions. */
+export interface InstalledWorkflowClaudeAdapter {
+  createReader: typeof createInstalledClaudeWorkflowReader
+  inspect: typeof inspectInstalledClaude
+  allocate: typeof allocateInstalledWorkflowClaude
+  callbackJournal: typeof installedWorkflowClaudeCallbackJournal
+}
+
+export const installedWorkflowClaudeAdapter: InstalledWorkflowClaudeAdapter = {
+  createReader: createInstalledClaudeWorkflowReader, inspect: inspectInstalledClaude,
+  allocate: allocateInstalledWorkflowClaude, callbackJournal: installedWorkflowClaudeCallbackJournal,
 }

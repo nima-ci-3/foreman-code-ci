@@ -43,8 +43,7 @@ import { CodexAppServerSessionManager, safeEnvironment } from '../../harnesses/c
 import { inspectInstalledCodex } from '../../harnesses/installedCodexInspection.js'
 import { PayloadFingerprintCache } from '../../harnesses/payloadFingerprintCache.js'
 import { createInstalledCodexQualificationReader } from '../../harnesses/installedCodexQualification.js'
-import { allocateInstalledWorkflowClaude, createInstalledClaudeWorkflowReader, inspectInstalledClaude,
-  installedWorkflowClaudeCallbackJournal, type InstalledWorkflowClaude } from '../../harnesses/index.js'
+import type { InstalledWorkflowClaude, InstalledWorkflowClaudeAdapter } from '../../harnesses/index.js'
 import { createInstalledCodexDependencies } from '../../harnesses/installedCodexDependencies.js'
 import { normalizeHarnessVersion } from '../../harnesses/qualification/profiles.js'
 import { NativeProcessRegistry, type NativeLaunchObservation, type NativeProcessRecovery } from '../../harnesses/recovery/processRegistry.js'
@@ -259,11 +258,13 @@ export async function attestInstalledWorkflowRuntimeLeaf(input:{sources:SourceOp
 }
 
 type CodexQualificationReader=ReturnType<typeof createInstalledCodexQualificationReader>
-type ClaudeQualificationReader=ReturnType<typeof createInstalledClaudeWorkflowReader>
+type ClaudeQualificationReader=ReturnType<InstalledWorkflowClaudeAdapter['createReader']>
 type QualificationReader=CodexQualificationReader|ClaudeQualificationReader
 type QualificationCapture=Awaited<ReturnType<QualificationReader['capture']>>
 export type { CapturedWorkflowMainRequest, InstalledWorkflowNativeOutputContext }
 export interface InstalledWorkflowHostOptions {
+  /** Supplied by the Worker composition: the harnesses entry also carries Main-only code the Worker bundle excludes. */
+  workflowClaude?: InstalledWorkflowClaudeAdapter
   stateDirectory:string
   mainNow(): number
   pairing:WorkerPairingConfiguration
@@ -597,11 +598,12 @@ class InstalledWorkflowHostRuntime {
           await workerExecutionAuthorizer(this.forBinding(binding))(resident.intent, placement, 'read', signal)
           await assertOriginal()
         }, suiteRevision }
-      const reader: QualificationReader = driver === 'claude' ? createInstalledClaudeWorkflowReader({ intent, placement,
+      const claudeAdapter = driver === 'claude' ? this.input.workflowClaude ?? unavailable('claude_workflow_adapter_unavailable') : undefined
+      const reader: QualificationReader = claudeAdapter ? claudeAdapter.createReader({ intent, placement,
         signal: this.signal, trustedCurrentBinding: readerInput.trustedCurrentBinding,
         ...(readerInput.trustedCurrentIntent ? { trustedCurrentIntent: readerInput.trustedCurrentIntent } : {}),
         readFacts: readerInput.readFacts,
-        inspect: (binding, effectSignal) => inspectInstalledClaude({ binding, configuration: this.input.configuration,
+        inspect: (binding, effectSignal) => claudeAdapter.inspect({ binding, configuration: this.input.configuration,
           environment, cwd: this.input.stateDirectory, signal: effectSignal, fingerprintCache: this.payloadFingerprints }) })
         : createInstalledCodexQualificationReader(readerInput)
       const capture=await reader.capture(signal)
@@ -782,7 +784,8 @@ class InstalledWorkflowHostRuntime {
     if (actual.placement.payload.kind === 'agent' && actual.placement.payload.artifactOutputs) {
       unavailable('claude_artifact_outputs_unsupported')
     }
-    const claude = allocateInstalledWorkflowClaude({ capture, workingDirectory: configurationContext.workingDirectory,
+    const adapter = this.input.workflowClaude ?? unavailable('claude_workflow_adapter_unavailable')
+    const claude = adapter.allocate({ capture, workingDirectory: configurationContext.workingDirectory,
       recovery: actual.scope,
       environment: actual.account ? managedProviderEnvironment(hostEnvironment(), actual.account, 'claude') : hostEnvironment(),
       ...(actual.account?.apiKey ? { apiKey: actual.account.apiKey } : {}),
@@ -801,7 +804,7 @@ class InstalledWorkflowHostRuntime {
         if (reply.bytes?.byteLength) unavailable('claude_authority_reply_invalid')
         return reply.payload
       },
-      callbackJournal: installedWorkflowClaudeCallbackJournal(join(this.input.stateDirectory, 'workflow-claude-callbacks',
+      callbackJournal: adapter.callbackJournal(join(this.input.stateDirectory, 'workflow-claude-callbacks',
         `${actual.intent.operationId}.json`)),
       deviceId: actual.context.binding.deviceId })
     actual.claude = claude
