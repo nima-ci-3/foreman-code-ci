@@ -1,5 +1,5 @@
 import { matchingChatResponseAcknowledgment, AcceptedChatResponseControlSchema } from '@foreman-code/contracts/interaction-activity'
-import type pg from 'pg'
+import type { SqlQuery } from '../../../infrastructure/transaction.js'
 import { DurableInteractionSchema, PendingNativeInteractionSchema, type ApprovalResponseOption, type NativeSessionReference,
   type CoordinatorConsultationBinding } from '@foreman-code/contracts'
 import { readCoordinatorCredentialAuthority } from '../../access/consultationAuthority.js'
@@ -25,7 +25,7 @@ export type ClaudeDomainBinding =
 export interface ClaudeCurrentCallbackOwner {
   nativeCallbackContext(sessionId: string, toolUseId: string): { nativeSessionId: string; nativeMessageId: string; clientCorrelationId: string; generation: string } | undefined
 }
-type Database = Pick<pg.Pool, 'query'>
+type Database = SqlQuery
 interface ChatRow {
   kind: 'operator' | 'agent'; owner_principal_id: string | null; sender_id: string | null
   workspace_id: string | null; workflow_id: string | null; origin_run_id: string | null

@@ -67,10 +67,9 @@ export async function applyPreferences(ctx: ClaudeManagerContext, runtime: Runti
     runtime.generation = randomUUID()
     const start = runtime.start
     runtime.sdk = await ctx.options.runner.open({ scope: ctx.options.scope,
-      options: { ...queryOptions(ctx, start, preferences), ...(runtime.session ? {} : newSessionOptions(ctx)),
-        model: profile?.id ?? ctx.options.sdkOptions.model,
+      options: { ...queryOptions(ctx, start, preferences), model: profile?.id ?? ctx.options.sdkOptions.model,
         ...(runtime.credentialServers ? { mcpServers: runtime.credentialServers } : {}) },
-      ...(runtime.session ? { resume: { ...ctx.options.scope, nativeSessionId: runtime.session.nativeSessionId } } : {}),
+      ...(runtime.session ? { resume: { ...ctx.options.scope, nativeSessionId: runtime.session.nativeSessionId } } : newSessionOptions(ctx)),
       ...(startup.signal ? { signal: startup.signal } : {}), onObservation: observation => observed(ctx, runtime, observation),
       ...(ctx.options.cancelPendingRequests ? { cancelPendingRequests: () => {
         if (!runtime.replacingForResume) ctx.options.cancelPendingRequests!()

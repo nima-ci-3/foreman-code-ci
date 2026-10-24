@@ -37,7 +37,7 @@ function sdk() {
 function allocate() {
   const request = workflowRequest()
   const configuration = { ...request.configuration, harness: { ...request.configuration.harness,
-    mcpServers: { graphql: { type: 'http', url: 'http://127.0.0.1:3041/mcp' } } } }
+    mcpServers: { graphql: { type: 'http' as const, url: 'http://127.0.0.1:3041/mcp' } } } }
   const capture = { facts: { configuration, intent: { runId: 'run' } },
     inspection: { currentTarget: { installation: { launcher: { resolvedLauncher: '/usr/bin/claude' } }, sdk: { entrypoint: '/sdk' } } },
     accepted: { currentBinding: { pin: { sdkVersion: '0.3.284', cliVersion: '2.1.284', configRevision: 'revision' } } },

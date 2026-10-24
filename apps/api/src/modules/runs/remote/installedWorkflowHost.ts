@@ -600,7 +600,8 @@ class InstalledWorkflowHostRuntime {
         }, suiteRevision }
       const reader: QualificationReader = driver === 'claude' ? createInstalledClaudeWorkflowReader({ intent, placement,
         signal: this.signal, trustedCurrentBinding: readerInput.trustedCurrentBinding,
-        trustedCurrentIntent: readerInput.trustedCurrentIntent, readFacts: readerInput.readFacts,
+        ...(readerInput.trustedCurrentIntent ? { trustedCurrentIntent: readerInput.trustedCurrentIntent } : {}),
+        readFacts: readerInput.readFacts,
         inspect: (binding, effectSignal) => inspectInstalledClaude({ binding, configuration: this.input.configuration,
           environment, cwd: this.input.stateDirectory, signal: effectSignal, fingerprintCache: this.payloadFingerprints }) })
         : createInstalledCodexQualificationReader(readerInput)

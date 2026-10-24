@@ -1,8 +1,8 @@
 import type pg from 'pg'
+import type { z } from 'zod'
 import { DeviceConnectionIdentitySchema, type DeviceConnectionIdentity } from '@foreman-code/contracts/device-identity'
 import { WorkflowVersionCurrentSchema, sameWorkflowValue } from '@foreman-code/contracts/current'
 import { ExecutionFactsRequestSchema, ExecutionFactsResultSchema, ExecutionAuthorityRequestSchema, ExecutionAuthorityResultSchema, ExecutionClaudeAuthorityRequestSchema, EXECUTION_AUTHORITY_EXTENSION } from '@foreman-code/contracts/execution-authority'
-import { authorizeRemoteWorkflowClaudeCallback } from '../harnesses/index.js'
 import { readPlacement } from './binding.js'
 import { AgentConfigurationVersionSchema } from '@foreman-code/contracts'
 import { configurationWithNodeSkills } from '../skills/index.js'
@@ -126,8 +126,12 @@ async function checkRemoteExecutionAuthority(sql: SqlQuery,
   }
   return cleanup ? { cleanupOnly: true } : undefined
 }
+/** Authorizes one Claude SDK callback of a paired Worker's workflow execution after its execution authority holds. */
+export type RemoteClaudeCallbackAuthority = (sql: SqlQuery, intent: { runId: string; executionId: string },
+  request: z.infer<typeof ExecutionClaudeAuthorityRequestSchema>['request']) => Promise<unknown>
 export function createExecutionAuthorityExtension(pool: pg.Pool,
-  locations: ExecutionRunAuthorityPort, producer: AgentPlacementProducer): DeviceExtensionRegistration {
+  locations: ExecutionRunAuthorityPort, producer: AgentPlacementProducer,
+  claudeCallbacks?: RemoteClaudeCallbackAuthority): DeviceExtensionRegistration {
   return { ...EXECUTION_AUTHORITY_EXTENSION, role: 'server', async handle(raw, context) {
     if (context.bytes?.byteLength) denied()
     const claude = ExecutionClaudeAuthorityRequestSchema.safeParse(raw)
@@ -140,8 +144,8 @@ export function createExecutionAuthorityExtension(pool: pg.Pool,
       const authority = await assertRemoteExecutionAuthority(sql, locations, input, context.binding, producer, false)
       beforeGraphCommit(sql, async () => { await assertRemoteExecutionAuthority(sql, locations, input, context.binding, producer, false) })
       if (claude.success) {
-        if (authority?.cleanupOnly) denied()
-        return { payload: await authorizeRemoteWorkflowClaudeCallback(sql, input.intent, claude.data.request) }
+        if (authority?.cleanupOnly || !claudeCallbacks) denied()
+        return { payload: await claudeCallbacks!(sql, input.intent, claude.data.request) }
       }
       if (facts.success) {
         if ((await sql.query('select 1 from source_preparation_reconciliations where operation_id=$1',
