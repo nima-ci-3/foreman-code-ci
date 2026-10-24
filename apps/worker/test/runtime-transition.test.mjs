@@ -29,7 +29,7 @@ before(async () => {
   execFileSync('tar', ['-xzf', fileURLToPath(new URL('./fixtures/node22-updater.tar.gz', import.meta.url)), '-C', snapshot]);
   await symlink(join(repository, 'packages'), join(snapshot, 'packages'));
   await symlink(join(repository, 'apps/worker/node_modules'), join(snapshot, 'apps/worker/node_modules'));
-  for (const name of ['ciInstallSmoke.mjs', 'updateOperation.mjs', 'diagnostics.mjs', 'browserRuntimeInstall.mjs',
+  for (const name of ['ciInstallSmoke.mjs', 'ciSmokeTiming.mjs', 'updateOperation.mjs', 'diagnostics.mjs', 'browserRuntimeInstall.mjs',
     'workerArtifactArchive.mjs', 'runtime.mjs', 'companionLauncher.mjs']) {
     await symlink(join(repository, 'apps/worker/src', name), join(snapshot, 'apps/worker/src', name));
   }
