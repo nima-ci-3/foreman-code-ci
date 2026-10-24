@@ -59,7 +59,7 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
 }) {
   const graph = edit.graph
   const { alive, latestBoard, runAfterSave, setLocalError, setMessage, report } = core
-  const { canStart, preflight, storageFailed } = startState
+  const { canStart, preflight, storageFailed, pendingStart } = startState
   const queryClient = useQueryClient()
   const startLock = useRef(false)
   const checkedRetainedStart = useRef(false)
@@ -219,10 +219,8 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
     if (checkedRetainedStart.current || storageFailed || !canStart) return
     checkedRetainedStart.current = true
     // Resolve only the journal restored on load, never a Start being sent on this Board.
-    try {
-      if (readBoardStart(draftKey)) void resolveStart().catch(report)
-    } catch (error) { report(error) }
-  }, [canStart, storageFailed, draftKey, resolveStart, report])
+    if (pendingStart) void resolveStart().catch(report)
+  }, [canStart, storageFailed, pendingStart, resolveStart, report])
   const start = () => readBoardStart(draftKey) ? recovery.mutateAsync() : startMutation.mutateAsync()
   const recoverStart = () => recovery.mutateAsync()
   return { startMutation, starting, start, recoverStart }

@@ -685,7 +685,7 @@ describe('ENG-S3-ONLY actual registered Board / shared current HTTP', () => {
     expect(mock.runs.size).toBe(1)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled())
     const resolutions: unknown[] = []
-    server.use(http.post(`*/api/management/workspaces/${mock.workspaceId}/workflows/${retained.workflowId}/runs/start-resolution`, async ({ request }) => {
+    mock.handlers.unshift(http.post(`*/api/management/workspaces/${mock.workspaceId}/workflows/${retained.workflowId}/runs/start-resolution`, async ({ request }) => {
       resolutions.push(await request.json())
       return HttpResponse.json({ status: 'accepted', run: [...mock.runs.values()][0]!.run })
     }))
