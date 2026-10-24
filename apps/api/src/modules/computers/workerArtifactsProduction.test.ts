@@ -68,7 +68,8 @@ describe('production Worker artifact composition', () => {
         .resolves.toMatchObject({ target: expected.target, manifestSha256: expected.manifestSha256 })
     }
     const unsupported = { ...target, osRelease: '22.04', libc: 'glibc-2.35' }
-    await expect(extension.handle!({ operation: 'release', target: unsupported }, context)).rejects.toThrow()
+    await expect(extension.handle!({ operation: 'release', target: unsupported }, context))
+      .resolves.toEqual({ payload: { operation: 'release', release: null } })
     await expect(readWorkerBundleIdentity({ directory: f.artifacts, version: f.manifest.version }, unsupported))
       .rejects.toMatchObject({ code: 'WORKER_BUNDLE_UNPUBLISHED' })
   })
