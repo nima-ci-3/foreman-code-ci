@@ -748,8 +748,7 @@ export class RemoteExecutionHost {
       const pending = history.pendingInteractions.find(candidate => candidate.turn.nativeRequestId === requestId
         && isDeepStrictEqual(candidate.session, resident.session)
         && candidate.session.nativeSessionId === command.native?.sessionId
-        // Claude names its pending input by message ID, which the journal recorded as the turn.
-        && (candidate.turn.nativeTurnId ?? candidate.turn.nativeMessageId) === command.native?.turnId)
+        && candidate.turn.nativeTurnId === command.native?.turnId)
       const requestDelivery = history.interactionDeliveries?.find(candidate => candidate.nativeRequestId === requestId)
       if (!pending || requestDelivery && requestDelivery.state !== 'pending') {
         throw new Error('Original native question no longer pending')

@@ -330,7 +330,7 @@ export const WorkerConversationProfileFactsSchema = z.object({
 export type WorkerConversationProfileFacts = z.infer<typeof WorkerConversationProfileFactsSchema>
 
 const callback = { admissionId: z.uuid(), binding: WorkerConversationBindingSchema }
-export const WorkerClaudeAuthorityRequestSchema = z.discriminatedUnion('phase', [
+const WorkerClaudeAuthorityRequestSchema = z.discriminatedUnion('phase', [
   z.object({ phase: z.literal('admission') }).strict(),
   z.object({ phase: z.literal('file'), identity: WorkerClaudeCallbackIdentitySchema,
     operation: z.enum(['files.list', 'files.read', 'files.create_working_copy', 'files.write_working_copy',
