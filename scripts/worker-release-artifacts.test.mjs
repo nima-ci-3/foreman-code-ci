@@ -9,6 +9,8 @@ import test from 'node:test'
 import { buildWorkerReleaseArtifacts, publishInstalledWorkerArtifacts, publishWorkerArtifactsToGitHub,
   readCommittedWorkerTargets, runWorkerPublicationCommand, workerPublicationServiceTemplate } from './worker-release-artifacts.mjs'
 import { WorkerArtifactIndexSchema } from '../packages/contracts/src/workerUpdate.ts'
+import { packBrowserRuntime } from './browser-runtime-install.mjs'
+import { artifactFiles } from './worker-artifact-files.mjs'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
@@ -317,25 +319,46 @@ async function fixture(t, browserRuntimeStatus, reviewedTargets) {
   const productManifestPath = join(repository, 'installed-product.json')
   const calls = []
   const run = async (command, args, options) => {
-    calls.push({ command, args, commit: options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT })
     const selected = JSON.parse(git(['show', `${options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT}:${args[1]}`]))
+    calls.push({ command, args, target: selected, commit: options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT })
     const output = args[2]
     await mkdir(join(output, 'src'), { recursive: true, mode: 0o700 })
     const bytes = Buffer.from('export const worker = true\n')
     await writeFile(join(output, 'src/cli.mjs'), bytes)
     const buildCommit = options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT
     const product = JSON.parse(git(['show', `${buildCommit}:package.json`]))
+    // The fixture's native browser inputs stay fixed across Worker provenance/version changes.
+    const browserRuntime = await browserFixture(output, selected, '0.0.57', commit)
     const manifest = { format: 1, version: product.version, commit: buildCommit, lockfileSha256: 'b'.repeat(64),
       packageManager: 'pnpm@11.27.0', protocolVersion: 1, identityFormat: 1, target: selected,
       sourceSnapshot: { commit: buildCommit, files: ['package.json', 'pnpm-lock.yaml',
         'scripts/build-worker-artifact.mjs', 'apps/worker/src/cli.mjs', args[1]].map(path => ({ path,
         gitBlobSha1: git(['rev-parse', `${buildCommit}:${path}`]).toString().trim(),
         sha256: sha256(git(['show', `${buildCommit}:${path}`])) })) },
-      files: [{ path: 'src/cli.mjs', sha256: sha256(bytes), size: bytes.length }],
-      ...(browserRuntimeStatus ? { browserRuntimeStatus } : {}) }
+      files: await artifactFiles(output), browserRuntime,
+      browserRuntimeStatus: selected.osRelease === '24.04' ? { state: 'ready', retryable: false, reason: null }
+        : browserRuntimeStatus ?? { state: 'ready', retryable: false, reason: null } }
     await writeFile(join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   }
   return { repository, commit, directory, productManifestPath, run, calls }
+}
+
+async function browserFixture(output, target, foremanVersion, commit) {
+  const unit = join(output, 'browser-unit')
+  const files = { 'python': 'fixture Python', 'chromium': 'fixture Chromium', 'bridge.py': '# bridge',
+    'native-host.mjs': 'export {}', 'skill.md': '# skill', 'runtime-lock.json': '{}', 'LICENSES.txt': 'Fixture notices' }
+  await mkdir(unit)
+  for (const [path, bytes] of Object.entries(files)) await writeFile(join(unit, path), bytes)
+  await mkdir(join(output, 'artifacts'))
+  const packed = await packBrowserRuntime({ unit, output: join(output, 'artifacts/browser-runtime'), manifest: {
+    format: 1, kind: 'foreman-browser-runtime', runtimeVersion: '1.0.0', foremanVersion, profileFormat: 1,
+    target, sourceCommit: commit, sourceInputs: [], resolvedLockSha256: sha256('{}'),
+    pythonExecutable: 'python', chromiumExecutable: 'chromium', bridgeScript: 'bridge.py',
+    nativeHostModule: 'native-host.mjs', skill: 'skill.md',
+  } })
+  await rm(unit, { recursive: true })
+  return { descriptorPath: 'artifacts/browser-runtime/browser-runtime.json', descriptorSha256: packed.descriptorSha256,
+    manifestSha256: packed.descriptor.manifestSha256, sourceInputs: [] }
 }
 
 test('publishes a GitHub asset for each committed production target', async t => {
@@ -400,7 +423,9 @@ test('retries browser artifact resolution instead of retaining a failed browser 
   assert.equal(f.calls.length, 4)
   const next = laterBuild(f)
   await buildWorkerReleaseArtifacts(next)
-  assert.equal(f.calls.length, 8)
+  // 24.04 publication requires ready browsers; the two failed 26.04 units must still rebuild.
+  assert.equal(f.calls.length, 6)
+  assert.deepEqual(f.calls.slice(4).map(call => call.target.osRelease), ['26.04', '26.04'])
 })
 
 test('reuses verified Worker payloads across unrelated API changes with release provenance in the index', async t => {

@@ -111,6 +111,9 @@ async function verifyArtifact(directory, target, version, commit) {
       throw new Error(`Worker artifact checksum mismatch: ${file.path}`)
     }
   }
+  if (target.osRelease === '24.04' && (!manifest.browserRuntime || manifest.browserRuntimeStatus?.state !== 'ready')) {
+    throw new Error('Ubuntu 24.04 Worker publication requires a verified browser runtime')
+  }
   if (manifest.browserRuntime) {
     const { readBrowserRuntimeArtifact, matchesBrowserRuntimeTarget } = await import('../apps/worker/src/browserRuntimeInstall.mjs')
     const runtime = await readBrowserRuntimeArtifact(join(directory, 'artifacts/browser-runtime'), manifest.browserRuntime.descriptorSha256)

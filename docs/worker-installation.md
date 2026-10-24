@@ -128,8 +128,10 @@ export FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS="$HOME/.cache/foreman-tmp/browser-
 
 Main consumes each target's verified unit when building the Worker release.
 A configured collection with a missing, corrupt, duplicate, or wrong-commit
-unit fails the build. Collection never relabels a 26.04 unit as 24.04. The
-quota helper remains checked against each target's libc by `inspectQuotaHelperAbi`;
+unit fails the build. Publishing a 24.04 bundle requires a ready, verified
+browser unit even when no collection was configured. Collection never relabels
+a 26.04 unit as 24.04. The quota helper remains checked against each target's
+libc by `inspectQuotaHelperAbi`;
 newer symbol requirements fail packaging.
 
 Build on the source-pinned main checkout after the orchestrator integrates W07-A/B
