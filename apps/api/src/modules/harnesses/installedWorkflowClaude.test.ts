@@ -16,7 +16,7 @@ vi.mock('./claudeSdk/official.js', () => ({ loadOfficialClaudeSdk: async () => p
 const tools = vi.hoisted(() => ({ discovered: [] as { servers: unknown; token: unknown }[] }))
 vi.mock('./claudeSdk/mcpPolicy.js', () => ({ acceptedClaudeAppTools: async (input: { servers: unknown; token: unknown }) => {
   tools.discovered.push({ servers: input.servers, token: input.token })
-  return [{ serverName: 'graphql', tools: ['interaction_get'] }]
+  return [{ serverName: 'graphql', source: { kind: 'http', url: 'http://127.0.0.1:41000/mcp' }, tools: ['interaction_get'] }]
 } }))
 
 function sdk() {

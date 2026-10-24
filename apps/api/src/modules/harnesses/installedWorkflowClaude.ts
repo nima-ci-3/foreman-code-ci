@@ -187,13 +187,16 @@ export function allocateInstalledWorkflowClaude(input: {
   if (configured?.type !== 'http') throw new DomainError('APP_MCP_PREFLIGHT_FAILED',
     'The accepted Claude settings cannot receive a scoped HTTP credential on this Worker.', 409)
   const localServer = { ...configured, url: input.mcpEndpoint }
+  // Callbacks and tool discovery see the application server at the Worker endpoint that relays to Main.
+  const callbackConfiguration = { ...compiled.configuration, mcpServers: { ...compiled.configuration.mcpServers,
+    [serverName]: localServer } } as typeof compiled.configuration
   // Main returns the workflow's approval handler with each admission; the bridge reads it per callback.
   const policy = { autoAllowTools: false }
   const authorize = async (request: WorkerClaudeAuthorityRequest, signal: AbortSignal) =>
     WorkerClaudeAuthorizationSchema.parse(await input.authority(request, signal))
   const identityOf = (identity: ClaudeCallbackIdentity) => WorkerClaudeCallbackIdentitySchema.parse(identity)
   const signalNever = new AbortController().signal
-  const bridge: ClaudeInteractionBridge = new ClaudeInteractionBridge(compiled.configuration, {
+  const bridge: ClaudeInteractionBridge = new ClaudeInteractionBridge(callbackConfiguration, {
     callbackJournal: input.callbackJournal,
     async validate(identity) { await authorize({ phase: 'validate', identity: identityOf(identity) }, signalNever) },
     async request(identity, toolName, _value, signal) {
@@ -269,7 +272,7 @@ export function allocateInstalledWorkflowClaude(input: {
   manager.history = (native, signal) => remoteHistory(native, () => readHistory(native, signal))
   const reconcile = manager.reconcile.bind(manager)
   manager.reconcile = (native, correlationId, signal) => remoteHistory(native, () => reconcile(native, correlationId, signal))
-  const reconcileResponse = manager.reconcileResponse.bind(manager)
+  const reconcileResponse = manager.reconcileResponse!.bind(manager)
   manager.reconcileResponse = (native, response, signal) => remoteHistory(native, () => reconcileResponse(native, response, signal))
   const cancel = manager.cancel.bind(manager)
   manager.cancel = async (native, signal, nativeMessageId) => !opened && same(native, session)
@@ -311,9 +314,8 @@ export function allocateInstalledWorkflowClaude(input: {
     if (snapshot.httpCredentialAcknowledgement?.endpoint !== input.mcpEndpoint) throw new DomainError(
       'CLAUDE_MCP_CREDENTIAL_DELIVERY_UNCONFIRMED', 'The SDK has not acknowledged the scoped Worker credential.', 409)
     // The bridge allows only the application tools this credential can list through the Worker endpoint.
-    bridge.bindMcpTools(await acceptedClaudeAppTools({ configuration: { ...compiled.configuration,
-      mcpServers: { ...compiled.configuration.mcpServers, [serverName]: localServer } },
-    servers: { [serverName]: scopedServer }, token, signal }))
+    bridge.bindMcpTools(await acceptedClaudeAppTools({ configuration: callbackConfiguration,
+      servers: { [serverName]: scopedServer }, token, ...(signal ? { signal } : {}) }))
     start = structuredClone(sessionStart)
     return structuredClone(session)
   }
