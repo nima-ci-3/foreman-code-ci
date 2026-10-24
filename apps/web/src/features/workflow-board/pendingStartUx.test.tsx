@@ -1,11 +1,13 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { RunStartCurrentInputSchema } from '@foreman-code/contracts/current'
 import { server } from '../../mocks/server'
+import { deferred } from '../../test/deferred'
+import { useGraphDraftStore } from '../graph'
 import { nextDraftKey } from '../board-core'
-import { boardStartJournalKey } from './startOutbox'
+import { boardStartJournalKey, readBoardStart, reserveBoardStart } from './startOutbox'
 import { installBoardTestLifecycle, mountMeasuredBoard, type InspectionFixture } from './eng05D.testSupport'
 import { inspectionBoardFixture } from './inspect/inspectionFixtures'
 
@@ -19,6 +21,39 @@ beforeEach(async () => {
 })
 const href = () => `/workspaces/${fixture.mock.workspaceId}?workflowId=${fixture.after.workflowId}`
 const runsPath = () => `*/api/management/workspaces/${fixture.mock.workspaceId}/workflows/${fixture.after.workflowId}/runs`
+
+it('reconciles an accepted Start on remount without leaving the selected historical Run', async () => {
+  const { mock, after, runs } = fixture
+  const key = nextDraftKey(mock.workspaceId, after.workflowId)
+  const mounted = await mountMeasuredBoard(href())
+  await waitFor(() => expect(useGraphDraftStore.getState().nextDrafts[key]).toBeDefined())
+  const retained = useGraphDraftStore.getState().nextDrafts[key]!
+  mounted.unmount(); mounted.cache.clear()
+  const pending = RunStartCurrentInputSchema.parse({ workspaceId: mock.workspaceId, workflowId: after.workflowId,
+    workflowVersionId: after.id, executionSemanticsVersion: 3, expectedWorkflowRevision: retained.context.draft.publishedRevision,
+    expectedAgentConfigurationVersionIds: after.agentConfigurationVersionIds,
+    expectedLocationRevision: mock.controls.locationRevision, commandId: crypto.randomUUID(), input: {} })
+  await reserveBoardStart(key, pending)
+  const reply = deferred<Response>(), resolved: unknown[] = [], sent: unknown[] = []
+  server.use(http.post(`${runsPath()}/start-resolution`, async ({ request }) => {
+    resolved.push(await request.json())
+    return reply.promise
+  }), http.post(runsPath(), async ({ request }) => {
+    sent.push(await request.json())
+    return HttpResponse.json({ accepted: true, replayed: true, run: runs.after.run })
+  }))
+  const reopened = await mountMeasuredBoard(`${href()}&selectedRunId=${runs.before.run.id}`)
+  await screen.findByRole('region', { name: 'Selected Run board' })
+  await waitFor(() => expect(resolved).toEqual([pending]))
+  await act(async () => { reply.resolve(HttpResponse.json({ status: 'accepted', run: runs.after.run })) })
+  await screen.findByText('The earlier Run was accepted.')
+  await waitFor(() => expect(readBoardStart(key)).toBeUndefined())
+  expect(reopened.router.state.location.search.selectedRunId).toBe(runs.before.run.id)
+  expect(screen.getByRole('region', { name: 'Selected Run board' })).toBeVisible()
+  expect(screen.getByText('Selected Run', { selector: 'span' })).toBeVisible()
+  expect(useGraphDraftStore.getState().nextDrafts[key]!.instanceId).toBe(retained.instanceId)
+  expect(sent).toEqual([])
+}, 15_000)
 
 it('resolves a failed Start without resending it, keeps its real error and restores Run', async () => {
   const error = 'The Worker did not report its running bundle (transport). Retry shortly.'
