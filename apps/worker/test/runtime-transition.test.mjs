@@ -22,14 +22,16 @@ before(async () => {
   const parent = join(homedir(), '.cache/foreman-tmp');
   await mkdir(parent, { recursive: true });
   storage = await mkdtemp(join(parent, 'runtime-transition-'));
-  // Execute the shipped updater and supervisor unchanged, including their old rollback behavior.
+  // Unchanged update, supervisor and installation modules from 97a1c0b77ef07b22759fc432c7e57a894cb9965e.
+  // Keep this executable fixture independent of the CI mirror's shallow Git history.
   const snapshot = join(storage, 'old');
   await mkdir(snapshot);
-  const archive = execFileSync('git', ['archive', '97a1c0b77ef07b22759fc432c7e57a894cb9965e',
-    'apps/worker/src', 'packages/contracts/src', 'packages/contracts-node/src'], { cwd: repository, maxBuffer: 16 * 1024 * 1024 });
-  execFileSync('tar', ['-xf', '-', '-C', snapshot], { input: archive });
-  for (const path of ['apps/worker', 'packages/contracts', 'packages/contracts-node']) {
-    await symlink(join(repository, path, 'node_modules'), join(snapshot, path, 'node_modules'));
+  execFileSync('tar', ['-xzf', fileURLToPath(new URL('./fixtures/node22-updater.tar.gz', import.meta.url)), '-C', snapshot]);
+  await symlink(join(repository, 'packages'), join(snapshot, 'packages'));
+  await symlink(join(repository, 'apps/worker/node_modules'), join(snapshot, 'apps/worker/node_modules'));
+  for (const name of ['ciInstallSmoke.mjs', 'updateOperation.mjs', 'diagnostics.mjs', 'browserRuntimeInstall.mjs',
+    'workerArtifactArchive.mjs', 'runtime.mjs', 'companionLauncher.mjs']) {
+    await symlink(join(repository, 'apps/worker/src', name), join(snapshot, 'apps/worker/src', name));
   }
   const load = name => import(pathToFileURL(join(snapshot, 'apps/worker/src', name)).href);
   old = { ...await load('update.mjs'), ...await load('updateSupervisor.mjs') };
