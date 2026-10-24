@@ -59,9 +59,10 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
 }) {
   const graph = edit.graph
   const { alive, latestBoard, runAfterSave, setLocalError, setMessage, report } = core
-  const { canStart, preflight } = startState
+  const { canStart, preflight, storageFailed, pendingStart } = startState
   const queryClient = useQueryClient()
   const startLock = useRef(false)
+  const checkedRetainedStart = useRef(false)
   const saveContinuation = useRef<{
     intentId: string; instanceId: string; generation: number; selectionToken: unknown
   } | undefined>(undefined)
@@ -186,8 +187,8 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
         }
         setMessage('The earlier Run was accepted.')
       } else {
-        useGraphDraftStore.getState().updateNextDraft(draftKey, current => ({ ...current, startCanceled: true }))
-        setMessage('The earlier Start was canceled. Reload the saved draft, then review and start again.')
+        setMessage(undefined)
+        report(startMutation.error ?? new Error('The earlier start was not accepted. You can run the workflow again.'))
       }
     } finally { startLock.current = false }
   } })
@@ -213,7 +214,14 @@ export function useDraftStartMutation({ draftKey, edit, editIntent, core, startS
       void mutateAsync({ savedVersionId: intent.result.currentVersionId }).catch(report)
     } catch (error) { report(error) }
   }, [editIntent.query.data, mutateAsync, starting, draftKey, alive, latestBoard, runAfterSave, report])
-  const start = () => startMutation.mutateAsync()
+  const { mutateAsync: resolveStart } = recovery
+  useEffect(() => {
+    if (checkedRetainedStart.current || storageFailed || !canStart) return
+    checkedRetainedStart.current = true
+    // Resolve only the journal restored on load, never a Start being sent on this Board.
+    if (pendingStart) void resolveStart().catch(report)
+  }, [canStart, storageFailed, pendingStart, resolveStart, report])
+  const start = () => readBoardStart(draftKey) ? recovery.mutateAsync() : startMutation.mutateAsync()
   const recoverStart = () => recovery.mutateAsync()
   return { startMutation, starting, start, recoverStart }
 }
