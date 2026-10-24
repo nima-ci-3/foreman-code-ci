@@ -57,36 +57,41 @@ test('a published native Worker installs its real Chromium runtime and loads its
   try {
     execFileSync('sudo', ['-n', 'sysctl', '-w', 'kernel.apparmor_restrict_unprivileged_userns=1']);
     assert.equal((await readFile(restriction, 'utf8')).trim(), '1');
-    const installed = await installVersion({ root, stateDirectory, artifact: output,
-      approvedManifestSha256: createHash('sha256').update(bytes).digest('hex'), facts, expected });
-    assert.equal(installed.browserRuntimeStatus.state, 'failed');
-    assert.equal(installed.browserRuntimeStatus.retryable, true);
-    const profile = join(installed.directory, 'runtime/browser/apparmor/foreman-browser-runtime');
-    const command = `sudo install -m 0644 '${profile}' /etc/apparmor.d/foreman-browser-runtime && sudo apparmor_parser -r /etc/apparmor.d/foreman-browser-runtime`;
-    assert.ok(installed.browserRuntimeStatus.reason.includes(command), installed.browserRuntimeStatus.reason);
-    assert.deepEqual(await readBrowserRuntimeStatus(root), installed.browserRuntimeStatus);
-    const doctor = spawnSync(process.execPath, [join(installed.directory, 'src/cli.mjs'), 'doctor', '--state', stateDirectory],
-      { encoding: 'utf8', timeout: 10_000 });
-    assert.equal(doctor.status, 0, doctor.stderr);
-    assert.deepEqual(JSON.parse(doctor.stdout).browserRuntime, installed.browserRuntimeStatus);
-    const failures = [];
-    owner = createWorkerBrowserRuntime({ root, stateDirectory, facts, expected,
-      computerId: 'qualification', installationId: 'qualification', subjectAuthority: {}, pairing: {}, keys: {},
-      assertHostOwnership: async () => undefined, reportFailure: error => failures.push(error) });
-    const failed = await owner.start();
-    assert.equal(failed.ready, false);
-    assert.ok(failed.message.includes(command), failed.message);
-    const provisioned = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8', timeout: 10_000 });
-    profileInstalled = true;
-    assert.equal(provisioned.status, 0, provisioned.stderr);
-    assert.equal((await owner.retry()).ready, true, failures.map(error => error.message).join('\n'));
-    assert.equal((await readInstalledRelease({ root, facts, expected })).directory, installed.directory);
-    assert.equal((await readBrowserRuntimeStatus(root)).state, 'ready');
-    const runtime = await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts });
-    assert.deepEqual(await checkBrowserRuntimeReadiness(runtime), { ready: true });
-    assert.equal((await readFile(restriction, 'utf8')).trim(), '1');
-    t.diagnostic(JSON.stringify({ buildHost: browser.target, publishedTarget: selected.target, requirements,
-      browserRuntimeStatus: owner.status(), apparmorRestriction: 1 }));
+    let installed, command;
+    await t.test('installation and doctor report the scoped AppArmor command', async () => {
+      installed = await installVersion({ root, stateDirectory, artifact: output,
+        approvedManifestSha256: createHash('sha256').update(bytes).digest('hex'), facts, expected });
+      assert.equal(installed.browserRuntimeStatus.state, 'failed');
+      assert.equal(installed.browserRuntimeStatus.retryable, true);
+      const profile = join(installed.directory, 'runtime/browser/apparmor/foreman-browser-runtime');
+      command = `sudo install -m 0644 '${profile}' /etc/apparmor.d/foreman-browser-runtime && sudo apparmor_parser -r /etc/apparmor.d/foreman-browser-runtime`;
+      assert.ok(installed.browserRuntimeStatus.reason.includes(command), installed.browserRuntimeStatus.reason);
+      assert.deepEqual(await readBrowserRuntimeStatus(root), installed.browserRuntimeStatus);
+      const doctor = spawnSync(process.execPath, [join(installed.directory, 'src/cli.mjs'), 'doctor', '--state', stateDirectory],
+        { encoding: 'utf8', timeout: 10_000 });
+      assert.equal(doctor.status, 0, doctor.stderr);
+      assert.deepEqual(JSON.parse(doctor.stdout).browserRuntime, installed.browserRuntimeStatus);
+    });
+    await t.test('browser retry recovers after provisioning without reinstalling the Worker', async () => {
+      const failures = [];
+      owner = createWorkerBrowserRuntime({ root, stateDirectory, facts, expected,
+        computerId: 'qualification', installationId: 'qualification', subjectAuthority: {}, pairing: {}, keys: {},
+        assertHostOwnership: async () => undefined, reportFailure: error => failures.push(error) });
+      const failed = await owner.start();
+      assert.equal(failed.ready, false);
+      assert.ok(failed.message.includes(command), failed.message);
+      const provisioned = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8', timeout: 10_000 });
+      profileInstalled = true;
+      assert.equal(provisioned.status, 0, provisioned.stderr);
+      assert.equal((await owner.retry()).ready, true, failures.map(error => error.message).join('\n'));
+      assert.equal((await readInstalledRelease({ root, facts, expected })).directory, installed.directory);
+      assert.equal((await readBrowserRuntimeStatus(root)).state, 'ready');
+      const runtime = await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts });
+      assert.deepEqual(await checkBrowserRuntimeReadiness(runtime), { ready: true });
+      assert.equal((await readFile(restriction, 'utf8')).trim(), '1');
+      t.diagnostic(JSON.stringify({ buildHost: browser.target, publishedTarget: selected.target, requirements,
+        browserRuntimeStatus: owner.status(), apparmorRestriction: 1 }));
+    });
   } finally {
     try { await owner?.close(); }
     finally {
