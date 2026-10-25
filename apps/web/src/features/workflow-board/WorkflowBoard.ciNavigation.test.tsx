@@ -39,11 +39,10 @@ async function fixtureForCi(suffix: string) {
   return fixture
 }
 
-it('opens the exact Activity CI results from a legacy Overview link in the mounted Board', async () => {
+it('opens the exact Activity CI results from a selected Run Overview in the mounted Board', async () => {
   const fixture = await fixtureForCi('ci-overview'), scope = fixture.runs.before.scope
   const { router } = await mountMeasuredBoard(`/workspaces/${scope.workspaceId}?workflowId=${scope.workflowId}&selectedRunId=${scope.runId}&boardView=overview`)
-  expect(await screen.findByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', scope.runId)
-  expect(screen.queryByRole('navigation', { name: 'Workflow views' })).not.toBeInTheDocument()
+  expect(await screen.findByRole('region', { name: 'Workflow Overview' })).toBeVisible()
   await userEvent.click(await screen.findByRole('button', { name: 'Activities' }))
   await userEvent.click(await screen.findByRole('button', { name: 'Open CI results' }))
   const ci = await screen.findByRole('complementary', { name: 'CI server' })

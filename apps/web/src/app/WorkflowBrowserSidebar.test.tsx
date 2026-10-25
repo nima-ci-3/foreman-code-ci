@@ -4,7 +4,7 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { expect, it, vi } from 'vitest'
+import { expect, it } from 'vitest'
 import type { BrowserSession } from '@foreman-code/contracts'
 import { currentWorkflowFixture } from '../shared/mocks/currentWorkflow'
 import { server } from '../mocks/server'
@@ -13,14 +13,13 @@ import { RunsSelectorSearchSchema } from '../features/runs-selector'
 import { useBrowserSidebarTabs, WorkflowSidePanel } from '../features/workflow-board'
 import { installBoardTestLifecycle, newBoardQueryClient } from '../features/workflow-board/eng05D.testSupport'
 import { WorkflowBrowserSidebar } from './WorkflowBrowserSidebar'
-import { browserSessionClient } from './browserRecovery'
 import browserStyles from '../features/agent-browser/browserSidebar.css?inline'
 
 installBoardTestLifecycle()
 
-async function mountSidebar(options: { startedAt?: string; runtime?: unknown; chat?: boolean; sessions?: BrowserSession[]; pages?: boolean; initialEntry?: string; preserveTabs?: boolean } = {}) {
-  if (!options.preserveTabs) useBrowserSidebarTabs.setState({ opened: {}, closed: {}, pages: {} })
-  const sessions: BrowserSession[] = options.sessions ?? [
+async function mountSidebar(options: { startedAt?: string; runtime?: unknown; chat?: boolean } = {}) {
+  useBrowserSidebarTabs.setState({ opened: {}, closed: {} })
+  const sessions: BrowserSession[] = [
     { ...browserRead('chat-session').session, subject: { kind: 'conversation', agent: subject.agent, conversationId: 'conversation' } },
     { ...browserRead('run-session').session, ...(options.startedAt ? { startedAt: options.startedAt } : {}) },
     { ...browserRead('retry-session').session, subject: { ...subject, kind: 'execution', execution: {
@@ -29,10 +28,7 @@ async function mountSidebar(options: { startedAt?: string; runtime?: unknown; ch
   const targets: Record<string, unknown>[] = []
   server.use(
     http.get('/api/management/workspaces/workspace/workflows/workflow', () => HttpResponse.json({
-      workflow: { ...currentWorkflowFixture().version.definition, id: 'workflow', workspaceId: 'workspace', name: 'Website',
-        nodes: [...new Map(sessions.map(session => [session.subject!.agent.workflowNodeId, {
-          id: session.subject!.agent.workflowNodeId, agentId: session.subject!.agent.agentId, name: session.subject!.agent.displayName,
-        }])).values()] }, revision: 1, currentVersionId: 'version', archivedAt: null })),
+      workflow: { ...currentWorkflowFixture().version.definition, id: 'workflow', workspaceId: 'workspace', name: 'Website' }, revision: 1, currentVersionId: 'version', archivedAt: null })),
     http.get('/api/devices/main', () => HttpResponse.json({ mainId: '11111111-1111-4111-8111-111111111111',
       mainPublicKey: 'fixture-key', mainPublicKeyFingerprint: 'a'.repeat(64) })),
     http.get('/api/devices', () => HttpResponse.json({ devices: [] })),
@@ -42,31 +38,10 @@ async function mountSidebar(options: { startedAt?: string; runtime?: unknown; ch
     }),
     http.get('/api/browser/profiles', () => HttpResponse.json({ profiles: [], replicas: [], presentReplicas: [], pendingReplicas: [], nextCursor: null, revision: 0 })),
     http.get('/api/browser/sessions', () => HttpResponse.json({ sessions, nextCursor: null, ...(options.runtime ? { runtime: options.runtime } : {}) })),
-    http.post('/api/browser/sessions/:id/input', () => HttpResponse.json(null)),
-    http.get('/api/browser/sessions/:id', ({ params }) => {
-      const read = browserRead(String(params.id))
-      if (options.pages) {
-        read.tabs[0]!.title = `${sessions.find(session => session.id === params.id)?.subject?.agent.displayName} page`
-        read.tabs.push({ ...read.tabs[0]!, id: 'report-lease', tabId: 'report', title: 'Report page', url: 'https://fixture.test/report' })
-      }
-      if (sessions.find(session => session.id === params.id)?.state === 'closed') {
-        read.tabs = []
-        read.files = [{ id: 'download', name: 'report.txt', mimeType: 'text/plain', byteLength: 3,
-          receivedBytes: 3, state: 'ready', purpose: 'download' }]
-      }
-      return HttpResponse.json({ ...read, files: read.files.map(file => ({ ...file, sha256: null })),
-        session: sessions.find(session => session.id === params.id) })
-    }),
+    http.get('/api/browser/sessions/:id', ({ params }) => HttpResponse.json({ ...browserRead(String(params.id)),
+      session: sessions.find(session => session.id === params.id) })),
     http.get('/api/browser/target', ({ request }) => {
-      const input = JSON.parse(new URL(request.url).searchParams.get('input')!)
-      targets.push(input)
-      const session = sessions.find(item => {
-        const candidate = item.subject
-        return candidate !== undefined && candidate.agent.workflowNodeId === input.workflowNodeId
-          && (!input.executionId || candidate.kind === 'execution' && candidate.execution.executionId === input.executionId)
-      })
-      if (options.pages && session) return HttpResponse.json({ kind: 'selected', subject: session.subject,
-        browser: { enabled: true, profileId: 'profile' }, computerId: 'main', historical: session.state === 'closed', readOnly: true })
+      targets.push(JSON.parse(new URL(request.url).searchParams.get('input')!))
       return HttpResponse.json({ kind: 'unavailable', reason: 'node_unavailable' })
     }),
   )
@@ -82,80 +57,13 @@ async function mountSidebar(options: { startedAt?: string; runtime?: unknown; ch
       <WorkflowBrowserSidebar workspaceId="workspace" workflowId="workflow" runId="run" workflowVersionId="version" />
     </> })
   const router = createRouter({ routeTree: root.addChildren([route]), history: createMemoryHistory({
-    initialEntries: [options.initialEntry ?? '/workspaces/workspace?workflowId=workflow&selectedRunId=run&boardBrowsers=1'],
+    initialEntries: ['/workspaces/workspace?workflowId=workflow&selectedRunId=run&boardBrowsers=1'],
   }) })
   await router.load()
-  const view = render(<QueryClientProvider client={newBoardQueryClient()}><RouterProvider router={router} /></QueryClientProvider>)
+  render(<QueryClientProvider client={newBoardQueryClient()}><RouterProvider router={router} /></QueryClientProvider>)
   await screen.findByRole('tab', { name: 'Builder' })
-  return { targets, router, view }
+  return { targets, router }
 }
-
-it('omits the browser context picker when the Agent has only one context', async () => {
-  const { targets } = await mountSidebar({ sessions: [browserRead('run-session').session] })
-  await waitFor(() => expect(targets.length).toBeGreaterThan(0))
-  expect(screen.queryByRole('combobox', { name: 'Browser context' })).not.toBeInTheDocument()
-})
-
-it('keeps the selected page when switching Agent tabs and reopening the app at the same link', async () => {
-  vi.spyOn(browserSessionClient, 'openView').mockResolvedValue({ close: async () => undefined })
-  vi.spyOn(browserSessionClient, 'releasePressed').mockResolvedValue(undefined)
-  const first = browserRead('run-session').session
-  const second: BrowserSession = { ...browserRead('review-session').session, subject: { ...subject,
-    agent: { ...subject.agent, workflowNodeId: 'reviewer', agentId: 'review-agent', displayName: 'Reviewer' } } }
-  const { router, view } = await mountSidebar({ sessions: [first, second], pages: true })
-  await userEvent.click(await screen.findByRole('tab', { name: 'Report page' }))
-  await waitFor(() => expect(screen.getByRole('tab', { name: 'Report page' })).toHaveAttribute('aria-selected', 'true'))
-  await userEvent.click(screen.getByRole('tab', { name: 'Reviewer' }))
-  expect(await screen.findByRole('tab', { name: 'Reviewer page', selected: true })).toBeVisible()
-  expect(router.state.location.search.browserSessionId).toBe('review-session')
-  await userEvent.click(screen.getByRole('tab', { name: 'Builder' }))
-  await waitFor(() => expect(screen.getByRole('tab', { name: 'Report page' })).toHaveAttribute('aria-selected', 'true'))
-  expect(router.state.location.search.browserTabId).toBe('report')
-  const initialEntry = router.state.location.href
-  view.unmount()
-  await mountSidebar({ sessions: [first, second], pages: true, initialEntry })
-  await waitFor(() => expect(screen.getByRole('tab', { name: 'Report page' })).toHaveAttribute('aria-selected', 'true'))
-}, 15_000)
-
-it('reopens retained Agent downloads from the workflow after its browser has ended and the app reopens', async () => {
-  const capture = vi.spyOn(browserSessionClient, 'openView').mockResolvedValue({ close: async () => undefined })
-  vi.spyOn(browserSessionClient, 'releasePressed').mockResolvedValue(undefined)
-  const session = browserRead('run-session').session
-  const { view } = await mountSidebar({ sessions: [session], pages: true })
-  await screen.findByRole('tab', { name: 'Builder page' })
-  const captureCount = capture.mock.calls.length
-  const savedTabs = localStorage.getItem('foreman-browser-sidebar-tabs')!
-  view.unmount()
-  session.state = 'closed'; session.selectedTabId = null
-  useBrowserSidebarTabs.setState({ opened: {}, closed: {}, pages: {} })
-  localStorage.setItem('foreman-browser-sidebar-tabs', savedTabs)
-  await useBrowserSidebarTabs.persist.rehydrate()
-  await mountSidebar({ sessions: [session], pages: true, preserveTabs: true })
-  await userEvent.click(await screen.findByRole('button', { name: /Downloads.*ended/i }))
-  expect(await screen.findByRole('button', { name: 'Save file' })).toBeVisible()
-  expect(capture).toHaveBeenCalledTimes(captureCount)
-}, 15_000)
-
-it('opens an ended attempt’s downloads while the same Agent has a live browser, including after reopening its link', async () => {
-  const capture = vi.spyOn(browserSessionClient, 'openView').mockResolvedValue({ close: async () => undefined })
-  vi.spyOn(browserSessionClient, 'releasePressed').mockResolvedValue(undefined)
-  const live: BrowserSession = { ...browserRead('retry-session').session, subject: { ...subject, kind: 'execution',
-    execution: { runId: 'run', workflowVersionId: 'version', executionId: 'retry-execution', attempt: 2 } } }
-  const ended: BrowserSession = { ...browserRead('finished-session').session, state: 'closed', selectedTabId: null }
-  const { router, view, targets } = await mountSidebar({ sessions: [live, ended], pages: true })
-  await screen.findByRole('tab', { name: 'Builder page' })
-  const captureCount = capture.mock.calls.length
-  await userEvent.click(screen.getByText('Browser downloads', { selector: 'summary' }))
-  await userEvent.click(await screen.findByRole('button', { name: /Downloads.*Attempt 1/ }))
-  expect(await screen.findByRole('button', { name: 'Save file' })).toBeVisible()
-  expect(targets.at(-1)).toMatchObject({ executionId: 'execution' })
-  expect(capture).toHaveBeenCalledTimes(captureCount)
-  const initialEntry = router.state.location.href
-  view.unmount()
-  await mountSidebar({ sessions: [live, ended], pages: true, initialEntry })
-  expect(await screen.findByRole('button', { name: 'Save file' })).toBeVisible()
-  expect(capture).toHaveBeenCalledTimes(captureCount)
-}, 15_000)
 
 it('keeps chat and execution browser sessions selectable within the Agent tab', async () => {
   const { targets } = await mountSidebar()

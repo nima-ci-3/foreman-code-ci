@@ -13,7 +13,7 @@ import { persistentFixtureRoot } from './fixtureStorage.mjs';
 test('companion pairing preserves the running Worker error and renders stop and retry instructions', { timeout: 5000 }, async t => {
   const directory = await mkdtemp(join(persistentFixtureRoot, 'companion-pairing-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' };
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' };
   const manifestFile = join(directory, 'manifest.json');
   await writeFile(manifestFile, JSON.stringify({ target }));
   const spawn = t.mock.method(childProcess, 'spawn', (_binary, args) => {

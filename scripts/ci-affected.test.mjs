@@ -72,71 +72,12 @@ test('falls back to full for shared infrastructure and removed sources', () => {
   }
 })
 
-test('shared lint implementation and test configuration data invalidate their consumers', () => {
-  for (const file of ['scripts/eslint-plugin-foreman/index.mjs', 'scripts/eslint-closure-cache.mjs', 'scripts/lint-allowlist.json',
-    'scripts/check-web-feature-boundaries.mjs', 'apps/web/heavy-tests.json']) {
-    for (const suite of ['lint', 'unit', 'typecheck']) {
-      assert.equal(selectAffectedFiles({ suite, changedFiles: [file], sources: new Map([...sources, [file, '{}']]) }).scope,
-        'full', `${suite}: ${file}`)
-    }
-  }
-})
-
-test('declaration changes run full typecheck and lint even when imports name their JavaScript implementation', () => {
-  const declaration = 'scripts/test-database-template.d.mts'
-  const graph = new Map([...sources, [declaration, 'export function createTestDatabaseTemplate(): number'],
-    ['scripts/test-database-template.mjs', 'export function createTestDatabaseTemplate() {}'],
-    [unit, "import { createTestDatabaseTemplate } from '../../../scripts/test-database-template.mjs'"]])
-  for (const suite of ['typecheck', 'lint']) {
-    assert.equal(selectAffectedFiles({ suite, changedFiles: [declaration], sources: graph }).scope, 'full')
-  }
-})
-
-test('typecheck includes standalone TypeScript module extensions', () => {
-  for (const extension of ['mts', 'cts']) {
-    const file = `apps/api/src/value.${extension}`
-    assert.deepEqual(selectAffectedFiles({ suite: 'typecheck', changedFiles: [file],
-      sources: new Map([[file, 'export const value: number = "invalid"']]) }).files, [file])
-  }
-})
-
-test('affected lint preserves the project lint command and its cross-file checks', () => {
-  assert.deepEqual(affectedCommands('lint', [source, 'apps/api/src/another.ts', 'apps/web/src/view.tsx']), [
-    ['corepack', 'pnpm', '--dir', 'apps/api', 'lint'],
-    ['corepack', 'pnpm', '--dir', 'apps/web', 'lint'],
-  ])
-})
-
-test('lint checks downstream projects when a shared return type changes', () => {
-  const shared = 'packages/contracts/src/action.ts'
-  const consumer = 'apps/api/src/caller.ts'
-  const selection = selectAffectedFiles({ suite: 'lint', changedFiles: [shared],
-    sources: new Map([[shared, 'export async function action(): Promise<void> {}'],
-      [consumer, "import { action } from '../../../packages/contracts/src/action.js'; action()"]]) })
-  assert.deepEqual(affectedCommands('lint', selection.files), [
-    ['corepack', 'pnpm', '--dir', 'apps/api', 'lint'],
-    ['corepack', 'pnpm', '--dir', 'packages/contracts', 'lint'],
-  ])
-})
-
-test('affected API typecheck includes the production compiler contract', () => {
-  const commands = affectedCommands('typecheck', [source])
-  assert.deepEqual(commands.at(-1), ['corepack', 'pnpm', '--dir', 'apps/api', 'exec', 'tsc',
-    '-p', 'tsconfig.build.json', '--noEmit', '--isolatedModules',
-    '--tsBuildInfoFile', 'node_modules/.cache/tsc/production-check.tsbuildinfo'])
-})
-
-test('lint and typecheck include consumers reached by imports', () => {
+test('lint checks changed files and typecheck checks packages reached by imports', () => {
   const lint = selectAffectedFiles({ suite: 'lint', changedFiles: [source], sources })
-  assert.deepEqual(lint.files, [source, 'apps/api/src/bridge.ts', unit, integration,
-    'apps/api/test/feature.acceptance.test.ts'].sort())
+  assert.deepEqual(lint.files, [source])
   const typecheck = selectAffectedFiles({ suite: 'typecheck', changedFiles: [source], sources })
   assert.ok(typecheck.files.includes(source))
-  assert.deepEqual(affectedCommands('typecheck', typecheck.files), [
-    ['corepack', 'pnpm', '--dir', 'apps/api', 'typecheck'],
-    ['corepack', 'pnpm', '--dir', 'apps/api', 'exec', 'tsc', '-p', 'tsconfig.build.json', '--noEmit', '--isolatedModules',
-      '--tsBuildInfoFile', 'node_modules/.cache/tsc/production-check.tsbuildinfo'],
-  ])
+  assert.deepEqual(affectedCommands('typecheck', typecheck.files), [['corepack', 'pnpm', '--dir', 'apps/api', 'typecheck']])
   assert.deepEqual(affectedCommands('unit', [unit]), [[process.execPath, 'scripts/test-command.mjs', '--',
     'corepack', 'pnpm', '--dir', 'apps/api', 'exec', 'vitest', 'run', 'src/feature.test.ts']])
   assert.deepEqual(affectedCommands('unit', ['apps/web/src/view.test.tsx', 'scripts/tool.test.mjs']), [
@@ -176,7 +117,7 @@ test('runs affected commands without leaking dispatch selections into nested com
     PATH: `${root}:${process.env.PATH}`, SCOPE: 'affected', SELECTED_FILES: 's:0', SLICE: 's:0',
     DEFAULT_BRANCH: 'stable', CI_PARTITION: '{}', CI_DURATIONS: '{}' } })
   assert.equal(run.status, 0, run.stderr)
-  assert.match(run.stdout, /pnpm --dir apps\/api lint/)
+  assert.match(run.stdout, /pnpm --dir apps\/api exec eslint src\/feature\.ts --max-warnings 0/)
 })
 
 for (const progress of ['', 'parent-progress.jsonl']) {

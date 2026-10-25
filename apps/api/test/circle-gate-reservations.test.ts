@@ -75,12 +75,11 @@ it('reserves ordinary cloud capacity on active standby orgs instead of exhausted
       endpoint, undefined, { circleStandby: selector, reservedCloudSlots: 4 })
     await service.dispatch()
     await service.drain()
-    // A rare run started 5; name every started slot so the next failure shows which one was extra.
-    expect(started, `started: ${started.join(', ')}`).toHaveLength(4)
+    expect(started).toHaveLength(4)
     for (const owner of owners.slice(3)) expect(started.filter(key => key.includes(`@${owner}:`))).toHaveLength(1)
     expect(started.some(key => key.endsWith(':1'))).toBe(false)
     const queued = await db.pool.query("select id from ci_runs where state='queued'")
-    expect(queued.rows, `started: ${started.join(', ')}`).toHaveLength(4)
+    expect(queued.rows).toHaveLength(4)
   } finally {
     await service?.close()
     await db.close()

@@ -39,7 +39,6 @@ export interface AgentNodeViewProps {
   className?: string
   onSelect?: (event: MouseEvent<HTMLButtonElement>) => void
   onAction?: (panel: AgentPanel, event: MouseEvent<HTMLButtonElement>) => void
-  actionPanels?: readonly AgentPanel[]
   /** Connection handles or other canvas adapters. */
   children?: ReactNode
 }
@@ -47,7 +46,7 @@ export interface AgentNodeViewProps {
 /** The design-system AgentNode: a circle with harness rim, status word and rim actions (Chat, Settings, Info). */
 export const AgentNodeView = forwardRef<HTMLButtonElement, AgentNodeViewProps>(function AgentNodeView({
   name, harness, harnessLabel, model, icon = 'bot', statusLabel, state = 'idle', transition, transitionKey, meta = [],
-  entry, selected, openPanel, pending, ariaLabel, className, onSelect, onAction, actionPanels = ['chat', 'settings', 'info'], children,
+  entry, selected, openPanel, pending, ariaLabel, className, onSelect, onAction, children,
 }, ref) {
   const hover = useHoverControls()
   const known = harness === 'codex' || harness === 'claude' ? harness : 'neutral'
@@ -70,7 +69,7 @@ export const AgentNodeView = forwardRef<HTMLButtonElement, AgentNodeViewProps>(f
     </button>
     {state === 'completed' ? <span className="n-agent-done" aria-hidden="true"><Icon name="check" size={12} /></span> : null}
     {onAction ? <div className="n-agent-actions" role="group" aria-label={`${name} actions`}>
-      {actionPanels.map((panel) => <button key={panel} type="button"
+      {(['chat', 'settings', 'info'] as const).map((panel) => <button key={panel} type="button"
         className={`n-agent-action n-agent-action--${panel} nodrag nopan`} aria-label={`Open ${name} ${actionLabels[panel]}`}
         title={panel === 'chat' ? 'Chat and activity' : panel === 'settings' ? 'Agent settings' : 'Status and details'}
         aria-expanded={openPanel === panel} onClick={(event) => { event.stopPropagation(); onAction(panel, event) }}>

@@ -40,8 +40,6 @@ const BoardSurfaceSelectionFields = {
   boardView: z.enum(['graph', 'overview']).optional(),
   boardPanel: z.enum(['agent', 'browser']).optional(),
   boardAgentTab: z.enum(['chat', 'settings', 'details']).optional(),
-  /** Explicit outside-Run chat destination, retained across reloads and view changes. */
-  boardChatTarget: z.literal('current').optional(),
   /** The open panel's exact Run; selecting it keeps the workflow Board on screen. */
   boardRunId: GraphIdSchema.optional(),
   boardNodeId: GraphIdSchema.optional(), boardExecutionId: GraphIdSchema.optional(),
@@ -155,7 +153,7 @@ export function boardSearchForRun(search: WorkspaceBoardSearch, workflowId: stri
   void _run; void _version; void _semantics; void _node; void _edge; void _exchange
   const changedRun = search.workflowId !== workflowId || search.runId !== run?.runId
     || search.workflowVersionId !== run?.workflowVersionId || !!search.boardRunId && search.boardRunId !== run?.runId
-  if (changedRun) { delete rest.boardChatTarget; delete rest.boardRunId; delete rest.boardCiTicketId; delete rest.boardExecutionId; delete rest.boardWaitingActivationId; delete rest.browserSessionId; delete rest.browserTabId }
+  if (changedRun) { delete rest.boardRunId; delete rest.boardCiTicketId; delete rest.boardExecutionId; delete rest.boardWaitingActivationId; delete rest.browserSessionId; delete rest.browserTabId }
   return WorkspaceBoardSearchSchema.parse({ ...rest, workflowId, ...(run ? {
     runId: run.runId, workflowVersionId: run.workflowVersionId, executionSemanticsVersion: run.executionSemanticsVersion,
   } : {}) })
@@ -180,7 +178,7 @@ export function staysOnWorkflowBoard(current: { pathname: string; search: unknow
 
 function authoringSelection(search: WorkspaceBoardSearch): WorkspaceBoardSearch {
   const value = { ...search }
-  for (const key of ['runStatus', 'activityKind', 'activityAgentId', 'boardView', 'boardPanel', 'boardAgentTab', 'boardChatTarget',
+  for (const key of ['runStatus', 'activityKind', 'activityAgentId', 'boardView', 'boardPanel', 'boardAgentTab',
     'boardRunId', 'boardCiTicketId', 'browserSessionId', 'browserTabId', 'boardNodeId', 'boardExecutionId', 'boardWaitingActivationId', 'boardTeamId', 'boardMemory',
     'boardBrowsers', 'browserTab'] as const) delete value[key]
   return value

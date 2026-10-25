@@ -955,7 +955,7 @@ export async function copyVerificationRuntime(source, release) {
 }
 
 /** Main reuses the exact target's already locked Worker unit; no second dependency resolution. */
-export async function stageProductionBrowserRuntime({ release, appRoot, nodeVersion = process.version, readiness, stage = stageBundledBrowserRuntime }) {
+export async function stageProductionBrowserRuntime({ release, appRoot, readiness, stage = stageBundledBrowserRuntime }) {
   try {
   const index = JSON.parse(await readFile(join(release, 'worker-artifacts', 'index.json'), 'utf8'))
   const osRelease = await readFile('/etc/os-release', 'utf8')
@@ -963,7 +963,7 @@ export async function stageProductionBrowserRuntime({ release, appRoot, nodeVers
     const equal = line.indexOf('=')
     return [line.slice(0, equal), line.slice(equal + 1).replace(/^"|"$/g, '')]
   }))
-  const facts = { os: values.ID, osRelease: values.VERSION_ID, arch: process.arch, node: nodeVersion,
+  const facts = { os: values.ID, osRelease: values.VERSION_ID, arch: process.arch, node: process.version,
     libc: `glibc-${process.report.getReport().header.glibcVersionRuntime}` }
   const candidates = index.artifacts.filter(entry => matchesBrowserRuntimeTarget(entry.target, facts))
   if (candidates.length !== 1) throw new Error('No matching native browser runtime target for this Main computer.')
