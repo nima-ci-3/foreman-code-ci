@@ -138,17 +138,6 @@ it('releases an expired dispatch only after confirmed terminal cancellation', as
   })
 })
 
-it('requeues an expired dispatch whose cancellation finished after the request that asked for it', async () => {
-  const request = vi.fn()
-  const endpoint: HostCiEndpoint = { computers: async () => [computer], request }
-  // The cloud adapter confirmed this ticket's expiry cancellation on a later read; nobody canceled the ticket.
-  const observed = { runId: run.id, state: 'canceled' as const, step: null, startedAt: run.queuedAt,
-    finishedAt: new Date().toISOString(), exitCode: null, message: 'Canceled.', logBytes: 0 }
-  await expect(expireCloudDispatch(testCiContext, endpoint, computer, run, observed)).resolves.toMatchObject({
-    state: 'queued', finishedAt: null, message: expect.stringContaining('queued for another computer'),
-  })
-  expect(request).not.toHaveBeenCalled()
-})
 
 it('preserves a terminal result discovered during expiry cancellation', async () => {
   const endpoint: HostCiEndpoint = { computers: async () => [computer], request: async () => ({

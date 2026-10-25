@@ -102,7 +102,6 @@ interface InstalledWorkerInput {
   configuration: InstalledWorkflowConfigurationLocation | null
   refreshWorkflowConfiguration?: (signal: AbortSignal) => Promise<InstalledWorkflowConfigurationLocation | null>
   nativeOutputs?: InstalledWorkflowHostOptions['nativeOutputs']
-  workflowClaude?: InstalledWorkflowHostOptions['workflowClaude']
   jobConfiguration?: InstalledRuntimeConfigurationLocation | null
   jobReports?: Pick<RemoteJobExecutionHostPorts, 'prepareOutputs' | 'preparePublication'>
   approvedRoots(): Promise<ApprovedRootAllowlist | null>
@@ -515,7 +514,6 @@ async function createWorkerSources({ input, state, transfers }: {
       linkLostAt: () => input.connection()?.linkLostAt?.(),
       captureRequest: namespace => input.connection()?.captureRequest(namespace), sources, approvedRoots: roots,
       ...(input.nativeOutputs ? { nativeOutputs: input.nativeOutputs } : {}),
-      ...(input.workflowClaude ? { workflowClaude: input.workflowClaude } : {}),
       codexSuiteRevision: input.codexSuiteRevision,
       signal: lifetime.signal, registry, journal, ...(accounts ? { accounts } : {}) })
     state.native = await createWorkflow(state.configuration)

@@ -1,6 +1,6 @@
 Foreman managed browser runtime
 
-Installation retains the full Python standalone licenses, Chromium credits/licenses and every resolved Python distribution license file and METADATA inside the unit. See python/ for standalone notices, licenses/chromium-credits.html, licenses/python-packages/index.json and licenses/native-packages/. Missing notice material blocks runtime readiness.
+Release assembly also retains the full Python standalone licenses, Chromium credits/licenses and every resolved Python distribution license files and METADATA inside the unit. Generated LICENSES.txt indexes exact files and versions; missing notice material blocks publication.
 
 browser-use 0.13.11
 MIT License

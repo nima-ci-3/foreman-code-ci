@@ -31,7 +31,7 @@ import { CiPrewarm } from './prewarm.js'
 import { collectCiResults } from './resultCollection.js'
 import { IntegrationCoverageStore } from './coverageStore.js'
 import { sanitizeCiText, serializeCiJson } from './text.js'
-import { ciComputerPreference, isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
+import { isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
 import { weighCiPartitions } from './partitionPlanning.js'
 import { invalidateExecutorSpeeds, readExecutorSpeeds } from './executorSpeed.js'
 import { readCiGateReservation, readQueuedCiRuns } from './queuedRuns.js'
@@ -383,20 +383,6 @@ export class HostCiService {
     return outcome.value
   }
 
-  /** The newest ancestor of commit on which every part of this suite passed, as a full or runner-selected run (a run of
-   * hand-picked files proves nothing about the rest). */
-  private async passedAncestor(repository: string, suite: string, commit: string) {
-    if (!this.commits.coverageAncestors) return undefined
-    const passed = await this.pool.query<{ commit: string }>(
-      `select record->>'commit' as commit from ci_runs
-        where record->>'repository' = $1 and record->>'suite' = $2 and record->>'commit' <> $3
-          and (record->>'scope' = 'full' or record->>'deriveFiles' = 'true')
-        group by group_id, record->>'commit' having bool_and(state = 'passed')
-        order by max(record->>'finishedAt') desc limit 200`, [repository, suite, commit])
-    if (!passed.rows.length) return undefined
-    return (await this.commits.coverageAncestors(repository, commit, passed.rows.map(row => row.commit)))[0]
-  }
-
   private async prepareRuns(caller: ManagementPrincipal, input: CiRunInput,
     scope: Awaited<ReturnType<CiAuthority['resolve']>>): Promise<PreparedCiRuns> {
     const workspace = WorkspaceSchema.parse((await this.pool.query<{ record: unknown }>(
@@ -422,12 +408,6 @@ export class HostCiService {
     const snapshot = scope.executionId && !input.commit && this.snapshots ? await this.snapshots(scope.executionId) : null
     const commit = await this.commits.resolve(repository, defaultBranch, input.commit, snapshot)
     timing.mark('commitMs')
-    // A branch carries changes main never checked, CI infrastructure among them. Diffing against the newest ancestor
-    // this suite already passed on re-checks only what changed since then, instead of a full run on every commit.
-    if (!input.baseCommit && !input.gate && (input.scope ?? 'affected') === 'affected' && input.files === undefined) {
-      const passed = await this.passedAncestor(repository, input.suite, commit)
-      if (passed) input = { ...input, baseCommit: passed }
-    }
     const inventories = Promise.all([
       ['unit', 'integration'].includes(input.suite) ? this.learnedDurations(repository) : null,
       input.suite === 'integration' ? this.commits.integrationInventory?.(repository, commit) : undefined,
@@ -1708,7 +1688,9 @@ export class HostCiService {
       const reasons = (run.unstartedProviders ?? []).map(provider => `${provider}: dispatch retries exhausted`)
       const preferred = (computer: HostCiComputer) => {
         if (run.gate && run.suite !== 'integration') return Number(computer.hostRef.kind === 'cloud')
-        return ciComputerPreference(computer)
+        if (computer.hostRef.kind !== 'cloud') return 3
+        if (run.suite !== 'integration') return Number(isGitHubComputer(computer))
+        return isGitHubComputer(computer) ? 1 : 2
       }
       const affectedFiles = run.scope === 'affected' && !run.deriveFiles ? { files: run.files } : {}
       const plannedProvider = run.gate

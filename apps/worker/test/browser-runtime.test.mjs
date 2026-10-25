@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { packBrowserRuntime, assembleBrowserRuntime, collectBrowserRuntimeArtifacts } from '../../../scripts/browser-runtime-install.mjs';
+import { packBrowserRuntime, assembleBrowserRuntime } from '../../../scripts/browser-runtime-install.mjs';
 import { stageBrowserRuntime, activateBrowserRuntime, rollbackBrowserRuntime, readInstalledBrowserRuntime,
   checkBrowserRuntimeReadiness, validateBrowserRuntimeManifest, copyBuiltBrowserRuntime, readBrowserRuntimeStatus } from '../src/browserRuntimeInstall.mjs';
 import { installVersion, readInstalledRelease } from '../src/installation.mjs';
@@ -27,7 +27,7 @@ async function fixture(t) {
   return directory;
 }
 
-async function artifact(directory, name, version = '1.0.0', nativeTarget = target) {
+async function artifact(directory, name, version = '1.0.0') {
   const unit = join(directory, `${name}-unit`), output = join(directory, name);
   const lock = JSON.stringify({ fixture: true, version });
   const files = {
@@ -42,7 +42,7 @@ async function artifact(directory, name, version = '1.0.0', nativeTarget = targe
     await writeFile(join(unit, path), bytes, { mode: path === 'python/bin/python3' || path === 'chromium/chrome' ? 0o700 : 0o600 });
   }
   const result = await packBrowserRuntime({ unit, output, manifest: { format: 1, kind: 'foreman-browser-runtime',
-    runtimeVersion: version, foremanVersion: version, sourceCommit: 'a'.repeat(40), profileFormat: 1, target: nativeTarget,
+    runtimeVersion: version, foremanVersion: version, sourceCommit: 'a'.repeat(40), profileFormat: 1, target,
     sourceInputs: [], pythonVersion: '3.13.16', browserUseVersion: '0.13.11', browserHarnessVersion: '0.1.13',
     chromiumVersion: '153.0.8010.12', resolvedLockSha256: hash(lock), pythonExecutable: 'python/bin/python3',
     chromiumExecutable: 'chromium/chrome', bridgeScript: 'bridge.py', nativeHostModule: 'native-host.mjs', skill: 'browser-use.md' } });
@@ -129,43 +129,6 @@ test('consumes runner artifacts by source and native target and rejects corrupt 
     target: { ...target, osRelease: '24.04' }, commit }), /matching target runner/);
   await writeFile(join(packed.output, packed.descriptor.chunks[0].path), 'corrupt');
   await assert.rejects(copyBuiltBrowserRuntime({ directory: packed.output, output: join(directory, 'corrupt'), target, commit }), /checksum mismatch/);
-});
-
-test('collects native Ubuntu browser artifacts for Main and selects each without a target fallback', async t => {
-  const directory = await fixture(t), commit = 'a'.repeat(40);
-  const targets = [{ ...target, osRelease: '24.04', libc: 'glibc-2.39' }, target];
-  const runners = [];
-  for (const nativeTarget of targets) {
-    const packed = await artifact(directory, `runner-${nativeTarget.osRelease}`, '1.0.0', nativeTarget);
-    await writeFile(join(packed.output, 'index.json'), JSON.stringify({ format: 1, sourceCommit: commit,
-      artifacts: [{ directory: '.', target: nativeTarget, descriptorSha256: packed.descriptorSha256 }] }));
-    runners.push(packed);
-  }
-  const output = join(directory, 'collected');
-  const collected = await collectBrowserRuntimeArtifacts({ directories: runners.map(runner => runner.output), output, commit });
-  assert.deepEqual(collected.artifacts.map(artifact => artifact.target), targets);
-  for (const [index, nativeTarget] of targets.entries()) {
-    const consumed = join(directory, `worker-${nativeTarget.osRelease}`);
-    const copied = await copyBuiltBrowserRuntime({ directory: output, output: consumed, target: nativeTarget, commit });
-    assert.equal(copied.descriptorSha256, runners[index].descriptorSha256);
-    const staged = await stageBrowserRuntime({ runtimeRoot: join(directory, `installed-${index}`), artifact: consumed,
-      expectedSha256: copied.descriptorSha256, target: nativeTarget, readiness: ready, activate: false });
-    assert.deepEqual(JSON.parse(await readFile(join(staged.rootDirectory, 'manifest.json'))).target, nativeTarget);
-  }
-  await assert.rejects(copyBuiltBrowserRuntime({ directory: output, output: join(directory, 'unsupported'),
-    target: { ...target, osRelease: '22.04', libc: 'glibc-2.35' }, commit }), /matching target runner/);
-  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[0].output, runners[0].output],
-    output: join(directory, 'duplicate'), commit }), /duplicate native browser target/);
-  await assert.rejects(readdir(join(directory, 'duplicate')), { code: 'ENOENT' });
-  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[0].output],
-    output: join(directory, 'wrong-commit'), commit: 'b'.repeat(40) }), /source mismatch/);
-  await writeFile(join(runners[0].output, runners[0].descriptor.chunks[0].path), 'corrupt');
-  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[0].output],
-    output: join(directory, 'corrupt'), commit }), /checksum mismatch/);
-  await assert.rejects(readdir(join(directory, 'corrupt')), { code: 'ENOENT' });
-  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [], output, commit }), /artifacts required/);
-  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[1].output], output, commit }), { code: 'EEXIST' });
-  assert.deepEqual(JSON.parse(await readFile(join(output, 'index.json'))), collected);
 });
 
 test('staging stays inactive, activation drains before selection, and rollback restores profiles before selecting older Chromium', async t => {

@@ -27,14 +27,6 @@ describe('original remote physical artifact association', () => {
     }
     expect(RemoteWorkflowPhysicalOutputSchema.safeParse({ kind: 'text-only', result: { outcome: 'succeeded', output: artifactOutputs } }).success).toBe(false)
   })
-  it('accepts Claude results, whose original native output is the bare answer text', () => {
-    const text = { kind: 'text-only', result: { outcome: 'succeeded', output: 'done' } }
-    expect(RemoteWorkflowPhysicalOutputSchema.parse(text)).toEqual(text)
-    expect(remoteWorkflowPhysicalOutput(text.result as ExecutionResult)).toEqual(text)
-    const result: ExecutionResult = { outcome: 'succeeded', output: JSON.stringify({ data: null, artifactOutputs }) }
-    expect(remoteWorkflowPhysicalOutput(result, { version: 1, outputKeys: ['report'] }))
-      .toEqual({ kind: 'published-artifacts', result, artifactOutputs })
-  })
   it('preserves the original result bytes for ordinary and choice associations', () => {
     for (const envelope of [{ data: null, artifactOutputs }, { data: { carry: 1 }, routing: { outcome: 'ready' }, artifactOutputs }]) {
       const output = { ...published(), result: native(envelope) }

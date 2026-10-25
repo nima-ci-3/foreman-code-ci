@@ -646,8 +646,7 @@ async function assertRemoteWriterLane(sql: SqlTransaction, capture: Bound, execu
   const providerId = lifetime.review
     ? receipt.reviewTurns?.find(turn => turn.assignment.jobId === lifetime.review!.jobId)?.providerId : receipt.native?.turnId
   if (lane.correlation !== correlation) return unavailable('writer_lane_correlation')
-  // A just-started turn has no acknowledged ID on Main yet, as the native proofs also allow.
-  if (providerId !== undefined && lane.provider_id !== null && lane.provider_id !== providerId) {
+  if (providerId !== undefined && lane.provider_id !== providerId) {
     return unavailable('writer_lane_receipt_turn')
   }
   if (lifetime.lane!.providerId !== null && lane.provider_id !== lifetime.lane!.providerId) {

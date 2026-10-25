@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, type EdgeProps, type NodeProps } from '@xyflow/react'
 import { AgentNodeView } from '../../shared/ui/nocturne/Canvas'
-import { useReducedMotion, type AgentPanel } from '../../shared/ui/nocturne'
+import { useReducedMotion } from '../../shared/ui/nocturne'
 import type { ActivitySnapshotV1, ExecutionQueueEntry, Agent, WorkflowHierarchyReadResult } from '@foreman-code/contracts'
 import type { WorkflowDefinitionCurrent } from '@foreman-code/contracts/current'
 import {
@@ -35,19 +35,14 @@ const SavedAgent = memo(function SavedAgent({ id, data }: NodeProps<SavedBoardNo
   const live = useContext(RunLiveNodes)?.get(id)
   const presentation = live ?? (ci ? ciNodePresentation(ci) : { label: 'Saved', state: 'idle' as const })
   return <>
-    {/* On the Board a node behaves as on the draft: a click selects it, its actions open chat, settings or details. */}
-    {data.pick ? <AgentNodeView className="run-board-agent nopan" name={data.snapshot.name} harnessLabel="" icon={data.icon}
-      selected={data.picked} openPanel={data.openPanel} ariaLabel={`${data.snapshot.name}, ${presentation.label}`}
-      statusLabel={presentation.label} state={presentation.state} transition={live?.transition} transitionKey={live?.transitionKey}
-      onSelect={(event) => { event.stopPropagation(); data.pick?.() }} onAction={(panel) => data.act?.(panel)} /> : <>
-      {/* Keep the authoring button inert; inspection has its own accessible action. */}
-      <div className="run-board-node-visual" aria-hidden="true" inert>
-        <AgentNodeView className="run-board-agent" name={data.snapshot.name} harnessLabel="" icon={data.icon}
-          statusLabel={presentation.label} state={presentation.state} transition={live?.transition} transitionKey={live?.transitionKey} />
-      </div>
-      {/* The whole node is the Inspect target, so no button covers the node's face. */}
-      {data.inspect ? <button type="button" className="run-board-inspect nopan"
-        aria-label={`Inspect ${data.snapshot.name}`} title={`Inspect ${data.snapshot.name}`} onClick={data.inspect} /> : null}</>}
+    {/* Keep the authoring button inert; inspection has its own accessible action. */}
+    <div className="run-board-node-visual" aria-hidden="true" inert>
+      <AgentNodeView className="run-board-agent" name={data.snapshot.name} harnessLabel="" icon={data.icon}
+        statusLabel={presentation.label} state={presentation.state} transition={live?.transition} transitionKey={live?.transitionKey} />
+    </div>
+    {/* The whole node is the Inspect target, so no button covers the node's face. */}
+    {data.inspect ? <button type="button" className="run-board-inspect nopan"
+      aria-label={`Inspect ${data.snapshot.name}`} title={`Inspect ${data.snapshot.name}`} onClick={data.inspect} /> : null}
     {ci ? <span role="status">{ciNodePresentation(ci).label}</span> : null}
     {data.snapshot.kind !== 'job' && data.role ? <p className="run-board-node-caption">{data.role}{data.reportingParent ? ` · Reports to ${data.reportingParent}` : ''}</p> : null}
     {/* Unlike the authoring AgentHandles, every saved target side must resolve. */}
@@ -137,28 +132,8 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
     })
     return kept.length === Object.keys(previous).length ? previous : Object.fromEntries(kept)
   }), [nodes])
-  // One Board, the draft's rules: a click selects an agent; clicking a second one connects the two in the draft.
-  const [picked, setPicked] = useState<string>()
-  const connect = board?.connectDraftNodes
-  const pickRef = useRef<(nodeId: string) => void>(undefined)
-  pickRef.current = nodeId => {
-    if (picked && picked !== nodeId && connect && movable.has(picked) && movable.has(nodeId)) {
-      connect(picked, nodeId); setPicked(undefined)
-    } else setPicked(picked === nodeId ? undefined : nodeId)
-  }
-  const docked = board?.sidePanel?.kind === 'agent' ? board.sidePanel : undefined
-  const shownPanel = docked ? { nodeId: docked.nodeId, panel: docked.tab === 'details' ? 'info' as const : docked.tab } : undefined
-  const actRef = useRef<(nodeId: string, panel: AgentPanel) => void>(undefined)
-  actRef.current = (nodeId, panel) => {
-    setPicked(undefined)
-    if (shownPanel?.nodeId === nodeId && shownPanel.panel === panel) board?.selectSidePanel?.({ kind: 'none' })
-    else if (panel === 'info') inspectNode.current?.(nodeId)
-    else board?.selectSidePanel?.({ kind: 'agent', nodeId, tab: panel })
-  }
   const visibleNodes = useMemo(() => nodes.map(node => ({ ...node, selected: teamNodeId === node.id,
-    ...(board?.selectSidePanel && node.data.inspect ? { data: { ...node.data, picked: picked === node.id, pick: () => pickRef.current?.(node.id),
-      openPanel: shownPanel?.nodeId === node.id ? shownPanel.panel : undefined, act: (panel: AgentPanel) => actRef.current?.(node.id, panel) } } : {}),
-    ...(movable.has(node.id) ? { draggable: true, position: dragged[node.id] ?? node.position } : {}) })), [nodes, teamNodeId, movable, dragged, board?.selectSidePanel, picked, shownPanel?.nodeId, shownPanel?.panel])
+    ...(movable.has(node.id) ? { draggable: true, position: dragged[node.id] ?? node.position } : {}) })), [nodes, teamNodeId, movable, dragged])
   const scope = useMemo(() => ({ workspaceId: snapshot.workspaceId, workflowId: snapshot.workflowId,
     runId: snapshot.runId, workflowVersionId: snapshot.workflowVersionId, executionSemanticsVersion: 3 as const }), [snapshot])
   const active = !activitySnapshot || activitySnapshot.active.length > 0
@@ -229,7 +204,7 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
           if (node.id === CI_SERVER_NODE_ID) ci.place.moved(node.position)
           if (movable.has(node.id)) move?.([{ id: node.id, position: { x: node.position.x, y: node.position.y } }])
         }} fitView={fitOnMount} defaultViewport={defaultViewport} fitViewOptions={fitViewOptions} minZoom={RESPONSIVE_MIN_ZOOM} maxZoom={1.6}
-        onInit={onInit} onMove={onMove} onMoveEnd={onMoveEnd} onPaneClick={() => setPicked(undefined)}
+        onInit={onInit} onMove={onMove} onMoveEnd={onMoveEnd}
         proOptions={proOptions} aria-label="Saved Run graph"
         ariaLabelConfig={{ 'node.a11yDescription.default': 'Saved agent, read only.', 'edge.a11yDescription.default': 'Saved connection, read only.' }}>
         <RunSubagentsOverlay scope={snapshot} nodes={snapshot.nodes} visible={visible} />

@@ -17,12 +17,10 @@ export function remoteMcpPreflight(
     }
     const detection = await manager.inspectMcp(input.signal)
     input.signal?.throwIfAborted()
-    // Claude receives its scoped credential as an HTTP header when the Worker opens the session, not from its environment.
-    const credentialRouteReady = input.harness === 'claude'
-      || APP_MCP_TOKEN_NAMES.some(name => name === detection.credentialEnvironmentVariable)
     if (detection.harness !== input.harness || !APP_MCP_SERVER_NAMES.some(name => name === detection.serverName)
-      || detection.endpointMatches !== true || !credentialRouteReady
-      || input.harness !== 'claude' && detection.credentialArrangement !== undefined
+      || detection.endpointMatches !== true
+      || !APP_MCP_TOKEN_NAMES.some(name => name === detection.credentialEnvironmentVariable)
+      || detection.credentialArrangement !== undefined
         && (detection.credentialArrangement.kind !== 'environment_variable'
           || !APP_MCP_TOKEN_NAMES.some(name => detection.credentialArrangement?.kind === 'environment_variable'
             && name === detection.credentialArrangement.environmentVariable))

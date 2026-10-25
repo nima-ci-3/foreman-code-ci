@@ -1,5 +1,4 @@
-import { useCallback, useContext, useSyncExternalStore } from 'react'
-import { QueryClientContext, queryOptions, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ComputerActivityListSchema, ComputerRenameInputSchema, ComputerRenameResultSchema, type ComputerActivityList } from '@foreman-code/contracts/computer-activity'
 import type { DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
 import { TELEMETRY_LIMITS, TelemetrySelectorResultSchema } from '@foreman-code/contracts/resource-telemetry'
@@ -44,16 +43,6 @@ export function useComputerActivity() {
     refetchInterval: 5_000,
     queryFn: async ({ signal }) => withReconnectGrace(
       await apiClient.request('/api/management/computers/activity', ComputerActivityListSchema, { signal })) })
-}
-/** The owner's name for a computer from the computer list the app already keeps fresh (the sidebar polls it). It reads
- * the query cache only: a view that shows a name never adds a request of its own, and renders without a query client. */
-export function useComputerName(): (target: Pick<DeviceProvisioningTarget, 'hostRef'>) => string | undefined {
-  const client = useContext(QueryClientContext)
-  const key = ['computer-activity', sessionGeneration()]
-  const activity = useSyncExternalStore(
-    useCallback((changed: () => void) => client?.getQueryCache().subscribe(changed) ?? (() => {}), [client]),
-    () => client?.getQueryData<ComputerActivityList>(key))
-  return target => activity?.computers.find(computer => computerKey(computer.target) === computerKey(target))?.name
 }
 /** Saves a computer's name; every list refreshes from the activity readback. */
 export function useRenameComputer() {

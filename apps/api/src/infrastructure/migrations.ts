@@ -1,5 +1,4 @@
 import { removeGroupChatMigration } from './removeGroupChatMigration.js'
-import { plainNativePlacementMigration } from './plainNativePlacementMigration.js'
 import {
   agentCiActivityMigration,
   ciActivityRequesterLookupMigration,
@@ -1065,7 +1064,6 @@ export const migrations = [
   ciActivityEventsMigration,
   ciActivityConsumerMigration,
   removeGroupChatMigration,
-  plainNativePlacementMigration,
 ] as const
 
 /**

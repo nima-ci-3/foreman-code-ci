@@ -56,8 +56,6 @@ export const userSystemdIntegrationFiles = new Set([
 const startupFile = 'apps/api/test/dev-startup.integration.test.ts'
 // These files measure bounded startup/latency while exercising shared host resources.
 export const exclusiveIntegrationFiles = [startupFile,
-  // Qualification temporarily changes AppArmor user-namespace policy; isolate it from other browser fixtures.
-  'apps/api/test/published-browser-runtime.integration.test.ts',
   // Measure server and native startup without competing fixture setup.
   'apps/api/test/ci-postgres-setup.integration.test.ts',
   'apps/api/test/main-codex-qualification-restart.integration.test.ts',

@@ -198,16 +198,6 @@ it('shows cloud CI services by machines in use', async () => {
   expect(await within(await screen.findByRole('tooltip')).findByText('12 of 16 CI machines in use')).toBeInTheDocument()
 })
 
-it('says why a CircleCI account is unavailable instead of claiming Main is not logged in', async () => {
-  const f = computersFixture(inRouter().element)
-  const reason = 'CircleCI did not accept the usage export read: Your account has been suspended. Please contact support for more information.'
-  f.activity.cloud.push({ provider: 'circleci', account: 'acme', name: 'CircleCI acme', ready: false, slots: 30, running: 0,
-    credits: null, creditsUnavailable: reason })
-  await act(() => f.client.invalidateQueries({ queryKey: ['computer-activity'] }))
-  expect(await findCloud(`CircleCI acme, Cloud CI, ${reason}`)).toBeInTheDocument()
-  expect(screen.queryByText('Not logged in on Main')).not.toBeInTheDocument()
-})
-
 it('shows the estimated credits left when hovering or focusing a CircleCI org', async () => {
   const f = computersFixture(inRouter().element)
   f.activity.cloud.push(
