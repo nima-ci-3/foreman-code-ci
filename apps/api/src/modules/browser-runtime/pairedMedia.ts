@@ -221,7 +221,7 @@ export async function attachBrowserHostMedia(socket: WebSocket, binding: Browser
   pairing: BrowserPairingAuthority, codec: BrowserHostMediaCodec, media: BrowserMediaService, broker: BrowserBroker,
   reportFailure: (error: unknown) => void): Promise<void> {
   await pairing.assertCurrent(binding)
-  const subscriptions = new Map<string, { viewId: string; ownerId: string; after: number; stop(): void }>()
+  const subscriptions = new Map<string, { viewId: string; ownerId: string; after: number; control?: string; ready?: boolean; stop(): void }>()
   const dirty = new Set<string>(); let pumping = false, closed = false
   const stop = async (id: string, disconnected: boolean) => {
     const value = subscriptions.get(id)
@@ -240,8 +240,13 @@ export async function attachBrowserHostMedia(socket: WebSocket, binding: Browser
         await pairing.assertCurrent(binding)
         try {
           const value = media.read(subscription.viewId, subscription.ownerId, subscription.after), { control } = broker.read(value.view.sessionId)
-          await send(socket, codec, { kind: 'control', id, control })
-          if (!value.frame) { await send(socket, codec, { kind: 'snapshot_end', id }); continue }
+          // Control is sent when it changes and snapshot_end once, after the opening snapshot: Main checks every message.
+          const controlKey = JSON.stringify(control)
+          if (controlKey !== subscription.control) { await send(socket, codec, { kind: 'control', id, control }); subscription.control = controlKey }
+          if (!value.frame) {
+            if (!subscription.ready) { await send(socket, codec, { kind: 'snapshot_end', id }); subscription.ready = true }
+            continue
+          }
           const { data, ...frame } = value.frame
           for (let offset = 0; offset < data.byteLength && subscriptions.has(id) && !closed; offset += 196_608) {
             await pairing.assertCurrent(binding)
@@ -250,7 +255,7 @@ export async function attachBrowserHostMedia(socket: WebSocket, binding: Browser
             offset, bytes: data.subarray(offset, offset + 196_608) })
           }
           subscription.after = frame.sequence
-          await send(socket, codec, { kind: 'snapshot_end', id })
+          if (!subscription.ready) { await send(socket, codec, { kind: 'snapshot_end', id }); subscription.ready = true }
         } catch (error) {
           reportFailure(error); await stop(id, true); await send(socket, codec, { kind: 'error', id, reason: 'Owned browser view unavailable.' })
         }
@@ -276,8 +281,10 @@ export async function attachBrowserHostMedia(socket: WebSocket, binding: Browser
           if (view.sessionId !== message.sessionId) throw new DomainError('BROWSER_VIEW_SCOPE', 'The requested view belongs to another session.', 403)
           const offMedia = media.subscribe(view.id, message.ownerId, () => change(message.id))
           const offSession = broker.subscribe(view.sessionId, () => change(message.id))
-          subscriptions.set(message.id, { viewId: view.id, ownerId: message.ownerId, after: 0, stop: () => { offMedia(); offSession() } })
-          await send(socket, codec, { kind: 'control', id: message.id, control: broker.read(view.sessionId).control })
+          const control = broker.read(view.sessionId).control
+          subscriptions.set(message.id, { viewId: view.id, ownerId: message.ownerId, after: 0, control: JSON.stringify(control),
+            stop: () => { offMedia(); offSession() } })
+          await send(socket, codec, { kind: 'control', id: message.id, control })
           await send(socket, codec, { kind: 'opened', id: message.id, view }); change(message.id)
         } catch (error) {
           reportFailure(error); await stop(message.id, true)
