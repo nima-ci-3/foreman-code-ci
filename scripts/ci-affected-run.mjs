@@ -25,8 +25,11 @@ export function affectedCommands(suite, files) {
       if (project !== 'scripts' && project !== 'apps/worker') commands.push(['corepack', 'pnpm', '--dir', project, 'typecheck'])
     } else if (suite === 'lint') {
       if (project === 'scripts') throw new Error('Scripts have no package lint command.')
+      // The same content cache the full lint uses (persisted with the suite caches): a file unchanged since it last
+      // passed under the same configuration and rules is not linted again.
       commands.push(['corepack', 'pnpm', '--dir', project, 'exec', 'eslint',
-        ...selected.map(file => file.slice(project.length + 1)), '--max-warnings', '0'])
+        ...selected.map(file => file.slice(project.length + 1)), '--max-warnings', '0',
+        '--cache', '--cache-strategy', 'content', '--cache-location', 'node_modules/.cache/eslint/'])
     } else if (suite === 'unit') {
       if (selected.some(file => !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
         || (file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file)))) {

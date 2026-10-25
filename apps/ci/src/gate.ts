@@ -94,6 +94,13 @@ async function gateComputers(context: CiContext, endpoint: HostCiEndpoint, reser
   return available.filter((value): value is GateComputer => value !== null)
 }
 
+/** GitHub Actions is free: while a GitHub slot is still unused, work goes only to GitHub slots. CircleCI (paid credits)
+ * takes work only once every GitHub slot has some. */
+function preferGithub(items: GateComputer[], unused: (item: GateComputer) => boolean): GateComputer[] {
+  const github = items.filter(item => item.computer.hostRef.kind === 'cloud' && item.computer.hostRef.provider === 'github' && unused(item))
+  return github.length ? github : items
+}
+
 /** Prefer one wave; GitHub slots can take integration after checks when no unused cloud slot is free.
  * Measured build throughput sizes integration parts; CPU, memory and build allowance bound execution shards.
  * Busy builders are a fallback when no free executor can take a file; not-ready computers and reserved cloud slots stay out. */
@@ -117,7 +124,8 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
   for (const part of [...checks].sort((left, right) => Number(runsOnCircleCi(left)) - Number(runsOnCircleCi(right)))) {
     const expectedDurationMs = part.expectedDurationMs ?? (part.suite === 'unit' ? 210_000 : 150_000)
     const candidates = expectedDurationMs > CLOUD_GATE_JOB_BUDGET_MS ? hosts : clouds
-    const eligible = candidates.filter(item => item.computer.hostRef.provider !== 'circleci' || runsOnCircleCi(part))
+    const eligible = preferGithub(candidates.filter(item => item.computer.hostRef.provider !== 'circleci' || runsOnCircleCi(part)),
+      item => item.checkMs === 0)
     const target = [...eligible].sort((left, right) => left.checkMs - right.checkMs)[0]
     if (!target) throw new DomainError('CI_GATE_CAPACITY_REQUIRED', `No cloud executor can run ${part.part ?? part.suite}.`, 409)
     target.checkMs += expectedDurationMs
@@ -181,7 +189,8 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
     const eligible = integrationFleet.filter(item => canRunFile(item, file))
     const free = eligible.filter(item => item.freeSlots > 0)
     // Future cloud capacity behind checks does not exclude the existing busy-builder fallback.
-    const candidates = free.some(item => item.checkMs === 0) ? free : eligible
+    const candidates = preferGithub(free.some(item => item.checkMs === 0) ? free : eligible,
+      item => item.checkMs === 0 && !item.files.length)
     const target = candidates.map((item, order) => ({ item, order, finish: finishWith(item, file) }))
       .sort((left, right) => left.finish - right.finish
         || (serial ? exclusiveCount(left.item) - exclusiveCount(right.item) : 0) || left.order - right.order)[0]?.item

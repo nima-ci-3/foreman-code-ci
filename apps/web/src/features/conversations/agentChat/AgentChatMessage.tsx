@@ -6,7 +6,7 @@ import { useMutation } from '@tanstack/react-query'
 import { errorMessage } from '../../../shared/errorMessage'
 import { Button, CodeBlock, MessageBubble } from '../../../shared/ui/nocturne'
 import { TextTruncationNotice } from '../../chat-core'
-import { structuredResult } from './structuredResult'
+import { partialStructuredResult, structuredResult } from './structuredResult'
 
 const markdownComponents: Components = {
   pre({ node }) {
@@ -73,6 +73,8 @@ function MessageExpansion({ onExpand }: { onExpand(): Promise<void> }) {
 /** A structured turn result (routing, board patches) reads as its summary line; the JSON stays one click away. */
 function AgentContent({ content }: { content: string }) {
   const result = structuredResult(content)
+  // While the result is still streaming its JSON, show progress instead of the raw text.
+  if (!result && partialStructuredResult(content)) return <p className="agent-chat-writing" role="status">Writing the result…</p>
   if (!result) return <AgentMarkdown content={content} />
   return <>
     {result.prose ? <AgentMarkdown content={result.prose} /> : null}
