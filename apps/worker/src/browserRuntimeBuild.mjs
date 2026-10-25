@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import { hashBrowserRuntimeFile, createBrowserRuntimeDirectory, removeBrowserRuntimeDirectory,
   matchesBrowserRuntimeTarget } from './browserRuntimeInstall.mjs';

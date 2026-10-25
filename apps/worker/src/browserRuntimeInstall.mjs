@@ -279,7 +279,7 @@ async function thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       await copyFile(file.source, path); await chmod(path, file.mode);
     }
-    const files = entries.map(({ source, ...file }) => file);
+    const files = entries.map(({ path, size, sha256, mode }) => ({ path, size, sha256, mode }));
     const bytes = Buffer.from(`${JSON.stringify(files, null, 2)}\n`);
     await writeFile(join(flattened, 'inventory.json'), bytes, { mode: 0o600 });
     await privateJson(join(flattened, 'receipt.json'), { key, inventorySha256: hash(bytes) });
