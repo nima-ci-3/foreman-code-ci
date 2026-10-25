@@ -1,7 +1,7 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, writeFile, rm, readlink, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, readlink, readdir, copyFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
@@ -38,7 +38,7 @@ before(async () => {
   await build({ stdin: {
     contents: "export { createWorkerRuntimeDrain } from '@foreman-code/api/worker/devices';",
     resolveDir: fileURLToPath(new URL('../../../', import.meta.url)),
-  }, outfile: output, bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['sharp'], alias,
+  }, outfile: output, bundle: true, platform: 'node', format: 'esm', target: 'node24', external: ['sharp'], alias,
   banner: { js: "import { createRequire as testCreateRequire } from 'node:module'; const require = testCreateRequire(import.meta.url);" } });
   ({ createWorkerRuntimeDrain } = await import(pathToFileURL(output).href));
 });
@@ -47,17 +47,17 @@ after(async () => {
 });
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
+const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
   rootPersistent: true, homePersistent: true, storagePersistent: true };
 const expected = { protocolVersion: 1, identityFormat: 1 };
 const releaseTarget = { os: facts.os, osRelease: facts.osRelease, arch: facts.arch, libc: facts.libc, node: facts.node };
 
-async function artifact(base, version) {
+async function artifact(base, version, targetFacts = facts) {
   const directory = join(base, `artifact-${version}`);
   await mkdir(join(directory, 'src'), { recursive: true, mode: 0o700 });
   const bytes = Buffer.from(`console.log('${version}');\n`);
   await writeFile(join(directory, 'src/cli.mjs'), bytes, { mode: 0o600 });
-  const { os, osRelease, arch, libc, node } = facts;
+  const { os, osRelease, arch, libc, node } = targetFacts;
   const manifest = { format: 1, version, commit: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64),
     packageManager: 'pnpm@11.27.0', protocolVersion: 1, identityFormat: 1,
     target: { os, osRelease, arch, libc, node },
@@ -68,14 +68,14 @@ async function artifact(base, version) {
     github: { repository: 'example/product', tag: `worker-${manifest.commit}` } } };
 }
 
-async function fixture(t, targetVersion = '1.1.0') {
+async function fixture(t, targetVersion = '1.1.0', targetFacts = facts) {
   const base = await mkdtemp(join(persistentFixtureRoot, 'worker-update-'));
   const root = join(base, 'app');
   const stateDirectory = join(base, 'state');
   await mkdir(stateDirectory, { mode: 0o700 });
-  const previous = await artifact(base, '1.0.0');
-  const incoming = await artifact(base, targetVersion);
-  await installVersion({ root, stateDirectory, facts, expected, artifact: previous.directory,
+  const previous = await artifact(base, '1.0.0', targetFacts);
+  const incoming = await artifact(base, targetVersion, targetFacts);
+  await installVersion({ root, stateDirectory, facts: targetFacts, expected, artifact: previous.directory,
     approvedManifestSha256: previous.release.manifestSha256 });
   const workerInstallationId = randomUUID();
   let runtime;
@@ -107,7 +107,7 @@ async function fixture(t, targetVersion = '1.1.0') {
   };
   const launch = { root, stateDirectory, service: 'graphql-worker.service',
     pointer: { kind: 'symlink', path: join(root, 'current') },
-    previousDirectory: (await readInstalledRelease({ root, facts, expected })).directory,
+    previousDirectory: (await readInstalledRelease({ root, facts: targetFacts, expected })).directory,
     unitPath: join(base, '.config/systemd/user/graphql-worker.service') };
   await mkdir(join(launch.unitPath, '..'), { recursive: true, mode: 0o700 });
   const template = await readFile(new URL('../artifacts/foreman-worker.service.in', import.meta.url), 'utf8');
@@ -118,7 +118,7 @@ async function fixture(t, targetVersion = '1.1.0') {
     stdout: args.includes('--property=FragmentPath') ? `${launch.unitPath}\n` : '',
   }) });
   const options = { stateDirectory, version: '1.0.0', manifestSha256: previous.release.manifestSha256,
-    releaseDirectory: launch.previousDirectory, workerInstallationId, facts,
+    releaseDirectory: launch.previousDirectory, workerInstallationId, facts: targetFacts,
     assertStateOwnership: () => assertStateOwnership(), connection: () => ({ captureRequest: () => ({ request }) }),
     fetchAsset: async ({ github, destination, signal }) => {
       assert.deepEqual(github, incoming.release.github);
@@ -138,6 +138,60 @@ async function fixture(t, targetVersion = '1.1.0') {
       assert.equal(child.status, 0, child.stderr);
       await boot(child.stdout.trim(), phase);
     } };
+}
+
+for (const corrupt of [false, true]) {
+  test(`installed Worker replaces its old Node through update${corrupt ? ' only after verifying the download' : ''}`, async t => {
+    const oldFacts = { ...facts, node: 'v22.23.3' };
+    const f = await fixture(t, '1.1.0', oldFacts);
+    const archiveRoot = join(f.base, 'node-v24.22.1-linux-x64');
+    await mkdir(join(archiveRoot, 'bin'), { recursive: true });
+    await copyFile(process.execPath, join(archiveRoot, 'bin/node'));
+    const archive = join(f.base, 'node.tar.gz');
+    assert.equal(spawnSync('tar', ['-czf', archive, '-C', f.base, 'node-v24.22.1-linux-x64']).status, 0);
+    const archiveBytes = await readFile(archive), executable = await readFile(process.execPath);
+    const metadata = { format: 1, runtime: 'node', version: 'v24.22.1', platform: 'linux', arch: 'x64',
+      archive: { file: 'node.tar.gz', url: 'https://nodejs.org/dist/v24.22.1/node.tar.gz', sha256: hash(archiveBytes), bytes: archiveBytes.length },
+      nodeExecutable: { archivePath: 'node-v24.22.1-linux-x64/bin/node', sha256: hash(executable), bytes: executable.length } };
+    await mkdir(join(f.incoming.directory, 'artifacts'));
+    const bytes = Buffer.from(JSON.stringify(metadata));
+    await writeFile(join(f.incoming.directory, 'artifacts/node-runtime.json'), bytes);
+    const manifest = f.incoming.release.manifest;
+    manifest.runtime = { metadataPath: 'artifacts/node-runtime.json', version: metadata.version,
+      archiveSha256: metadata.archive.sha256, executableSha256: metadata.nodeExecutable.sha256 };
+    manifest.files.push({ path: 'artifacts/node-runtime.json', sha256: hash(bytes), size: bytes.length });
+    const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    await writeFile(join(f.incoming.directory, 'manifest.json'), manifestBytes);
+    f.incoming.release.manifestSha256 = hash(manifestBytes);
+    let downloads = 0;
+    const updater = await new WorkerUpdater({ ...f.options,
+      fetchRuntime: async url => {
+        assert.equal(url, metadata.archive.url); downloads++;
+        return new Response(corrupt ? Buffer.from('tampered') : archiveBytes);
+      },
+      launchSupervisor: async () => {
+        const record = await readUpdateRecord(f.stateDirectory);
+        await superviseWorkerUpdate(record, { prepareService: f.prepareService, restart: () => f.restart('ready') });
+      },
+    }).initialize();
+    t.after(() => updater.close());
+    if (corrupt) {
+      await assert.rejects(updater.start(), /runtime.*(size|checksum)/);
+      assert.equal((await readInstalledRelease({ root: f.root, facts: oldFacts, expected })).manifest.version, '1.0.0');
+      assert.equal((await readUpdateRecord(f.stateDirectory)).status.state, 'failed');
+    } else {
+      await updater.start();
+      const record = await readUpdateRecord(f.stateDirectory);
+      assert.equal(record.status.state, 'current');
+      const unit = await readFile(record.restart.unitPath, 'utf8');
+      const [, node] = unit.match(/^ExecStart=(\S+) /m);
+      assert.notEqual(node, process.execPath);
+      const observed = spawnSync(node, ['--version'], { encoding: 'utf8' });
+      assert.equal(observed.status, 0, observed.stderr);
+      assert.equal(observed.stdout.trim(), 'v24.22.1');
+    }
+    assert.equal(downloads, 1);
+  });
 }
 
 async function browserArtifact(base, version, output) {

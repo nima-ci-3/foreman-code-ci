@@ -93,14 +93,14 @@ test('native and database startup suites run in the private Job without Docker',
 });
 
 test('installed Worker capability requires an approved matching target and persistent root, home and state', () => {
-  const target = { os: 'ubuntu', osRelease: '26.04', arch: 'x64', libc: 'glibc-2.43', node: 'v22.23.2' }
+  const target = { os: 'ubuntu', osRelease: '26.04', arch: 'x64', libc: 'glibc-2.43', node: 'v24.22.0' }
   const facts = { ...target, rootPersistent: true, homePersistent: true, storagePersistent: true }
   assert.equal(supportsInstalledWorkerHost(facts, [target]), true)
   assert.equal(supportsInstalledWorkerHost(facts, []), false)
   for (const field of ['rootPersistent', 'homePersistent', 'storagePersistent']) {
     assert.equal(supportsInstalledWorkerHost({ ...facts, [field]: false }, [target]), false)
   }
-  const unsupported = { os: 'debian', osRelease: '12', arch: 'arm64', libc: 'glibc-2.36', node: 'v22.23.3' }
+  const unsupported = { os: 'debian', osRelease: '12', arch: 'arm64', libc: 'glibc-2.36', node: 'v24.22.1' }
   for (const [field, value] of Object.entries(unsupported)) {
     assert.equal(supportsInstalledWorkerHost({ ...facts, [field]: value }, [target]), false)
   }

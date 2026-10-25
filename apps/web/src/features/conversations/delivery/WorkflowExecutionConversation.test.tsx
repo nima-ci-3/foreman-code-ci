@@ -50,7 +50,7 @@ function attachmentGeometry() {
   return { row: style.gridRow, column: style.gridColumn, width: style.width, height: style.height }
 }
 
-it('places the unavailable attachment control beside the active message field', async () => {
+it('places attachment and delivery controls on a toolbar below the active message field', async () => {
   const resolved = WorkflowExecutionChatResolutionSchema.parse({ kind: 'selected', target: fixture.executionReadback.target,
     agent: fixture.agent, workflowVersionId: fixture.execution.workflowVersionId, source: 'execution', state: 'active' })
   if (resolved.kind !== 'selected') throw new Error('Expected selected execution')
@@ -65,7 +65,13 @@ it('places the unavailable attachment control beside the active message field', 
     queryKey={executionChatReadKey(resolved.target)} client={{ read: vi.fn(), deliver: vi.fn(), stop: vi.fn(), cancel: vi.fn() }}
     onSelectTarget={vi.fn()} onSelectRun={vi.fn()} /></QueryClientProvider>)
   await screen.findByRole('textbox', { name: 'Message' })
-  expect(attachmentGeometry()).toMatchObject({ row: '2', column: '1', width: '28px', height: '28px' })
+  expect(attachmentGeometry()).toMatchObject({ row: '3', column: '1', width: '28px', height: '28px' })
+  const field = getComputedStyle(screen.getByRole('textbox', { name: 'Message' }).closest('.agent-chat-field')!)
+  const actions = getComputedStyle(screen.getByRole('group', { name: 'Message delivery' }))
+  expect(field.gridRow).toBe('2')
+  expect(field.gridColumn).toBe('1 / -1')
+  expect(actions.gridRow).toBe('3')
+  expect(actions.gridColumn).toBe('3')
 })
 
 it('keeps attachment geometry and the typed draft when the execution finishes', async () => {
@@ -98,7 +104,8 @@ it('keeps attachment geometry and the typed draft when the execution finishes', 
   finished = true
   await waitFor(() => expect(screen.getByTestId('agent-conversation')).toBeInTheDocument(), { timeout: 6000 })
   expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Keep this question')
-  expect(attachmentGeometry()).toEqual(active)
+  expect(active).toEqual({ row: '3', column: '1', width: '28px', height: '28px' })
+  expect(attachmentGeometry()).toEqual({ ...active, row: '2' })
 }, 15_000)
 
 it('opens a separate supported chat when a finished Run has no resumable session or conversation', async () => {

@@ -159,7 +159,7 @@ describe('offline verification launch validation with structured physical observ
   it('denies host namespace, executable control temp, shared memory overflow and owner-home visibility', () => {
     const { resources } = verificationFixture()
     const ownerSentinelPaths = ['/owner/home/qualification-sentinel']
-    const observation = { schemaVersion: 1, node: 'v22.23.3', pidNamespace: 'pid:[2]', networkNamespace: 'net:[2]',
+    const observation = { schemaVersion: 1, node: 'v24.22.1', pidNamespace: 'pid:[2]', networkNamespace: 'net:[2]',
       verificationEnvironment: 'isolated-job-v1', cgroupNamespace: 'cgroup:[2]', nativeCgroupDelegation: true,
       cgroupLimitWriteErrors: ['EACCES', 'EACCES', 'EACCES', 'EACCES'],
       interfaces: ['lo'], memoryMax: String(resources.limits.memoryBytes), swapMax: '0',
