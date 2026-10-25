@@ -62,11 +62,10 @@ export class GitCiCommits implements CiCommits {
     }
     const found = await ancestors()
     if (found.length || !candidates.length) return found
-    // A just-fetched commit is a shallow boundary: deepen until the newest candidate's history connects, then read.
-    await this.context.platform.ensureCommit(this.git, repository, candidates[0]!, signal)
-    await this.context.platform.deepenUntilConnected(this.git, clone, [commit, candidates[0]!],
-      async () => (await this.git.git(['merge-base', '--is-ancestor', candidates[0]!, commit], { cwd: clone, signal })).code === 0,
-      signal)
+    // A just-fetched commit is a shallow boundary: deepen until any candidate is in its history (the newest candidate
+    // may be on another branch and never connect).
+    await this.context.platform.deepenUntilConnected(this.git, clone, [commit],
+      async () => (await ancestors()).length > 0, signal)
     return ancestors()
   }
 

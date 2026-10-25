@@ -16,7 +16,7 @@ export interface CiTestTree {
 /** The key cannot prove the file's inputs, so the file must run. */
 class CacheDoubt extends Error {}
 
-interface Analysis { specifiers: string[]; literals: string[]; doubt: string | null; testDoubt: string | null }
+interface Analysis { specifiers: string[]; literals: string[]; relatives: string[]; doubt: string | null; testDoubt: string | null }
 
 const ANALYSES_MAX = 50_000
 /** By blob and extension: a blob's imports never change. */
@@ -35,6 +35,7 @@ const TEST_DOUBTS: [RegExp, string][] = [
 const testSupport = /(?:^|\/)(?:test|tests|__tests__|fixtures?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|test-?support|test-?utils/i
 const pathLiteral = /['"`]((?:\.{1,2}\/)*[A-Za-z0-9_@-][A-Za-z0-9_.@-]*(?:\/[A-Za-z0-9_.@-]+)+)['"`]/g
 const scriptFile = /\.[cm]?[jt]sx?$/
+const relativeLiteral = /['"`](\.{1,2}\/[^'"`\s$]*)['"`]/g
 const DIRECTORY_FILES_MAX = 2000
 
 /** Share the read limit across manifests and all test closures of the selection. */
@@ -61,6 +62,7 @@ function analyze(path: string, text: string): Analysis {
   return {
     specifiers: data ? [] : importSpecifiers(text),
     literals: data ? [] : [...text.matchAll(pathLiteral)].map(match => match[1]!),
+    relatives: data ? [] : [...new Set([...text.matchAll(relativeLiteral)].map(match => match[1]!))],
     doubt: css ? (/@import\b/.test(text) ? 'imports CSS' : null) : DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
     testDoubt: data ? null : TEST_DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
   }
@@ -86,11 +88,13 @@ function exportsOf(manifests: { path: string; value: Record<string, unknown> }[]
  * changes, and a file whose inputs the import graph cannot prove has no key. */
 export class CiResultKeys {
   private readonly pendingAnalyses = new Map<string, Promise<Analysis>>()
+  /** Each file's resolved imports, shared by every test closure that reaches it. */
+  private readonly resolvedEdges = new Map<string, Promise<string[]>>()
   private readonly harness = new Map<string, Promise<Set<string>>>()
   private readonly environments = new Map<string, string[]>()
   private readonly directories = new Set<string>()
 
-  private constructor(private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
+  private constructor(private readonly source: CiTestTree, private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
     private readonly workspacePackages: ReadonlyMap<string, { directory: string; exports: Record<string, unknown> }>,
     private readonly packages: ReadonlySet<string>, private readonly signal: AbortSignal) {
     for (const path of tree.blobs.keys()) {
@@ -120,7 +124,12 @@ export class CiResultKeys {
     // Every workspace package resolves through its own exports to its sources, as tests run them.
     const workspacePackages = new Map(manifests.flatMap(manifest => typeof manifest.value.name === 'string'
       ? [[manifest.value.name, { directory: posix.dirname(manifest.path), exports: exportsOf(manifests, manifest.path) }] as const] : []))
-    return new CiResultKeys(tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
+    return new CiResultKeys(input, tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
+  }
+
+  /** The same commit's keys under another deadline, for a graph that outlives the work that built it. */
+  bounded(signal: AbortSignal) {
+    return new CiResultKeys(this.source, boundedTree(this.source, signal), this.exports, this.workspacePackages, this.packages, signal)
   }
 
   /** The file's key for the suite and part, or null with the reason it must run. */
@@ -213,7 +222,17 @@ export class CiResultKeys {
     return files
   }
 
-  private async edges(file: string, strict: boolean): Promise<string[]> {
+  private edges(file: string, strict: boolean): Promise<string[]> {
+    const id = `${strict ? 's' : 'h'}:${file}`
+    let edges = this.resolvedEdges.get(id)
+    if (!edges) {
+      edges = this.resolveEdges(file, strict)
+      this.resolvedEdges.set(id, edges)
+    }
+    return edges
+  }
+
+  private async resolveEdges(file: string, strict: boolean): Promise<string[]> {
     const blob = this.tree.blobs.get(file)
     if (!blob) throw new CacheDoubt(`${file} is not in the commit.`)
     if (!/^100(?:644|755):/.test(blob)) throw new CacheDoubt(`${file} is a link or submodule.`)
@@ -241,6 +260,14 @@ export class CiResultKeys {
       } else if (strict && !specifier.startsWith('node:') && !isBuiltin(specifier) && !this.packages.has(packageName(specifier))) {
         // Aliases, virtual modules and workspace packages other than contracts have no edge the key can follow.
         throw new CacheDoubt(`${file} imports ${specifier}, which no manifest pins.`)
+      }
+    }
+    // Code a test reaches that reads files by path or starts processes names their entrypoints and data relative to
+    // itself ('./worker.ts' for a forked child): every such name that is a repository file joins the key.
+    if (strict && !support && analysis.testDoubt) {
+      for (const literal of analysis.relatives) {
+        const target = resolveImport(file, literal, this.tree.blobs, {})
+        if (target) edges.push(target)
       }
     }
     // Test support can read repository files it names, and configs name their runners and setup files by relative
