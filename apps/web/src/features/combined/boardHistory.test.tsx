@@ -265,7 +265,7 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
         return region
       })
       expect(router.state.location.search).toMatchObject(expectedPins(runId))
-      const node = await within(pinned).findByRole('button', { name: `${name}, Saved` })
+      const node = await within(pinned).findByRole('button', { name: label => label.startsWith(`${name}, `) })
       expect(node).toHaveRole('button')
       expect(node).toBeVisible()
       expect(node).toBeEnabled()
@@ -276,10 +276,10 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
     const visitAgain = async (assertSelection: (runId: string, name: string) => Promise<void>) => {
       await choose(user, 'run-b')
       await assertSelection('run-b', 'X in B')
-      expect(screen.queryByRole('button', { name: 'Y, Saved' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: name => name.startsWith('Y, ') })).not.toBeInTheDocument()
       await choose(user, 'run-a')
       await assertSelection('run-a', 'Y')
-      expect(screen.queryByRole('button', { name: 'X in B, Saved' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: name => name.startsWith('X in B, ') })).not.toBeInTheDocument()
     }
     return { user, router, targetReads, expectedPins, pinnedGraph, visitAgain }
   }
