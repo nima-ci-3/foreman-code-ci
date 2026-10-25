@@ -215,10 +215,8 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
     installBoardHistory()
     await mountBoard()
     const board = await screen.findByRole('region', { name: 'Selected Run board' })
-    expect(screen.queryByRole('heading', { name: 'Selected Run' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument()
     const graph = within(board)
-    const node = await graph.findByRole('button', { name: 'Y, Saved' })
+    const node = await graph.findByRole('button', { name: 'Inspect Y' })
     expect(node).toBeVisible()
     expect(node).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Activities' }))
@@ -265,7 +263,7 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
         return region
       })
       expect(router.state.location.search).toMatchObject(expectedPins(runId))
-      const node = await within(pinned).findByRole('button', { name: label => label.startsWith(`${name}, `) })
+      const node = await within(pinned).findByLabelText(`Inspect ${name}`, { selector: 'button' })
       expect(node).toHaveRole('button')
       expect(node).toBeVisible()
       expect(node).toBeEnabled()
@@ -276,10 +274,10 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
     const visitAgain = async (assertSelection: (runId: string, name: string) => Promise<void>) => {
       await choose(user, 'run-b')
       await assertSelection('run-b', 'X in B')
-      expect(screen.queryByRole('button', { name: name => name.startsWith('Y, ') })).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Inspect Y', { selector: 'button' })).not.toBeInTheDocument()
       await choose(user, 'run-a')
       await assertSelection('run-a', 'Y')
-      expect(screen.queryByRole('button', { name: name => name.startsWith('X in B, ') })).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Inspect X in B', { selector: 'button' })).not.toBeInTheDocument()
     }
     return { user, router, targetReads, expectedPins, pinnedGraph, visitAgain }
   }
@@ -289,11 +287,6 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
     const assertSelection = async (runId: string, name: string) => {
       const { node } = await pinnedGraph(runId, name)
       await user.click(node)
-      expect(node).toHaveAttribute('aria-pressed', 'true')
-      expect(screen.queryByRole('complementary', { name: 'Workflow side panel' })).not.toBeInTheDocument()
-      await user.hover(node)
-      await user.click(screen.getByRole('button', { name: `Open ${name} chat` }))
-      expect(node).toHaveAttribute('aria-pressed', 'false')
       const chat = await screen.findByRole('complementary', { name: 'Workflow side panel' })
       await user.click(within(chat).getByRole('button', { name: 'Chat' }))
       expect(router.state.location.search).toMatchObject({ boardPanel: 'agent', boardAgentTab: 'chat',

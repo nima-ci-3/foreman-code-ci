@@ -31,18 +31,12 @@ function memoryJournal(): BrowserRuntimeJournal {
 function nativeFixture() {
   let nextTarget = 0
   const profiles = new Map<string, number>()
-  const generations = new Map<string, number>()
   const tabs = new Map<string, NativeBrowserTab & { profileId: string; generation: number }>()
-  const pageListeners = new Set<(profileId: string, generation: number, tab: NativeBrowserTab) => void>()
   const driver: BrowserNativeDriver = {
-    closeProfile: vi.fn(async profileId => {
-      profiles.delete(profileId)
-      for (const [id, tab] of tabs) if (tab.profileId === profileId) tabs.delete(id)
-    }),
+    closeProfile: vi.fn(async profileId => { profiles.delete(profileId) }),
     settlePopups: vi.fn(async () => undefined),
     openProfile: vi.fn(async profileId => {
-      const generation = profiles.get(profileId) ?? (generations.get(profileId) ?? 0) + 1
-      profiles.set(profileId, generation); generations.set(profileId, generation); return { generation }
+      const generation = profiles.get(profileId) ?? 1; profiles.set(profileId, generation); return { generation }
     }),
     reconnectProfile: vi.fn(async profileId => profiles.has(profileId) ? { generation: profiles.get(profileId)! } : null),
     restoreTab: vi.fn(async (profileId, generation, targetId) => {
@@ -61,10 +55,6 @@ function nativeFixture() {
     dispatch: vi.fn(async (profileId, generation, targetId, method, params) => {
       const tab = tabs.get(targetId)
       if (!tab || tab.profileId !== profileId || tab.generation !== generation) throw new Error('Foreign native dispatch')
-      if (method === 'Page.navigate') {
-        tab.url = String(params.url)
-        for (const listener of pageListeners) listener(profileId, generation, tab)
-      }
       return { method, params }
     }),
     action: vi.fn(async (action, dispatch) => dispatch('Fixture.action', { action })),
@@ -75,10 +65,8 @@ function nativeFixture() {
     input: vi.fn(async (input, dispatch) => { await dispatch('Fixture.input', { input }) }),
     releasePressed: vi.fn(async dispatch => { await dispatch('Fixture.releasePressed') }),
     capture: vi.fn(async () => async () => undefined), openLocal: vi.fn(async () => undefined),
-    facts: vi.fn((_profileId, _generation, targetId) => ({ dialog: null, uploadChooser: null,
-      ...(tabs.get(targetId) ? { page: { title: tabs.get(targetId)!.title, url: tabs.get(targetId)!.url } } : {}) })),
+    facts: vi.fn(() => ({ dialog: null, uploadChooser: null })),
     onTabClosed: vi.fn(() => () => undefined), onPopup: vi.fn(() => () => undefined),
-    onPageChanged: listener => { pageListeners.add(listener); return () => pageListeners.delete(listener) },
   }
   return { driver }
 }
@@ -93,13 +81,10 @@ function fixture() {
       if (!binding) throw new DomainError('BROWSER_SCOPE_MISMATCH', 'Unknown exact subject.', 403)
       return structuredClone(binding)
     }),
-    assertCurrent: vi.fn(async (subject, assignment?: { profileId: string; computerId?: string }) => {
+    assertCurrent: vi.fn(async (subject, assignment?: { profileId: string }) => {
       if (ended.has(subjectKey(subject))) throw new DomainError('AGENT_SUBJECT_ENDED', 'The exact subject has ended.', 403)
       if (assignment && assignments.get(subjectKey(subject))?.browser.profileId !== assignment.profileId) {
         throw new DomainError('BROWSER_SCOPE_MISMATCH', 'The browser profile assignment changed.', 409)
-      }
-      if (assignment?.computerId && assignments.get(subjectKey(subject))?.computerId !== assignment.computerId) {
-        throw new DomainError('BROWSER_COMPUTER_SCOPE', 'The browser computer assignment changed.', 403)
       }
     }),
   }
@@ -111,8 +96,8 @@ function fixture() {
   }
   return { driver, journal, authority, broker, request,
     end: (subject: AgentSubject) => { ended.add(subjectKey(subject)) },
-    assignment: (subject: AgentSubject, browser: NodeBrowserSettings, availability: BrowserPreparedBinding['availability'] = 'ready', computerId = 'main') => {
-      assignments.set(subjectKey(subject), { subject, browser, computerId, readOnly: false, availability })
+    assignment: (subject: AgentSubject, browser: NodeBrowserSettings, availability: BrowserPreparedBinding['availability'] = 'ready') => {
+      assignments.set(subjectKey(subject), { subject, browser, computerId: 'main', readOnly: false, availability })
     } }
 }
 
@@ -136,176 +121,6 @@ it('retains a valid explained control state after setup closure and journal reco
 function agent(session: BrowserSession, epoch = 0): BrowserActor {
   return { kind: 'agent', epoch, browserGeneration: session.browserGeneration }
 }
-
-it('restores the exact saved pages and selection with new native ownership after the browser process ends', async () => {
-  const f = fixture(), { session } = ready(await f.broker.prepare(f.request()))
-  const second = await f.broker.createTab({ sessionId: session.id, actor: agent(session), commandId: 'second-page' })
-  const selectedTabId = second.createdTabId
-  for (const [index, tab] of second.tabs.entries()) {
-    await f.broker.checkedDispatch(session.id, tab.tabId, agent(session))('Page.navigate', { url: `https://fixture.test/page-${index}` })
-  }
-  // Host/page navigation events, including human clicks, must reach durable recovery metadata.
-  await vi.waitFor(async () => expect((await f.journal.loadSessions())[0]!.leases.map(value => value.lease.url))
-    .toEqual(['https://fixture.test/page-0', 'https://fixture.test/page-1']))
-  const original = f.broker.read(session.id)
-  await f.driver.closeProfile(session.profileId)
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  const restored = recovered.read(session.id)
-  expect(restored.session).toMatchObject({ id: session.id, selectedTabId, state: 'paused' })
-  expect(restored.session.browserGeneration).toBeGreaterThan(session.browserGeneration)
-  expect(restored.tabs.map(tab => [tab.tabId, tab.url])).toEqual(original.tabs.map(tab => [tab.tabId, tab.url]))
-  await expect(recovered.action({ sessionId: session.id, tabId: selectedTabId, actor: agent(session),
-    commandId: 'old-owner', action: { kind: 'click', x: 1, y: 2 } })).rejects.toMatchObject({ code: 'BROWSER_PAUSED' })
-  const control = await recovered.acquire({ sessionId: session.id, browserGeneration: restored.session.browserGeneration,
-    viewerId: 'reopened-viewer', commandId: 'new-viewer' })
-  expect(control.state).toBe('user')
-  await expect(recovered.action({ sessionId: session.id, tabId: selectedTabId,
-    actor: { kind: 'viewer', viewerId: 'reopened-viewer', epoch: control.epoch, browserGeneration: session.browserGeneration },
-    commandId: 'stale-generation', action: { kind: 'click', x: 1, y: 2 } })).rejects.toMatchObject({ code: 'BROWSER_STALE_INPUT' })
-  expect(await recovered.action({ sessionId: session.id, tabId: selectedTabId,
-    actor: { kind: 'viewer', viewerId: 'reopened-viewer', epoch: control.epoch, browserGeneration: restored.session.browserGeneration },
-    commandId: 'restored-viewer', action: { kind: 'click', x: 1, y: 2 } })).toMatchObject({ state: 'completed' })
-})
-
-it.each([false, true])('does not restore a settled subject after restart when its browser process ended is %s', async processEnded => {
-  const f = fixture(), input = f.request(), { session } = ready(await f.broker.prepare(input))
-  if (processEnded) await f.driver.closeProfile(session.profileId)
-  f.end(input.subject)
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  expect(recovered.read(session.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(f.driver.openProfile).toHaveBeenCalledTimes(1)
-})
-
-it('does not reopen a browser on its old computer after its chat assignment moves', async () => {
-  const f = fixture(), subject: AgentSubject = { kind: 'conversation', agent: execution().agent, conversationId: 'conversation' }
-  const input = f.request(subject), { session } = ready(await f.broker.prepare(input))
-  await f.driver.closeProfile(session.profileId)
-  f.assignment(subject, input.browser, 'ready', 'paired-worker')
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  expect(recovered.read(session.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(f.driver.openProfile).toHaveBeenCalledTimes(1)
-})
-
-it('continues an interrupted page restore using its saved new target instead of creating another tab', async () => {
-  const f = fixture(), { session } = ready(await f.broker.prepare(f.request()))
-  await f.broker.checkedDispatch(session.id, session.selectedTabId!, agent(session))('Page.navigate', { url: 'https://fixture.test/resume' })
-  await vi.waitFor(async () => expect((await f.journal.loadSessions())[0]!.leases[0]!.lease.url).toBe('https://fixture.test/resume'))
-  await f.driver.closeProfile(session.profileId)
-  vi.mocked(f.driver.dispatch).mockRejectedValueOnce(new Error('Navigation response was interrupted'))
-  const recovering = new BrowserBroker(f.broker.options)
-  await recovering.recover()
-  expect(recovering.read(session.id).session.state).toBe('recovering')
-  const restarted = new BrowserBroker(f.broker.options)
-  await restarted.recover()
-  expect(restarted.read(session.id)).toMatchObject({ session: { state: 'paused', selectedTabId: session.selectedTabId },
-    tabs: [{ tabId: session.selectedTabId, url: 'https://fixture.test/resume' }] })
-  expect(f.driver.createTab).toHaveBeenCalledTimes(2)
-})
-
-it('cleans its fresh target if the saved subject ends while its page is being restored', async () => {
-  const f = fixture(), input = f.request(), { session } = ready(await f.broker.prepare(input))
-  await f.driver.closeProfile(session.profileId)
-  const create = f.driver.createTab
-  vi.mocked(f.driver.createTab).mockImplementationOnce(async (...args) => {
-    const tab = await create(...args); f.end(input.subject); return tab
-  })
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  expect(recovered.read(session.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(f.driver.closeTab).toHaveBeenCalledTimes(1)
-})
-
-it('retires a fresh idle profile when restoration authority is revoked immediately after launch', async () => {
-  const f = fixture(), input = f.request(), { session } = ready(await f.broker.prepare(input))
-  await f.driver.closeProfile(session.profileId)
-  const open = vi.mocked(f.driver.openProfile).getMockImplementation()!
-  vi.mocked(f.driver.openProfile).mockImplementationOnce(async profileId => {
-    const profile = await open(profileId); f.end(input.subject); return profile
-  })
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  expect(recovered.read(session.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(f.driver.createTab).toHaveBeenCalledTimes(1)
-  expect(await f.driver.reconnectProfile(session.profileId)).toBeNull()
-})
-
-it('keeps a surviving peer on its original browser process when an earlier saved subject is denied', async () => {
-  const f = fixture(), deniedInput = f.request(execution('denied'), 'denied')
-  const denied = ready(await f.broker.prepare(deniedInput)).session
-  const peer = ready(await f.broker.prepare(f.request(execution('peer'), 'peer'))).session
-  f.end(deniedInput.subject)
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  expect(recovered.read(denied.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(recovered.read(peer.id)).toMatchObject({ session: { state: 'paused', browserGeneration: peer.browserGeneration },
-    tabs: [{ tabId: peer.selectedTabId }] })
-  expect(await f.driver.reconnectProfile(peer.profileId)).toEqual({ generation: peer.browserGeneration })
-})
-
-it('keeps a restored peer alive when another session on its profile is denied before recreating a tab', async () => {
-  const f = fixture(), peerInput = f.request(execution('peer'), 'peer')
-  const peer = ready(await f.broker.prepare(peerInput)).session
-  const deniedInput = f.request(execution('denied'), 'denied'), denied = ready(await f.broker.prepare(deniedInput)).session
-  await f.driver.closeProfile(peer.profileId)
-  const open = vi.mocked(f.driver.openProfile).getMockImplementation()!
-  vi.mocked(f.driver.openProfile).mockImplementationOnce(async profileId => {
-    const profile = await open(profileId); f.end(deniedInput.subject); return profile
-  })
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  const restored = recovered.read(peer.id)
-  expect(restored.session).toMatchObject({ state: 'paused' })
-  expect(restored.session.browserGeneration).toBeGreaterThan(peer.browserGeneration)
-  expect(restored.tabs).toMatchObject([{ tabId: peer.selectedTabId }])
-  expect(recovered.read(denied.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(await f.driver.reconnectProfile(peer.profileId)).toEqual({ generation: restored.session.browserGeneration })
-  expect(f.driver.openProfile).toHaveBeenCalledTimes(3)
-})
-
-it('keeps shared-profile session tabs isolated when both are restored into one fresh browser process', async () => {
-  const f = fixture()
-  const first = ready(await f.broker.prepare(f.request(execution('first'), 'first'))).session
-  const second = ready(await f.broker.prepare(f.request(execution('second'), 'second'))).session
-  await f.driver.closeProfile(first.profileId)
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  const a = recovered.read(first.id), b = recovered.read(second.id)
-  expect(a.session.browserGeneration).toBeGreaterThan(first.browserGeneration)
-  expect(a.session.browserGeneration).toBe(b.session.browserGeneration)
-  expect(a.tabs.map(tab => tab.tabId)).toEqual([first.selectedTabId])
-  expect(b.tabs.map(tab => tab.tabId)).toEqual([second.selectedTabId])
-  const control = await recovered.acquire({ sessionId: first.id, browserGeneration: a.session.browserGeneration,
-    viewerId: 'viewer', commandId: 'viewer' })
-  await expect(recovered.action({ sessionId: first.id, tabId: second.selectedTabId!, commandId: 'foreign-page',
-    actor: { kind: 'viewer', viewerId: 'viewer', epoch: control.epoch, browserGeneration: a.session.browserGeneration },
-    action: { kind: 'click', x: 1, y: 2 } })).rejects.toMatchObject({ code: 'BROWSER_TAB_SCOPE' })
-})
-
-it('preserves a read-only Agent boundary after restoring its saved browser', async () => {
-  const f = fixture(), input = f.request()
-  vi.mocked(f.authority.resolve).mockResolvedValueOnce({ ...input, readOnly: true, availability: 'ready' })
-  const { session } = ready(await f.broker.prepare(input))
-  await f.driver.closeProfile(session.profileId)
-  const recovered = new BrowserBroker(f.broker.options)
-  await recovered.recover()
-  const restored = recovered.read(session.id)
-  expect(restored.session.state).toBe('paused')
-  await expect(recovered.action({ sessionId: session.id, tabId: session.selectedTabId!, actor: agent(restored.session, restored.control.epoch),
-    commandId: 'read-only-action', action: { kind: 'click', x: 1, y: 2 } })).rejects.toMatchObject({ code: 'READ_ONLY' })
-})
-
-it('closes a recovering session without starting a replacement browser process', async () => {
-  const f = fixture(), input = f.request(), { session } = ready(await f.broker.prepare(input))
-  await f.driver.closeProfile(session.profileId)
-  await f.broker.disconnected(session.profileId, session.browserGeneration)
-  const closed = await f.broker.release({ sessionId: session.id, subject: input.subject, commandId: 'stop', reason: 'stop' })
-  expect(closed.state).not.toBe('pending')
-  expect(f.broker.read(session.id)).toMatchObject({ session: { state: 'closed' }, tabs: [] })
-  expect(f.driver.openProfile).toHaveBeenCalledTimes(1)
-})
 
 it('isolates exact node, attempt, conversation, setup and profile leases even when native profiles are shared', async () => {
   const f = fixture(), a = execution(), anotherNode = execution('other-node'), nextAttempt = execution('node', 2)
@@ -361,15 +176,11 @@ it('binds a preparation command to its original saved assignment and does not re
   expect(f.driver.openProfile).toHaveBeenCalledTimes(1)
 })
 
-it.each(['process', 'tabs'] as const)('retries recovered conversation cleanup before preparing a replacement after losing its %s with no restorable ownership', async lost => {
+it.each(['process', 'tabs'] as const)('retries recovered conversation cleanup before preparing a replacement after losing its %s', async lost => {
   const f = fixture()
   const subject: AgentSubject = { kind: 'conversation', agent: execution().agent, conversationId: 'conversation' }
   const input = f.request(subject, 'first-turn'), first = ready(await f.broker.prepare(input)).session
-  if (lost === 'process') {
-    vi.mocked(f.driver.closeTab).mockRejectedValueOnce(new Error('Native tab cleanup pending'))
-    expect(await f.broker.release({ sessionId: first.id, subject, commandId: 'terminal', reason: 'terminal' })).toMatchObject({ state: 'pending' })
-    await f.driver.closeProfile(first.profileId)
-  }
+  if (lost === 'process') vi.mocked(f.driver.reconnectProfile).mockResolvedValueOnce(null)
   else vi.mocked(f.driver.restoreTab).mockResolvedValueOnce(null)
   const cleanup = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('Media cleanup still pending'))
   const recovered = new BrowserBroker({ ...f.broker.options, closeSessionResources: cleanup })

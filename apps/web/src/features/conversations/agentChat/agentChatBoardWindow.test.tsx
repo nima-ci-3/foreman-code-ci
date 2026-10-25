@@ -80,7 +80,7 @@ describe('mounted Board chat rail action area', () => {
     expect(within(rail).queryByLabelText('Session options')).not.toBeInTheDocument()
     expect(within(actions).getByRole('button', { name: 'Attach files' })).toBeEnabled()
     const stop = await within(actions).findByRole('button', { name: 'Stop active turn' })
-    expect(within(actions).getByRole('button', { name: /^Delivery action:/ })).toBeEnabled()
+    for (const name of ['Delivery action']) expect(within(actions).getByRole('combobox', { name })).toBeEnabled()
     await waitFor(() => expect(within(actions).getByRole('button', { name: /^(Steer now|Queue next)$/ })).toBeEnabled())
     expect(stop).toBeEnabled()
     for (let step = 0; step < 16 && document.activeElement !== stop; step++) {

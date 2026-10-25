@@ -4,17 +4,14 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 /** Local only: which Agent tabs the person opened or closed in this workflow's browser sidebar, kept for this browser
- * across app restarts. The URL owns active selection; pages remember each inactive session's last selection. */
+ * tab across reloads. The URL owns whether the sidebar is open and which tab is selected. */
 export const useBrowserSidebarTabs = create<{
   opened: Record<string, string[]>
   /** A closed tab stays closed until the person opens that Agent's browser again. */
   closed: Record<string, string[]>
-  pages: Record<string, string>
-  selectPage(session: string, tabId: string): void
   add(scope: string, nodeId: string): void
   close(scope: string, nodeId: string): void
-}>()(persist(set => ({ opened: {}, closed: {}, pages: {},
-  selectPage: (session, tabId) => set(state => ({ pages: { ...state.pages, [session]: tabId } })),
+}>()(persist(set => ({ opened: {}, closed: {},
   add: (scope, nodeId) => set(state => {
     const opened = state.opened[scope] ?? []
     return { opened: { ...state.opened, [scope]: opened.includes(nodeId) ? opened : [...opened, nodeId] },
@@ -24,8 +21,8 @@ export const useBrowserSidebarTabs = create<{
     opened: { ...state.opened, [scope]: (state.opened[scope] ?? []).filter(item => item !== nodeId) },
     closed: { ...state.closed, [scope]: [...new Set([...state.closed[scope] ?? [], nodeId])] },
   })),
-}), { name: 'foreman-browser-sidebar-tabs', storage: createJSONStorage(() => localStorage),
-  partialize: state => ({ opened: state.opened, closed: state.closed, pages: state.pages }) }))
+}), { name: 'foreman-browser-sidebar-tabs', storage: createJSONStorage(() => sessionStorage),
+  partialize: state => ({ opened: state.opened, closed: state.closed }) }))
 
 export const browserSidebarScope = (workspaceId: string, workflowId: string) => JSON.stringify([workspaceId, workflowId])
 
@@ -49,25 +46,18 @@ export function useBrowserSidebar(workspaceId: string, workflowId: string) {
     if (nodeId) useBrowserSidebarTabs.getState().add(scope, nodeId)
     go(search => {
       search.boardBrowsers = 1
-      if (nodeId) {
-        if (search.browserTab !== nodeId) { delete search.browserSessionId; delete search.browserTabId }
-        search.browserTab = nodeId
-      }
+      if (nodeId) search.browserTab = nodeId
       // The node's Browser tab used to open in the floating panel; it now opens here instead.
       if (options.leavePanel) { delete search.boardPanel; delete search.browserSessionId; delete search.browserTabId }
     }, options.replace)
   }, [go, scope])
-  const select = useCallback((nodeId: string) => go(search => {
-    if (search.browserTab !== nodeId) { delete search.browserSessionId; delete search.browserTabId }
-    search.browserTab = nodeId
-  }, true), [go])
-  const close = useCallback(() => go(search => { delete search.boardBrowsers }), [go])
+  const select = useCallback((nodeId: string) => go(search => { search.browserTab = nodeId }, true), [go])
+  const close = useCallback(() => go(search => { delete search.boardBrowsers; delete search.browserTab }), [go])
   const toggle = useCallback(() => { if (isOpen) close(); else open() }, [isOpen, open, close])
   /** Closes one Agent tab and selects its neighbour. */
   const closeTab = useCallback((nodeId: string, neighbour?: string) => {
     useBrowserSidebarTabs.getState().close(scope, nodeId)
     if (selected === nodeId || !selected) go(search => {
-      delete search.browserSessionId; delete search.browserTabId
       if (neighbour) search.browserTab = neighbour
       else delete search.browserTab
     }, true)
