@@ -66,7 +66,7 @@ export function ExecutionInspector({ scope, version }: { scope: RepeatGraphScope
       {version.definition.repeat ? <div className="run-occurrence-picker">
         <ExecutionRepetitionPicker executions={listed} occurrenceId={selection.occurrenceId}
           onSelect={occurrenceId => select(occurrenceId ? { occurrenceId } : {})} />
-      </div> : <p>This saved version has no repeat blocks.</p>}
+      </div> : null}
       {denied ? <Alert tone="warning" title="Execution history access is unavailable." /> : pages.isError ? <Alert tone="warning" title="Execution history could not be refreshed.">
         Previously loaded executions stay listed. <Button size="sm" onClick={() => void refreshFirstInspectionPage(cache, executionPagesKey(scope, filters))}>Retry executions</Button>
       </Alert> : null}

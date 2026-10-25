@@ -9,10 +9,11 @@ import type { ConversationAttachments } from '../../attachments'
 import { ConversationViewport } from '../ConversationViewport'
 import { AgentChatComposer } from '../agentChat/AgentChatComposer'
 import { sameStructuredResult } from '../agentChat/structuredResult'
-import { useConversationDraftStore, prepareChatAttachments, type ChatAttachmentAttempt, deliveryAction } from '../../chat-core'
+import { useConversationDraftStore, prepareChatAttachments, type ChatAttachmentAttempt, deliveryAction, SessionContext, useSessionControls } from '../../chat-core'
 import { ChatDeliveryActions } from './ChatDeliveryActions'
 import { ChatDeliveryReceipts } from './ChatDeliveryReceipts'
 import { RetainedInput, RetainedInputsStatus, type DirectRecovery } from './RetainedDeliveryInputs'
+import { newestQueuedInput } from './queuedRecall'
 import { useRetainedInputs } from './useRetainedInputs'
 import { chatDeliveryClient } from './client'
 import { useChatDelivery } from './useChatDelivery'
@@ -38,6 +39,14 @@ export function ExecutionChatPanel(props: ExecutionChatPanelProps) {
 
 function ExecutionChatContent(props: ExecutionChatPanelProps) {
   const cache = useQueryClient(), serialized = JSON.stringify(props.target)
+  // The same context meter as an Agent chat, read for this exact Run execution.
+  const { agent } = props.target
+  const runId = props.target.kind === 'workflow_execution' ? props.target.execution.runId : undefined
+  const controlsContext = useMemo(() => runId ? { workspaceId: agent.workspaceId, workflowId: agent.workflowId,
+    workflowNodeId: agent.workflowNodeId, agentId: agent.agentId, runId } : undefined,
+  [agent.workspaceId, agent.workflowId, agent.workflowNodeId, agent.agentId, runId])
+  const sessionControls = useSessionControls(undefined, { workspaceId: props.target.agent.workspaceId, ...(controlsContext ? { context: controlsContext } : {}),
+    executionId: props.target.kind === 'workflow_execution' ? props.target.execution.executionId : undefined, enabled: !!controlsContext })
   const target = useMemo(() => JSON.parse(serialized) as ExecutionChatTarget, [serialized])
   const draftKey = executionChatDraftKey(target), inputRef = useRef<HTMLTextAreaElement>(null)
   const detailAbort = useRef(new AbortController())
@@ -90,6 +99,9 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
       ...(files.attachments.length ? { attachments: [...files.attachments] } : {}) })
   }
   const visible = older ?? state, receipts = state?.receipts ?? []
+  // Send now steers the running turn; it needs an active turn the harness can steer and no control in doubt.
+  const sendNowAvailable = presentation.state === 'active' && presentation.capabilities.steer !== 'unavailable'
+    && !!pin.pin?.nativeTurnId && !delivery.pendingControl && !delivery.busy && !delivery.pending && !reason
   const retained = useRetainedInputs(target, revoke)
   const messages = visible?.messages.filter((message, index, all) => !(index > 0 && message.role === 'assistant'
     && all[index - 1]!.role === 'assistant' && sameStructuredResult(all[index - 1]!.content, message.content))) ?? []
@@ -102,7 +114,11 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
       : messages.findIndex(message => !!message.createdAt && message.createdAt > input.createdAt) }
   })
   const retainedProps = { target, receipts, onDenied: revoke, onRecover: props.onRecover, controlsReason,
-    onCancel: delivery.pendingControl ? undefined : (receipt: ChatDeliveryReceipt) => delivery.cancel(receipt.id), onRefresh: delivery.refresh, state: retained }
+    onCancel: delivery.pendingControl ? undefined : (receipt: ChatDeliveryReceipt) => delivery.cancel(receipt.id), onRefresh: delivery.refresh, state: retained,
+    ...(sendNowAvailable ? { onSendNow: (receipt: ChatDeliveryReceipt, content: string) => {
+      delivery.cancel(receipt.id)
+      delivery.submit({ content, intent: 'steer', ...(pin.pin?.nativeTurnId ? { expectedNativeTurnId: pin.pin.nativeTurnId } : {}) })
+    } } : {}) }
   const retainedAt = (index: number) => placed.filter(item => item.before === index).map(({ input }) =>
     <RetainedInput key={input.receiptId} input={input} {...retainedProps} />)
   // A finished execution takes no new turn here; its Agent chat continues the same session with its history.
@@ -117,7 +133,8 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
     <RetainedInput key={input.receiptId} input={input} {...retainedProps} />)}</>)}</>
   return <section className="agent-conversation" aria-label="Selected execution chat">
     {/* The Board's chat tab already names the Run attempt above this panel. */}
-    <header className="agent-chat-identity"><h2>{props.name}</h2></header>
+    <header className="agent-chat-identity"><h2>{props.name}</h2>
+      {controlsContext ? <div className="agent-chat-header-controls"><SessionContext controls={sessionControls} /></div> : null}</header>
     {state?.queueReason ? <p role="status">{executionQueueReasonLabel(state.queueReason)}</p> : null}
     {delivery.query.isPending ? <LoadingState label="Loading selected execution…" rows={2} /> : null}
     {delivery.query.isError ? <p role="alert">Could not refresh this execution. <Button onClick={delivery.refresh}>Retry</Button></p> : null}
@@ -131,7 +148,7 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
         target={target} source={props.source} onBrowse={onBrowse} onDenied={revoke} /></Fragment>)}
       {retainedAt(-1)}
     </>}</ConversationViewport>
-    <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'queued' || receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)}
+    <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)}
       onRefresh={delivery.refresh} />
     {pin.stale ? <Button onClick={pin.refresh}>Refresh target</Button> : null}
     {delivery.feedback ? <p role="alert">{delivery.feedback}</p> : null}
@@ -142,7 +159,12 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
     {closed ? null : <AgentChatComposer name={props.name} draftKey={draftKey} inputRef={inputRef} disabled={false} pending={delivery.busy || !!delivery.pending}
       reason={reason} controlPending={false} hasAttachments={!!props.attachments?.hasAttachments} attachmentControl={props.attachmentControl}
       sessionCommands={false} controlReason={sessionReason}
-      onSubmit={submit} onStop={delivery.stop} canStop={false}
+      onSubmit={submit} onStop={delivery.stop} canStop={false} onRecall={delivery.pendingControl ? undefined : () => {
+        const input = newestQueuedInput(receipts, retained.items)
+        if (!input) return undefined
+        delivery.cancel(input.receiptId)
+        return input.content
+      }}
       deliveryActions={<ChatDeliveryActions presentation={presentation} intent={intent} onIntentChange={setIntent} onSubmit={() => submit()}
         controlsReason={controlsReason}
         reason={reason} pending={delivery.busy || !!delivery.pending} empty={!draft.trim() && !props.attachments?.hasAttachments || props.attachments?.hasBlockingAttachments}

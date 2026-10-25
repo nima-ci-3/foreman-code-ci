@@ -157,7 +157,7 @@ it('blocks new reviews and turns while preserving resident controls during an up
 })
 
 it.each(['dispatches', 'jobs', 'qualifications', 'maintenance', 'quiescence'])(
-  'abandons a stalled %s drain and prevents late continuation', async stage => {
+  'finishes a drain stalled in %s at its deadline so the update proceeds, refusing new work', async stage => {
     vi.useFakeTimers()
     const stalled = deferred()
     const active = stage === 'dispatches' ? [stalled.promise] : []
@@ -175,19 +175,33 @@ it.each(['dispatches', 'jobs', 'qualifications', 'maintenance', 'quiescence'])(
     const attempt = drain.run().then(() => { outcome = 'completed' }, error => { outcome = error })
     await vi.advanceTimersByTimeAsync(60 * 60_000)
     try {
-      expect(outcome).toMatchObject({ code: 'WORKER_UPDATE_DRAIN_DEADLINE_EXCEEDED' })
-      expect(drain.isDraining()).toBe(false)
-      expect(() => drain.assertAdmission('execution-v1', { method: 'job-dispatch' })).not.toThrow()
+      // A stuck operation no longer blocks the update forever: the drain completes and new work stays refused.
+      expect(outcome).toBe('completed')
+      expect(drain.isDraining()).toBe(true)
+      expect(() => drain.assertAdmission('execution-v1', { method: 'job-dispatch' })).toThrow()
+      expect(logging.warn).toHaveBeenCalledWith(expect.objectContaining({ stage }),
+        expect.stringContaining('the update proceeds'))
       const visited = [...stages]
       stalled.resolve()
       await attempt
       await vi.advanceTimersByTimeAsync(1000)
       expect(stages).toEqual(visited)
-      expect(active).toEqual([])
-      expect(() => drain.assertAdmission('source-operations-v1', { operation: 'sources.release' })).not.toThrow()
     } finally {
       stalled.resolve()
       await attempt
     }
   },
 )
+
+it('still fails the drain when the update itself is canceled before the deadline', async () => {
+  const stalled = deferred()
+  const request = new AbortController()
+  const drain = createWorkerRuntimeDrain({ signal: new AbortController().signal, active: () => [],
+    drainJobs: () => stalled.promise, drainQualifications: async () => {}, drainMaintenance: async () => {},
+    quiescent: async () => true })
+  const attempt = drain.run(request.signal)
+  request.abort(new Error('update canceled'))
+  await expect(attempt).rejects.toThrow('update canceled')
+  expect(drain.isDraining()).toBe(false)
+  stalled.resolve()
+})

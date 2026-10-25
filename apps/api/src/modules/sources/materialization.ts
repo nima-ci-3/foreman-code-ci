@@ -10,7 +10,7 @@ export { archiveMaterializationClaim, materializationDirectory, verifyMaterializ
 import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { open, mkdir, rename, statfs, readdir, readlink, stat, readFile, type FileHandle } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { SOURCE_MATERIALIZATION_RECORD_MAX_BYTES, MaterializationReceiptSchema, RootBindingSchema, type MaterializationReceipt, type RootBinding, type SourceManifest, type SourceSnapshotReference, SourceMaterializationFileSchema, sourceMaterializationParent, type SourceProjectQuotaSlot } from '@foreman-code/contracts/source-materialization'
 import { sourceMaterializationBytes } from './footprint.js'
@@ -414,8 +414,14 @@ async function inspectPreparationChildren(namespace: string, signal?: AbortSigna
       // Only binaries used by installed source/native producers can own this
       // preparation. Unrelated protected login/database daemons are not its
       // children; requiring ptrace access to them would invent host authority.
+      // The program is named by its executable: Node 24 renames its main thread "MainThread", so comm alone would
+      // let a live node process that still holds the source pass unseen. comm remains for unreadable executables.
       const comm = (await readFile(`${directory}/comm`, 'utf8')).trim()
-      if (!['git', 'flock', 'node', 'rsync', 'podman', 'crun'].includes(comm)) continue
+      let executable: string | undefined
+      try { executable = basename((await readlink(`${directory}/exe`)).replace(/ \(deleted\)$/u, '')) }
+      catch { /* ignore: an executable this user cannot read is judged by comm */ }
+      const owners = ['git', 'flock', 'node', 'rsync', 'podman', 'crun']
+      if (!owners.includes(comm) && !(executable && owners.includes(executable))) continue
       if (inside(await readlink(`${directory}/cwd`))) {
         throw new SourceError('source-reconciliation-unconfirmed', `Process ${pid} still uses the source directory.`)
       }
