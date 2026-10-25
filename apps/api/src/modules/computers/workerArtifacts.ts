@@ -1,4 +1,4 @@
-import { spawnProcess } from '../../shared/process.js'
+import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -79,7 +79,7 @@ function requestTransitionPublication(root: string, manifestSha256: string) {
   if (transitionUploads.has(manifestSha256)) return
   transitionUploads.add(manifestSha256)
   const release = dirname(root)
-  const child = spawnProcess(process.execPath, [join(release, 'scripts', 'worker-release-artifacts.mjs'), 'publish-transition', release,
+  const child = spawn(process.execPath, [join(release, 'scripts', 'worker-release-artifacts.mjs'), 'publish-transition', release,
     manifestSha256], { stdio: 'ignore' })
   child.once('error', error => {
     transitionUploads.delete(manifestSha256)

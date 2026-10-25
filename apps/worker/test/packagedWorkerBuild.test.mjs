@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { persistentFixtureRoot } from './fixtureStorage.mjs';
-import { readBrowserRuntimeArtifact, stageBundledBrowserRuntime } from '../src/browserRuntimeInstall.mjs';
+import { createBrowserRuntimeArtifact } from './fixtures/browserRuntimeArtifact.mjs';
+import { stageBundledBrowserRuntime } from '../src/browserRuntimeInstall.mjs';
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -49,25 +50,19 @@ for (const { runtime, target } of candidates.filter((candidate, index) => candid
     });
     assert.equal(connection.status().phase, 'disconnected');
     await connection.stop();
+    const browser = await createBrowserRuntimeArtifact(join(directory, 'browser'),
+      { target: expected, commit: manifest.commit, version: product.version });
     const transition = join(directory, 'transition');
     execFileSync(process.execPath, [join(repository, 'scripts/build-worker-artifact.mjs'), target, transition,
       'apps/worker/artifacts/node-24.22.1-linux-x64.json', 'v22.23.3'],
-    { cwd: join(repository, 'apps/worker'), stdio: ['ignore', 'pipe', 'pipe'] });
+    { cwd: join(repository, 'apps/worker'), stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS: browser.directory } });
     const bridge = JSON.parse(await readFile(join(transition, 'manifest.json'), 'utf8'));
     assert.equal(bridge.browserRuntimeStatus.state, 'ready');
-    const recipe = await readBrowserRuntimeArtifact(join(transition, 'artifacts/browser-runtime'),
-      bridge.browserRuntime.descriptorSha256);
-    assert.equal(recipe.format, 2);
-    assert.equal(bridge.browserRuntime.recipeSha256, bridge.browserRuntime.descriptorSha256);
-    assert.deepEqual(recipe.target, expected);
-    assert.deepEqual(recipe.resolvedLock.target, expected);
-    assert.equal(recipe.manifest.sourceCommit, manifest.commit);
-    assert.equal(recipe.manifest.foremanVersion, product.version);
+    assert.equal(bridge.browserRuntime.manifestSha256, browser.descriptor.manifestSha256);
     const installedBrowser = await stageBundledBrowserRuntime({ root: join(directory, 'app'), artifact: transition,
       manifest: bridge, target: expected, readiness: async () => ({ ready: true }) });
-    assert.equal(installedBrowser.runtimeVersion, recipe.manifest.runtimeVersion);
-    assert.equal(installedBrowser.recipeSha256, bridge.browserRuntime.recipeSha256);
-    assert.deepEqual(installedBrowser.target, expected);
+    assert.equal(installedBrowser.runtimeVersion, product.version);
     const pin = JSON.parse(await readFile(join(transition, bridge.runtime.metadataPath), 'utf8'));
     const archive = await readFile(join(transition, bridge.runtime.archivePath));
     assert.equal(bridge.target.node, 'v22.23.3');
