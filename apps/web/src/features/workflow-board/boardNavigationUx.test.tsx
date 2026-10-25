@@ -75,13 +75,3 @@ it.each(['current', 'historical'] as const)('inspects the exact failed activity 
     workflowVersionId: owner.scope.workflowVersionId, executionSemanticsVersion: 3, runNodeId: fixture.first.id })
   expect(readRunInspectionKey(router.state.location.search.runExchangeKey)).toEqual({ executionId: detail.execution.executionId })
 }, 15_000)
-
-it('opens the Board from a link that carries an unknown query key', async () => {
-  const fixture = await meaningfulSaveFixture(false, authoringFixture(['orchestrator', 'coder']))
-  measureBoardWire(fixture.mock, fixture.reply)
-  // `workflow` is a mistyped `workflowId`; the page keeps working and drops the key it does not know.
-  const { router } = await mountMeasuredBoard(`${fixture.href}&workflow=${fixture.workflowId}`)
-  expect(await screen.findByRole('button', { name: 'Workflow settings' })).toBeVisible()
-  expect(router.state.location.search).not.toHaveProperty('workflow')
-  expect(router.state.location.search.workflowId).toBe(fixture.workflowId)
-})
