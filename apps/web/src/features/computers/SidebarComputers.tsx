@@ -104,8 +104,7 @@ function CloudRow({ cloud, fresh }: { cloud: CloudCiActivity; fresh: boolean }) 
   const level = cloudLoad(cloud, fresh)
   let state = LOAD_LABELS.unknown
   if (fresh) {
-    // A suspended or refused CircleCI login says why; only an unexplained failure means Main's login is missing.
-    state = cloud.ready ? `${cloud.running} of ${cloud.slots} CI machines in use` : cloud.creditsUnavailable ?? 'Not logged in on Main'
+    state = cloud.ready ? `${cloud.running} of ${cloud.slots} CI machines in use` : 'Not logged in on Main'
   }
   const role = fresh && cloud.provider === 'circleci' && cloud.schedulingRole
     ? CIRCLE_ROLE_LABELS[cloud.schedulingRole] : undefined
