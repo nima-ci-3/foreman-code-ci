@@ -42,6 +42,8 @@ it.each([
   const run = await toolbar.findByRole('button', { name: 'Start saved version' })
   await waitFor(() => expect(run, run.title).toBeEnabled())
   expect(run).toHaveTextContent('Run current workflow')
+  expect(toolbar.getByLabelText('Start target')).toHaveTextContent(fixture.after.id)
+  expect(toolbar.getByLabelText('Start target')).toHaveTextContent('New input, without reusing the selected Run’s input.')
   expect(toolbar.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
   await userEvent.setup().click(run)
   await waitFor(() => expect(fixture.mock.runs.size).toBe(4))

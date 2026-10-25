@@ -115,7 +115,6 @@ it('reconciles a completed executor result before expiring a stale assigned tick
   try {
     await expireOverdueCiRuns(mainCiContext, store.pool, now, async observed => {
       await service.dispatch()
-      await service.drain()
       return store.read(observed.id).record
     })
     expect(store.read(run.id)).toMatchObject({ state: 'passed', hostKey: null,

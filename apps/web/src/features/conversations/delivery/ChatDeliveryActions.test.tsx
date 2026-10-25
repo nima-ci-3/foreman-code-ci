@@ -14,8 +14,7 @@ describe('Chat delivery controls', () => {
     const props = { presentation: { state: 'active' as const, capabilities, nativeTurnId: 'turn-a' },
       intent: 'auto' as const, onIntentChange: change, onSubmit: submit }
     const view = render(<ChatDeliveryActions {...props} />)
-    fireEvent.click(screen.getByRole('button', { name: /^Delivery action:/ }))
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Interrupt and send' }))
+    fireEvent.change(screen.getByLabelText('Delivery action'), { target: { value: 'interrupt_and_send' } })
     expect(change).toHaveBeenCalledWith('interrupt_and_send')
     expect(submit).not.toHaveBeenCalled()
     view.rerender(<ChatDeliveryActions {...props} intent="interrupt_and_send" />)
@@ -28,8 +27,7 @@ describe('Chat delivery controls', () => {
     const props = { intent: 'steer' as const, onIntentChange: change, onSubmit: vi.fn() }
     const view = render(<ChatDeliveryActions {...props} presentation={{ state: 'active', capabilities, nativeTurnId: 'turn-a' }} />)
     view.rerender(<ChatDeliveryActions {...props} presentation={{ state: 'idle', capabilities }} />)
-    fireEvent.click(screen.getByRole('button', { name: /^Delivery action:/ }))
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Automatic' }))
+    fireEvent.change(screen.getByLabelText('Delivery action'), { target: { value: 'auto' } })
     expect(change).toHaveBeenCalledWith('auto')
     view.rerender(<ChatDeliveryActions {...props} intent="auto" presentation={{ state: 'idle', capabilities }} />)
     expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
