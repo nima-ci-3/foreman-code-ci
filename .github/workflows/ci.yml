@@ -161,7 +161,8 @@ jobs:
           restore-keys: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
       # Snapshot refs can read only main's cache, so a branch's runs never saw each other's state and re-checked
       # everything that differs from main. Each part's newest state is a release asset (any ref, any provider); its
-      # contents are keyed by file content, so a newer state from another commit is safe to start from.
+      # contents are keyed by file content, so a newer state from another commit is safe to start from; each state file
+      # keeps its freshest copy (cp -u) between it and main's state.
       - name: Typecheck and lint state from the newest run
         if: startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint')
         env:
@@ -169,7 +170,8 @@ jobs:
           ASSET: run-state-${{ inputs.suite }}-${{ steps.cache-inputs.outputs.packages }}.tar.gz
         run: |
           if gh release download ci-state -R "$GITHUB_REPOSITORY" -p "$ASSET" -D "$RUNNER_TEMP" 2>/dev/null; then
-            tar -xzf "$RUNNER_TEMP/$ASSET" && echo "Restored the newest run's state ($ASSET)."
+            mkdir -p "$RUNNER_TEMP/run-state" && tar -xzf "$RUNNER_TEMP/$ASSET" -C "$RUNNER_TEMP/run-state" \
+              && cp -a -u "$RUNNER_TEMP/run-state/." . && echo "Restored the newest run's state ($ASSET)."
           else
             echo "No newer run state for $ASSET; starting from main's state."
           fi

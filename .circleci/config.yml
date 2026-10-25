@@ -153,8 +153,8 @@ jobs:
             - restore_cache:
                 keys:
                   - ci-<< pipeline.parameters.suite >>-{{ checksum "pnpm-lock.yaml" }}-
-            # Main's typecheck and lint state, published by the mirror's warm-up job: newer than this suite's last
-            # CircleCI run (which may be rare while GitHub Actions takes most work), so it is extracted over it.
+            # Main's typecheck and lint state (the mirror's warm-up job) and the newest run's state of this part (any
+            # provider): each state file keeps its freshest copy among them and this suite's last CircleCI run.
             - run:
                 name: Typecheck and lint state from main
                 command: |
@@ -162,7 +162,8 @@ jobs:
                   asset="suite-state-$(cat .logs/ci-packages-key).tar.gz"
                   url="https://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/releases/download/ci-state/$asset"
                   if curl -fsSL --retry 3 --max-time 120 -o "$HOME/suite-state.tar.gz" "$url"; then
-                    tar -xzf "$HOME/suite-state.tar.gz" && echo "Restored main's typecheck and lint state ($asset)."
+                    mkdir -p "$HOME/suite-state" && tar -xzf "$HOME/suite-state.tar.gz" -C "$HOME/suite-state" \
+                      && cp -a -u "$HOME/suite-state/." . && echo "Restored main's typecheck and lint state ($asset)."
                   else
                     echo "Main's typecheck and lint state is not published for this package set; using this suite's last run."
                   fi
@@ -170,7 +171,8 @@ jobs:
                   run="run-state-$SUITE-$(cat .logs/ci-packages-key).tar.gz"
                   if curl -fsSL --retry 3 --max-time 120 -o "$HOME/run-state.tar.gz" \
                     "https://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/releases/download/ci-state/$run"; then
-                    tar -xzf "$HOME/run-state.tar.gz" && echo "Restored the newest run's state ($run)."
+                    mkdir -p "$HOME/run-state" && tar -xzf "$HOME/run-state.tar.gz" -C "$HOME/run-state" \
+                      && cp -a -u "$HOME/run-state/." . && echo "Restored the newest run's state ($run)."
                   fi
       - run:
           name: Suite
