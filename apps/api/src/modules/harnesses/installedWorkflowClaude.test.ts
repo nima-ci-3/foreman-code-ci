@@ -158,6 +158,20 @@ it('names the completed turn by the acknowledged input message', async () => {
   await claude.manager.dispose?.()
 })
 
+it('reconciles the whole session as one contiguous event sequence', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  const { claude, start } = allocate()
+  const session = await claude.manager.createSession(start)
+  await completeFirstTurn(fake, claude, session)
+  // Main streams an execution's events by sequence; the session's own events sit between its turns.
+  const history = await claude.manager.reconcile(session, 'execution:execution')
+  expect(history.events.map(event => event.sequence)).toEqual(Array.from(
+    { length: history.nextSequence! - history.firstRetainedSequence! }, (_, index) => history.firstRetainedSequence! + index))
+  expect(history.events.some(event => event.type === 'session.idle')).toBe(true)
+  await claude.manager.dispose?.()
+})
+
 it('owns a continued session it attached instead of the one it would have chosen', async () => {
   const fake = sdk()
   provider.client = fake.client
