@@ -63,7 +63,6 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
   private readonly opening = new Map<string, Promise<{ generation: number }>>()
   private readonly popups = new Set<Parameters<BrowserNativeDriver['onPopup']>[0]>()
   private readonly tabClosed = new Set<Parameters<BrowserNativeDriver['onTabClosed']>[0]>()
-  private readonly pageChanged = new Set<(profileId: string, generation: number, tab: NativeBrowserTab) => void>()
   private readonly downloads = new Map<string, BrowserNativeDownload>()
   private readonly captures = new Map<string, Promise<{ connection: BrowserCdpConnection; listeners: Set<(frame: BrowserHostFrame) => void>; readonly latest: BrowserHostFrame | undefined; stop: () => Promise<void> }>>()
   private readonly retiringCaptures = new Map<string, Promise<void>>()
@@ -261,10 +260,7 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
     }
     if (event.method === 'Target.targetInfoChanged') {
       const info = object(event.params.targetInfo), changed = profile.tabs.get(text(info.targetId))
-      if (changed) {
-        changed.title = text(info.title); changed.url = text(info.url) || changed.url
-        for (const listener of this.pageChanged) listener(profileId, profile.generation, { targetId: changed.id, title: changed.title, url: changed.url })
-      }
+      if (changed) { changed.title = text(info.title); changed.url = text(info.url) || changed.url }
       return
     }
     const tab = [...profile.tabs.values()].find(value => value.sessionId === event.sessionId)
@@ -280,7 +276,6 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
       if (typeof frame.id === 'string') tab.frameIds.add(frame.id)
       if (frame.parentId) return
       tab.url = text(frame.url)
-      for (const listener of this.pageChanged) listener(profileId, profile.generation, { targetId: tab.id, title: tab.title, url: tab.url })
       try {
         const url = new URL(tab.url)
         if (['http:', 'https:'].includes(url.protocol)) void this.options.onOrigin(profileId, url.origin).catch(this.options.reportFailure)
@@ -573,9 +568,6 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
 
   onPopup(listener: Parameters<BrowserNativeDriver['onPopup']>[0]): () => void { this.popups.add(listener); return () => this.popups.delete(listener) }
   onTabClosed(listener: Parameters<BrowserNativeDriver['onTabClosed']>[0]): () => void { this.tabClosed.add(listener); return () => this.tabClosed.delete(listener) }
-  onPageChanged(listener: (profileId: string, generation: number, tab: NativeBrowserTab) => void): () => void {
-    this.pageChanged.add(listener); return () => this.pageChanged.delete(listener)
-  }
   facts(profileId: string, generation: number, targetId: string): BrowserNativeFacts {
     const tab = this.profile(profileId, generation).tabs.get(targetId)
     if (!tab) throw new DomainError('BROWSER_TAB_SCOPE', 'This tab is no longer owned.', 403)

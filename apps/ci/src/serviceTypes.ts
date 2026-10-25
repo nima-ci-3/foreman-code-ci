@@ -1,4 +1,4 @@
-import type { CiCoverageSelection, CiHostRequest, CiHostReply, CiHostRun, CiRunRecord, CiSelection, CiUserSystemd } from '@foreman-code/contracts'
+import type { CiHostRequest, CiHostReply, CiHostRun, CiRunRecord, CiUserSystemd } from '@foreman-code/contracts'
 import type { DeviceRequestPriority } from '@foreman-code/contracts/device-application'
 import type { CiRepositoryCapabilities } from './repository.js'
 import type { CiIntegrationInventory } from './integrationParts.js'
@@ -36,9 +36,6 @@ export interface CiCommits {
   capabilities(repository: string, commit: string): Promise<CiRepositoryCapabilities>
   integrationInventory?(repository: string, commit: string): Promise<CiIntegrationInventory>
   unitInventory?(repository: string, commit: string): Promise<CiUnitInventory>
-  /** The commit's own affected selection, computed on Main; without it the runner selects and the result cache is skipped. */
-  affectedSelection?(repository: string, input: { commit: string; suite: string; defaultBranch: string; baseCommit?: string
-    coverage?: CiCoverageSelection; signal: AbortSignal }): Promise<CiSelection>
   /** The commit's files and their blobs, for result cache keys; without it every selected file runs. */
   testTree?(repository: string, commit: string, signal?: AbortSignal): Promise<CiTestTree>
   resolve(repository: string, defaultBranch: string, commit: string | undefined,

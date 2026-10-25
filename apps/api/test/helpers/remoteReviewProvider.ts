@@ -209,7 +209,7 @@ async function cachedWorkerRelease(directory: string) {
   }
   const targets = [
     'test-hosts/ubuntu-24.04-x64-target.json', 'ubuntu-26.04-x64-target.json',
-    'test-hosts/ubuntu-24.04-x64-node-24.22.1-target.json', 'test-hosts/ubuntu-26.04-x64-node-24.22.1-target.json',
+    'test-hosts/ubuntu-24.04-x64-node-22.23.2-target.json', 'test-hosts/ubuntu-26.04-x64-node-22.23.2-target.json',
   ]
   for (const name of targets) {
     const targetFile = fileURLToPath(new URL(`../../../worker/artifacts/${name}`, import.meta.url))

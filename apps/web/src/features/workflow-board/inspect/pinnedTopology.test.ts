@@ -19,14 +19,13 @@ describe('immutable canvas display projection', () => {
     expect(nativeNode(pinnedTopology(version).nodes[0])?.intervalSeconds).toBe(300)
     const identity = (executionId: string) => ({ workflowNodeId: version.definition.nodes[0]!.id, executionId,
       agentId: 'agent', agentConfigurationVersionId: 'cfg', attempt: 1, occurrence: null })
-    const cut: PinnedNodeDisplayCut = { state: { nodes: [{ state: { workflowNodeId: version.definition.nodes[0]!.id,
-      lifecycle: 'succeeded', execution: identity('graph') } }], resolutions: [], executions: [
+    const cut: PinnedNodeDisplayCut = { state: { resolutions: [], executions: [
       { identity: identity('graph'), state: 'completed', resultOutcome: 'succeeded' },
       { identity: identity('check'), state: 'running', resultOutcome: null, tickIndex: 1 },
     ] } }
     expect(pinnedNodeStates(cut).get(version.definition.nodes[0]!.id)?.label).toBe('succeeded')
     expect(runningIntervalChecks(cut).get(version.definition.nodes[0]!.id)).toEqual({ check: 1, queued: false })
-    const finished: PinnedNodeDisplayCut = { state: { nodes: cut.state.nodes, resolutions: [], executions: cut.state.executions
+    const finished: PinnedNodeDisplayCut = { state: { resolutions: [], executions: cut.state.executions
       .map((fact) => ({ ...fact, state: 'completed' as const, resultOutcome: 'succeeded' as const })) } }
     expect(runningIntervalChecks(finished).size).toBe(0)
   })
@@ -63,9 +62,8 @@ describe('immutable canvas display projection', () => {
   it('orders ordinary technical attempts without turning them into business rounds', () => {
     const { identities } = makeCurrentWorkflowFixture('attempt-pinned')
     const identity = identities[0]!
-    const cut: PinnedNodeDisplayCut = { state: { nodes: [{ state: { workflowNodeId: identity.workflowNodeId,
-      lifecycle: 'running', execution: { ...identity, executionId: 'retry-3', attempt: 3 } } }], resolutions: [], executions: [
-      { identity: { ...identity, executionId: 'retry-3', attempt: 3, occurrence: null }, state: 'running', resultOutcome: null },
+    const cut: PinnedNodeDisplayCut = { state: { resolutions: [], executions: [
+      { identity: { ...identity, attempt: 3, occurrence: null }, state: 'running', resultOutcome: null },
       { identity: { ...identity, attempt: 1, occurrence: null }, state: 'completed', resultOutcome: 'succeeded' },
     ] } }
     expect(pinnedNodeStates(cut).get(identity.workflowNodeId)).toEqual({ label: 'running', occurrenceIndex: 0, attempt: 3 })
@@ -75,10 +73,9 @@ describe('immutable canvas display projection', () => {
     const { identities, scope } = makeCurrentWorkflowFixture('occurrence-pinned', 'repeat')
     const identity = identities[0]!
     const occurrence = (index: number) => ({ scope, blockId: 'repair', occurrenceId: `occ-${index}`, occurrenceIndex: index })
-    const cut: PinnedNodeDisplayCut = { state: { nodes: [{ state: { workflowNodeId: identity.workflowNodeId,
-      lifecycle: 'waiting', execution: { ...identity, executionId: 'later' } } }], resolutions: [], executions: [
+    const cut: PinnedNodeDisplayCut = { state: { resolutions: [], executions: [
       { identity: { ...identity, attempt: 5, occurrence: occurrence(1) }, state: 'completed', resultOutcome: 'succeeded' },
-      { identity: { ...identity, executionId: 'later', attempt: 1, occurrence: occurrence(2) }, state: 'waiting', resultOutcome: null },
+      { identity: { ...identity, attempt: 1, occurrence: occurrence(2) }, state: 'waiting', resultOutcome: null },
     ] } }
     expect(pinnedNodeStates(cut).get(identity.workflowNodeId)).toEqual({ label: 'waiting', occurrenceIndex: 2, attempt: 1 })
   })
@@ -88,7 +85,6 @@ describe('immutable canvas display projection', () => {
     const identity = identities[0]!
     const occurrence = (index: number) => ({ scope, blockId: 'repair', occurrenceId: `occ-${index}`, occurrenceIndex: index })
     const cut: PinnedNodeDisplayCut = { state: {
-      nodes: [{ state: { workflowNodeId: identity.workflowNodeId, lifecycle: 'not_activated' }, resolution: { resolution: 'excluded' } }],
       resolutions: [{ ref: { nodeId: identity.workflowNodeId, occurrence: occurrence(2) }, value: { resolution: 'excluded' } }],
       executions: [{ identity: { ...identity, occurrence: occurrence(1) }, state: 'completed', resultOutcome: 'succeeded' }],
     } }

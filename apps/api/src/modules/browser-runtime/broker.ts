@@ -7,7 +7,7 @@ import type { BrowserLifecyclePort } from '../collaboration/index.js'
 import { BrowserDispatchGate } from './dispatchGate.js'
 import type { AgentSubject, BrowserActor, BrowserControl, BrowserHostAction, BrowserNativeDispatch,
   BrowserNativeDriver, BrowserPageInput, BrowserPrepareResult, BrowserReleaseResult, BrowserRuntimeJournal,
-  BrowserRuntimeSessionRecord, BrowserSession, BrowserSubjectAuthority, BrowserTabLease, NativeBrowserProfile, NodeBrowserSettings } from './types.js'
+  BrowserRuntimeSessionRecord, BrowserSession, BrowserSubjectAuthority, BrowserTabLease, NodeBrowserSettings } from './types.js'
 
 interface BrowserAllocation {
   sessionId: string; tabId: string; leaseId: string; token: string; generation?: number
@@ -43,12 +43,10 @@ export class BrowserBroker implements BrowserLifecyclePort {
   private readonly listeners = new Map<string, Set<(value: ReturnType<BrowserBroker['read']>) => void>>()
   private readonly id: () => string
   private admission = true
-  private suspending = false
 
   constructor(readonly options: BrowserBrokerOptions) {
     this.id = options.id ?? randomUUID
     options.driver.onTabClosed((profileId, generation, targetId) => {
-      if (this.suspending) return
       const owner = this.ownerForTarget(profileId, generation, targetId)
       if (!owner) return
       const live = this.requireSession(owner.sessionId)
@@ -58,20 +56,6 @@ export class BrowserBroker implements BrowserLifecyclePort {
       live.record.leases = live.record.leases.filter(value => value.targetId !== targetId)
       if (live.record.session.selectedTabId === owner.tabId) live.record.session.selectedTabId = live.record.leases[0]?.lease.tabId ?? null
       void this.persist(live).catch(() => { live.gate.fence(); live.record.session.state = 'recovering' })
-    })
-    options.driver.onPageChanged?.((profileId, generation, tab) => {
-      if (this.suspending) return
-      const owner = this.ownerForTarget(profileId, generation, tab.targetId)
-      if (!owner) return
-      const live = this.requireSession(owner.sessionId)
-      const owned = live.record.leases.find(value => value.targetId === tab.targetId)!
-      if (owned.restoreUrl !== undefined || owned.lease.url === tab.url && owned.lease.title === tab.title) return
-      owned.lease.url = tab.url; owned.lease.title = tab.title
-      void this.persist(live).catch(error => {
-        live.gate.fence(); live.record.session.state = 'recovering'
-        live.record.control.state = 'paused'; live.record.control.reason = 'Browser page changes could not be saved. Reconnect before continuing.'
-        this.options.log?.('Agent browser page could not be saved for restart recovery', { sessionId: owner.sessionId, error })
-      })
     })
     options.driver.onPopup(async (profileId, generation, openerTargetId, tab) => {
       const owner = [...this.sessions.values()].find(value => value.record.session.profileId === profileId
@@ -113,10 +97,7 @@ export class BrowserBroker implements BrowserLifecyclePort {
         record.control.reason = 'The browser host reconnected. Check the current page before returning control.'
       } else live.gate.close()
       this.sessions.set(record.session.id, live)
-    }
-    // Profile retirement must see every saved peer, including those not restored yet.
-    for (const live of this.sessions.values()) {
-      if (live.record.session.state !== 'closed') await this.restoreOwnedSession(live)
+      if (record.session.state !== 'closed') await this.restoreOwnedSession(live)
       await this.persist(live)
     }
   }
@@ -127,69 +108,22 @@ export class BrowserBroker implements BrowserLifecyclePort {
 
   resumeAdmission(): void { this.admission = true }
 
-  /** Host shutdown saves pages without ending their logical session or deleting its files. */
-  async suspend(): Promise<void> {
-    this.stopAdmission()
-    if (this.allocatingProfiles.size || this.maintenanceProfiles.size) {
-      throw new DomainError('BROWSER_RUNTIME_BUSY', 'Browser preparation or profile maintenance is still settling.', 409)
-    }
-    for (const live of this.sessions.values()) if (live.record.closing) {
-      const result = await this.closeOwned(live)
-      if (result.state === 'pending') throw new DomainError('BROWSER_RUNTIME_BUSY', result.reason ?? 'Browser cleanup is pending.', 409)
-    }
-    this.suspending = true
-    for (const live of this.sessions.values()) if (live.record.session.state !== 'closed') {
-      live.gate.close()
-      live.record.control.epoch++; live.record.control.state = 'paused'; live.record.control.controllingViewerId = null
-      live.record.control.reason = 'The browser host stopped. Reopen its view after restart to continue.'
-      live.record.viewerDisconnected = true
-      if (!await live.gate.settle()) throw new DomainError('BROWSER_RUNTIME_BUSY', 'Browser input is still settling.', 409)
-      this.followPages(live.record)
-      live.record.session.state = 'recovering'; live.lastInput.clear()
-      await this.persist(live)
-    }
-  }
-
   private async restoreOwnedSession(live: LiveSession): Promise<void> {
     const { record } = live
-    const assignment = { profileId: record.session.profileId, computerId: this.options.computerId }
-    const subject = record.session.subject
-    let native: NativeBrowserProfile | null = null
     try {
-      native = await this.options.driver.reconnectProfile(record.session.profileId)
-      if (subject) await this.options.authority.assertCurrent(subject, assignment)
+      const native = await this.options.driver.reconnectProfile(record.session.profileId)
       if (!native || native.generation !== record.session.browserGeneration) {
-        if (!record.closing && record.leases.length) {
-          native ??= await this.options.driver.openProfile(record.session.profileId)
-          this.options.log?.('Restoring Agent browser pages after its browser process ended', {
-            sessionId: record.session.id, profileId: record.session.profileId, generation: native.generation, tabs: record.leases.length })
-          for (const owned of record.leases) owned.restoreUrl ??= owned.lease.url
-          record.session.browserGeneration = native.generation
-          await this.persist(live)
-        } else {
-          record.leases = []; record.session.state = 'closed'; record.session.selectedTabId = null; record.closing = true
-          record.control.controllingViewerId = null; live.gate.close(); return
-        }
+        // A verified new process proves the old generation's leases are gone. Never adopt restored/global tabs.
+        this.options.log?.('Agent browser session closed: its browser process ended', { sessionId: record.session.id,
+          profileId: record.session.profileId, generation: record.session.browserGeneration, lostTabs: record.leases.length })
+        record.leases = []; record.session.state = 'closed'; record.session.selectedTabId = null
+        record.closing = true
+        record.control.controllingViewerId = null; record.control.reason = 'The previous browser process ended. Open a new browser session.'
+        live.gate.close(); return
       }
       const restored: BrowserRuntimeSessionRecord['leases'] = []
       for (const owned of record.leases) {
-        let nativeTab = owned.lease.browserGeneration === native.generation
-          ? await this.options.driver.restoreTab(record.session.profileId, native.generation, owned.targetId) : null
-        if (owned.restoreUrl !== undefined) {
-          if (subject) await this.options.authority.assertCurrent(subject, assignment)
-          if (!nativeTab) {
-            nativeTab = await this.options.driver.createTab(record.session.profileId, native.generation, `restore-${owned.lease.id}`)
-            owned.targetId = nativeTab.targetId; owned.lease.browserGeneration = native.generation
-            await this.persist(live)
-          }
-          if (subject) await this.options.authority.assertCurrent(subject, assignment)
-          const result = await this.options.driver.dispatch(record.session.profileId, native.generation, owned.targetId,
-            'Page.navigate', { url: owned.restoreUrl }) as { errorText?: string } | undefined
-          if (result?.errorText) throw new DomainError('BROWSER_RESTORE_FAILED', result.errorText, 503)
-          nativeTab = { ...nativeTab, url: owned.restoreUrl, title: owned.lease.title }
-          delete owned.restoreUrl
-          await this.persist(live)
-        }
+        const nativeTab = await this.options.driver.restoreTab(record.session.profileId, native.generation, owned.targetId)
         if (nativeTab) restored.push({ ...owned, lease: { ...owned.lease, title: nativeTab.title, url: nativeTab.url } })
       }
       if (restored.length < record.leases.length) this.options.log?.('Agent browser tabs missing after reconnecting to the browser process', {
@@ -200,19 +134,9 @@ export class BrowserBroker implements BrowserLifecyclePort {
       record.session.state = restored.length ? 'paused' : 'closed'
       if (!restored.length) record.control.controllingViewerId = null
       if (!restored.length) { record.closing = true; live.gate.close() }
-    } catch (error) {
-      if (error instanceof DomainError && (error.status === 403 || error.status === 404 || error.code === 'BROWSER_SUBJECT_SETTLED'
-        || error.code === 'BROWSER_SCOPE_MISMATCH' || error.code === 'BROWSER_COMPUTER_SCOPE')) {
-        record.leases = record.leases.filter(owned => owned.lease.browserGeneration === native?.generation)
-        record.session.state = record.leases.length ? 'paused' : 'closed'
-        record.closing = true; record.control.controllingViewerId = null; live.gate.close()
-        if (!record.leases.length) record.session.selectedTabId = null
-        await this.closeOwned(live)
-        return
-      }
+    } catch {
       record.session.state = 'recovering'; record.control.state = 'paused'
       record.control.reason = 'The owned browser process is unavailable. Reconnect or close this session to reconcile it.'
-      this.options.log?.('Agent browser page recovery is pending', { sessionId: record.session.id, error })
     }
   }
 
@@ -241,7 +165,6 @@ export class BrowserBroker implements BrowserLifecyclePort {
   }
 
   async disconnected(profileId: string, generation: number): Promise<void> {
-    if (this.suspending) return
     for (const live of this.sessions.values()) {
       if (live.record.session.profileId !== profileId || live.record.session.browserGeneration !== generation
         || live.record.session.state === 'closed') continue
@@ -535,7 +458,6 @@ export class BrowserBroker implements BrowserLifecyclePort {
   }
 
   private async assertCurrent(live: LiveSession): Promise<void> {
-    if (this.suspending) throw new DomainError('BROWSER_RUNTIME_DRAINING', 'The browser host is stopping.', 503)
     const { subject, profileId } = live.record.session
     if (subject) await this.options.authority.assertCurrent(subject, { profileId })
   }
@@ -604,7 +526,6 @@ export class BrowserBroker implements BrowserLifecyclePort {
 
   async acquire(input: { sessionId: string; viewerId: string; browserGeneration: number; commandId: string }): Promise<BrowserControl> {
     const live = this.requireSession(input.sessionId)
-    await this.assertCurrent(live)
     if (input.browserGeneration !== live.record.session.browserGeneration) throw new DomainError('BROWSER_STALE_GENERATION', 'Refresh the browser view.', 409)
     return this.command(`${input.sessionId}:acquire:${input.commandId}`, input, markEffect => this.controlOperation(input.sessionId, async () => {
       const control = live.record.control
@@ -895,7 +816,6 @@ export class BrowserBroker implements BrowserLifecyclePort {
   async capture(sessionId: string, tabId: string, generation: number,
     frame: Parameters<BrowserNativeDriver['capture']>[3]): Promise<() => Promise<void>> {
     const live = this.requireSession(sessionId), owned = this.lease(live, tabId, generation)
-    if (this.suspending) throw new DomainError('BROWSER_RUNTIME_DRAINING', 'The browser host is stopping.', 503)
     if (live.record.session.state === 'closed') throw new DomainError('BROWSER_CLOSED', 'This browser is no longer live.', 409)
     return this.options.driver.capture(live.record.session.profileId, generation, owned.targetId, value => {
       if (!live.record.closing && live.record.session.browserGeneration === generation) frame(value)
@@ -934,10 +854,7 @@ export class BrowserBroker implements BrowserLifecyclePort {
     const sessionId = live.record.session.id
     // Completed cleanup is durable. Replaying every historical session made an idle host take minutes to stop.
     if (live.record.session.state === 'closed' && !live.record.closing) return { sessionId, state: 'already_closed', reason: null }
-    if (live.record.session.state === 'recovering') {
-      live.record.closing = true
-      await this.restoreOwnedSession(live); await this.persist(live)
-    }
+    if (live.record.session.state === 'recovering') { await this.restoreOwnedSession(live); await this.persist(live) }
     if (live.record.session.state === 'closed') {
       try {
         await this.options.closeSessionResources?.(sessionId)
