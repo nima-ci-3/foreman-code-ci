@@ -20,7 +20,7 @@ import { useOperatorCreateConversation } from './useOperatorCreateConversation'
 import { useOperatorSendMutation } from './useOperatorSendMutation'
 import { useOperatorSetupState } from './useOperatorSetupState'
 import { useOperatorSubmit } from './useOperatorSubmit'
-import { useOperatorReconnect } from './useOperatorReconnect'
+import { useChatReconnect } from '../chat-core/useChatReconnect'
 import { isApiRestartError } from '../../shared/api/client'
 import { deriveOperatorLiveText, deriveOperatorMessaging, deriveOperatorNavigation } from './operatorChatDerived'
 import type { AskSend, ConnectionState, PartialState, PreparationError } from './operatorChatShared'
@@ -80,7 +80,7 @@ function OperatorChatContent({ settingsWarning }: { settingsWarning?: string }) 
     historyTriggerRef, setAskSend, setup, preferences, accessDenied, selectedId })
   const send = useOperatorSendMutation({ acceptState, invalidate, attachmentReceipts, setPreparationError, setHandoffNotice, refreshOutbox })
   const { cancel, respond, remove, restore } = useOperatorConversationMutations({ acceptState, invalidate, deletedRevisions, setRemoved })
-  const reconnect = useOperatorReconnect(open && !accessDenied && !missingSelection && (isApiRestartError(selected.error) || isApiRestartError(shownSetup.error)),
+  const reconnect = useChatReconnect(open && !accessDenied && !missingSelection && (isApiRestartError(selected.error) || isApiRestartError(shownSetup.error)),
     () => { if (selected.isError) void selected.refetch(); if (shownSetup.isError) void shownSetup.refetch() })
   useOperatorChatShellEffects({ enabled, open, closing, setClosing, closeRef, launcherRef, refreshOutbox })
   useOperatorChatStream({ enabled, open, selectedId, accessDenied, acceptState, readGeneration, setPartial, setConnection })

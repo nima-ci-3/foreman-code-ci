@@ -4,6 +4,7 @@ import type { CiCommits } from './service.js'
 import { ciRepositoryCapabilities } from './repository.js'
 import { onlyCiInfrastructure } from './priority.js'
 import type { CiTestTree } from './resultCache.js'
+import { ResultKeyThread } from './resultKeyThread.js'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -16,7 +17,18 @@ const run = promisify(execFile)
 export class GitCiCommits implements CiCommits {
   private readonly published = new Map<string, Promise<void>>()
 
-  constructor(private readonly context: CiContext, private readonly git: GitWorktreePorts = context.platform.systemGitWorktreePorts()) {}
+  /** Result cache keys computed on a worker thread from the commit's tree (built code only). */
+  readonly resultKeys: CiCommits['resultKeys']
+
+  constructor(private readonly context: CiContext, private readonly git: GitWorktreePorts = context.platform.systemGitWorktreePorts()) {
+    if (ResultKeyThread.available()) {
+      const thread = new ResultKeyThread()
+      this.resultKeys = async (repository, commit, files, signal) => {
+        const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
+        return thread.keys(clone, commit, files, 60_000)
+      }
+    }
+  }
 
   async infrastructureOnly(repository: string, commit: string) {
     const signal = AbortSignal.timeout(30_000)

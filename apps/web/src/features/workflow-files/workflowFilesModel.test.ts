@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'vitest'
+import { formatFileSize } from '../../shared/ui/formatters'
 import type { FilePage, FileRow, PermanentFileScope } from '@foreman-code/contracts/files'
 import {
-  inheritedReferenceScope, referenceFileSize, referenceFilesKey, referenceFilesRoot, referenceScopeKey,
+  inheritedReferenceScope, referenceFilesKey, referenceFilesRoot, referenceScopeKey,
   visibleReferenceRows, workflowReferenceScope,
 } from './workflowFilesModel'
 
@@ -63,8 +64,8 @@ describe('reference file identity and presentation helpers', () => {
   })
   it('handles empty lists and formats bounded sizes without lifetime text', () => {
     assert.deepEqual(visibleReferenceRows(), [])
-    assert.equal(referenceFileSize(0), '0 B')
-    assert.equal(referenceFileSize(1024), '1 KiB')
-    assert.equal(referenceFileSize(25 * 1024 * 1024), '25.0 MiB')
+    assert.equal(formatFileSize(0), '0 B')
+    assert.equal(formatFileSize(1024), '1 KB')
+    assert.equal(formatFileSize(25 * 1024 * 1024), '25 MB')
   })
 })

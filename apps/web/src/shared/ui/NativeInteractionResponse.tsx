@@ -1,9 +1,8 @@
 import { asRecord } from '../records'
-import { useId, useState } from 'react'
+import { useState } from 'react'
 import { validateInteractionResponse, type ApprovalResponseOption, type InteractionResponseValue,
   type NativeInteractionInput } from '@foreman-code/contracts'
-import { Button } from './nocturne'
-import { approvalOptionScope } from './approvalOptionScope'
+import { InteractionOptionButton } from './InteractionOptionButton'
 import './nativeInteractionResponse.css'
 
 
@@ -120,7 +119,6 @@ export function NativeInteractionResponse({ options, disabled, onSelect }: {
   onSelect(optionId: string, response?: InteractionResponseValue): void
 }) {
   const input = options.find((option) => option.input)?.input
-  const scopeId = useId()
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [error, setError] = useState<string>()
   const update = (name: string, value: unknown) => {
@@ -145,13 +143,7 @@ export function NativeInteractionResponse({ options, disabled, onSelect }: {
     {input.kind === 'questions' ? <QuestionFields input={input} disabled={disabled} values={values} update={update} />
       : <FormFields input={input} disabled={disabled} values={values} update={update} />}
     {error ? <p role="alert">{error}</p> : null}
-    <div className="operator-approval-actions">{options.map((option) => {
-      const descriptionId = `${scopeId}-${encodeURIComponent(option.optionId)}`
-      return <div key={option.optionId} className="operator-approval-choice">
-        <Button size="sm" disabled={disabled} aria-describedby={descriptionId}
-          onClick={() => submit(option)}>{option.label}</Button>
-        <p id={descriptionId} className="operator-approval-scope">{option.scopeSummary} {approvalOptionScope(option)}</p>
-      </div>
-    })}</div>
+    <div className="operator-approval-actions">{options.map((option) =>
+      <InteractionOptionButton key={option.optionId} option={option} disabled={disabled} onSelect={() => submit(option)} />)}</div>
   </div>
 }

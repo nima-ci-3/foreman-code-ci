@@ -100,7 +100,7 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
     await copyFile(new URL('../../../packages/verification-runner/runtime-files.mjs', import.meta.url),
       join(origin, 'packages/verification-runner/runtime-files.mjs'))
     await mkdir(join(origin, 'packages/contracts/src'), { recursive: true })
-    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs']) {
+    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs', 'ciTestInventory.mjs']) {
       await copyFile(new URL(`../../../packages/contracts/src/${file}`, import.meta.url),
         join(origin, 'packages/contracts/src', file))
     }

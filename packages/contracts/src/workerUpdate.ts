@@ -1,3 +1,4 @@
+import { PACKAGE_MANAGER } from './packagePolicy.mjs'
 import { z } from 'zod'
 
 export const WORKER_UPDATE_NAMESPACE = 'worker-update-v1'
@@ -71,7 +72,7 @@ export const WorkerArtifactManifestSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/u),
   commit: z.string().regex(/^[a-f0-9]{40}$/u),
   lockfileSha256: digest,
-  packageManager: z.literal('pnpm@11.27.0'),
+  packageManager: z.literal(PACKAGE_MANAGER),
   protocolVersion: z.literal(1),
   identityFormat: z.literal(1),
   target: WorkerArtifactTargetSchema,

@@ -21,13 +21,21 @@ export interface CachedSelection {
 /** Splits an explicit affected selection into files an earlier passed ticket of the workspace proved with identical
  * inputs and files that must run. Any failure to compute keys runs every file. */
 export async function planCachedSelection(context: CiContext, pool: pg.Pool, input: { workspaceId: string; repository: string; commit: string
-  suite: string; files: readonly string[]; partOf(file: string): string; tree(signal: AbortSignal): Promise<CiTestTree> }): Promise<CachedSelection> {
+  suite: string; files: readonly string[]; partOf(file: string): string
+  /** Keys for the files (preferred, computed off the event loop), or the commit's tree to key them in process. */
+  keys?(files: { file: string; suite: string; part: string }[], signal: AbortSignal): Promise<Record<string, { key: string | null; reason?: string }>>
+  tree?(signal: AbortSignal): Promise<CiTestTree> }): Promise<CachedSelection> {
   const files = [...new Set(input.files)].sort()
   const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
   try {
     const keys = await Promise.race([
       (async () => {
+        if (input.keys) {
+          const keyed = await input.keys(files.map(file => ({ file, suite: input.suite, part: input.partOf(file) })), controller.signal)
+          return new Map(files.map(file => [file, keyed[file] ?? { key: null, reason: 'no key was computed' }] as const))
+        }
+        if (!input.tree) throw new Error('No result cache keys are available.')
         const graph = await CiResultKeys.create(await input.tree(controller.signal), controller.signal)
         const entries = await Promise.all(files.map(async file => [file, await graph.key(file, input.suite, input.partOf(file))] as const))
         return new Map(entries)

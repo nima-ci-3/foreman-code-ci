@@ -97,7 +97,7 @@ async function stageRelease({ source: buildSource, commit }, runBuild, previousR
     await copyVerificationRuntime(buildSource, release)
     const contractsSource = join(release, 'packages/contracts/src')
     await mkdir(contractsSource, { recursive: true })
-    for (const name of ['productEnvironment.mjs', 'installationNames.mjs', 'productionMaintenance.mjs', 'workerPublication.mjs']) {
+    for (const name of ['productEnvironment.mjs', 'installationNames.mjs', 'productionMaintenance.mjs', 'workerPublication.mjs', 'packagePolicy.mjs']) {
       await copyFile(join(buildSource, 'packages/contracts/src', name), join(contractsSource, name))
     }
     await mkdir(join(release, 'apps/worker/src'), { recursive: true })

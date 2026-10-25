@@ -47,12 +47,15 @@ it('serves device management through the existing authenticated API/MCP with den
     }
     const ownerClient = await connect(owner.token), readerClient = await connect(reader.token), scopedClient = await connect(scoped.token)
     const toolNames = ['device_main_identity_get', 'devices_list', 'device_pairing_grant_create', 'device_revoke']
-    expect((await ownerClient.listTools()).tools.map(tool => tool.name)).toEqual(expect.arrayContaining(toolNames))
+    // Device tools are reachable through discovery, not the always-loaded core list.
+    const discoverable = async (client: Client) => (decodeMcpToolResult(await client.callTool({ name: 'tools_find',
+      arguments: { query: 'device' } })) as { tools: { name: string }[] }).tools.map(tool => tool.name)
+    expect(await discoverable(ownerClient)).toEqual(expect.arrayContaining(toolNames))
     const capability = decodeMcpToolResult((await ownerClient.callTool({ name: 'operator_get_capabilities', arguments: { detail: 'full' } }))) as { tools: string[]; requirements: Array<{ name: string; actions: string[] }> }
     expect(capability.tools).toEqual(expect.arrayContaining(toolNames))
     expect(capability.requirements.find(item => item.name === 'device_revoke')?.actions).toEqual(['settings:update'])
-    expect((await readerClient.listTools()).tools.map(tool => tool.name)).not.toContain('device_revoke')
-    expect((await scopedClient.listTools()).tools.map(tool => tool.name)).not.toContain('devices_list')
+    expect(await discoverable(readerClient)).not.toContain('device_revoke')
+    expect(await discoverable(scopedClient)).not.toContain('devices_list')
     const denied = await readerClient.callTool({ name: 'device_revoke', arguments: { deviceId: randomUUID(), expectedRevision: 1, commandId: randomUUID() } })
     expect(denied.isError).toBe(true)
     expect((await pool.query("select count(*)::int as count from management_audit where principal_id=$1 and source='mcp' and action='device_revoke' and outcome='denied'", [reader.principal.id])).rows[0].count).toBe(1)
