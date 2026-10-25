@@ -9,7 +9,7 @@ import type { ConversationAttachments } from '../../attachments'
 import { ConversationViewport } from '../ConversationViewport'
 import { AgentChatComposer } from '../agentChat/AgentChatComposer'
 import { sameStructuredResult } from '../agentChat/structuredResult'
-import { useConversationDraftStore, prepareChatAttachments, type ChatAttachmentAttempt, deliveryAction } from '../../chat-core'
+import { useConversationDraftStore, prepareChatAttachments, type ChatAttachmentAttempt, deliveryAction, SessionContext, useSessionControls } from '../../chat-core'
 import { ChatDeliveryActions } from './ChatDeliveryActions'
 import { ChatDeliveryReceipts } from './ChatDeliveryReceipts'
 import { RetainedInput, RetainedInputsStatus, type DirectRecovery } from './RetainedDeliveryInputs'
@@ -38,6 +38,14 @@ export function ExecutionChatPanel(props: ExecutionChatPanelProps) {
 
 function ExecutionChatContent(props: ExecutionChatPanelProps) {
   const cache = useQueryClient(), serialized = JSON.stringify(props.target)
+  // The same context meter as an Agent chat, read for this exact Run execution.
+  const { agent } = props.target
+  const runId = props.target.kind === 'workflow_execution' ? props.target.execution.runId : undefined
+  const controlsContext = useMemo(() => runId ? { workspaceId: agent.workspaceId, workflowId: agent.workflowId,
+    workflowNodeId: agent.workflowNodeId, agentId: agent.agentId, runId } : undefined,
+  [agent.workspaceId, agent.workflowId, agent.workflowNodeId, agent.agentId, runId])
+  const sessionControls = useSessionControls(undefined, { workspaceId: props.target.agent.workspaceId, ...(controlsContext ? { context: controlsContext } : {}),
+    executionId: props.target.kind === 'workflow_execution' ? props.target.execution.executionId : undefined, enabled: !!controlsContext })
   const target = useMemo(() => JSON.parse(serialized) as ExecutionChatTarget, [serialized])
   const draftKey = executionChatDraftKey(target), inputRef = useRef<HTMLTextAreaElement>(null)
   const detailAbort = useRef(new AbortController())
@@ -117,7 +125,8 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
     <RetainedInput key={input.receiptId} input={input} {...retainedProps} />)}</>)}</>
   return <section className="agent-conversation" aria-label="Selected execution chat">
     {/* The Board's chat tab already names the Run attempt above this panel. */}
-    <header className="agent-chat-identity"><h2>{props.name}</h2></header>
+    <header className="agent-chat-identity"><h2>{props.name}</h2>
+      {controlsContext ? <div className="agent-chat-header-controls"><SessionContext controls={sessionControls} /></div> : null}</header>
     {state?.queueReason ? <p role="status">{executionQueueReasonLabel(state.queueReason)}</p> : null}
     {delivery.query.isPending ? <LoadingState label="Loading selected execution…" rows={2} /> : null}
     {delivery.query.isError ? <p role="alert">Could not refresh this execution. <Button onClick={delivery.refresh}>Retry</Button></p> : null}
@@ -131,7 +140,7 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
         target={target} source={props.source} onBrowse={onBrowse} onDenied={revoke} /></Fragment>)}
       {retainedAt(-1)}
     </>}</ConversationViewport>
-    <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'queued' || receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)}
+    <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)}
       onRefresh={delivery.refresh} />
     {pin.stale ? <Button onClick={pin.refresh}>Refresh target</Button> : null}
     {delivery.feedback ? <p role="alert">{delivery.feedback}</p> : null}

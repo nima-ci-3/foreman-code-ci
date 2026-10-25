@@ -13,6 +13,8 @@ export type WorkflowAuthoringActions = {
   saveChatAgent(nodeId: string): Promise<string | undefined>
   /** Moves draft nodes exactly as dragging them on the draft Board does. */
   moveNodes?(changes: GraphGeometryChange[]): void
+  /** Opens the latest saved workflow; the draft is kept separately. */
+  openSavedWorkflow?(): void
 }
 
 /** What the Board shows and selects: workflow, Run, inspection, side panel, view and navigation callbacks. */
@@ -65,6 +67,8 @@ export type WorkflowBoardHosts = {
 export type WorkflowBoardAuthoring = {
   openWorkflowSettings?(): void
   registerAuthoringActions?(actions?: WorkflowAuthoringActions): void
+  /** Opens the latest saved workflow; the draft is kept separately. */
+  openSavedWorkflow?(): void
   /** Present while the editable draft is mounted, so a draft-only Agent's chat can save that Agent first. */
   saveChatAgent?(nodeId: string): Promise<string | undefined>
   /** The draft node's Agent, also before the node is saved. */
