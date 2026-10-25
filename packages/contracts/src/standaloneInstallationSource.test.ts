@@ -4,7 +4,7 @@ import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY } from './packagePolicy.mjs'
 
 it('inlines installation names and the package policy into standalone installed files', async () => {
   // Installed Workers run raw copies of these files without node_modules; a policy import that stayed would not load.
-  const source = "import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY } from '@foreman-code/contracts/package-policy';\n"
+  const source = "import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY } from '@foreman-code/contracts/installation-names';\n"
     + "import { INSTALLATION_NAMES } from '../../contracts/src/installationNames.mjs'\n"
     + 'export const read = () => [PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, INSTALLATION_NAMES.environment]\n'
   const standalone = standaloneInstallationSource(source)

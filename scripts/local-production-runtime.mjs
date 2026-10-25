@@ -986,7 +986,7 @@ export async function stageProductionBrowserRuntime({ release, appRoot, nodeVers
 }
 
 /** Used only after systemctl stop; the checkpoint export independently rejects live native writers. */
-export function productionBrowserRuntimeLifecycle({ appRoot, stateDirectory, drainTimeoutMs = 120 * 60_000 }) {
+export function productionBrowserRuntimeLifecycle({ appRoot, stateDirectory, drainTimeoutMs = 120 * 60_000, cancelTimeoutMs = 120_000 }) {
   const runtimeRoot = join(appRoot, 'browser-runtime')
   const read = async release => {
     const info = await lstat(join(release, 'browser-runtime.json'))
@@ -1009,7 +1009,17 @@ export function productionBrowserRuntimeLifecycle({ appRoot, stateDirectory, dra
       if (!record || record.state === 'canceled') return
       if (record.commandId !== commandId) throw new Error('Another runtime update owns this drain.')
       try {
-        const result = await requestProductionBrowserDrain({ stateDirectory, operation: 'cancelDrain', commandId })
+        // A host that just started can be too busy to answer within one request's timeout; cancelling is idempotent.
+        const deadline = Date.now() + cancelTimeoutMs
+        let result
+        for (;;) {
+          try {
+            result = await requestProductionBrowserDrain({ stateDirectory, operation: 'cancelDrain', commandId })
+            break
+          } catch (error) {
+            if (error.code !== 'ETIMEDOUT' || Date.now() >= deadline) throw error
+          }
+        }
         if (result.state !== 'canceled') throw new Error('Browser admission recovery remains pending.')
       } catch (error) {
         if (!['ENOENT', 'ECONNREFUSED'].includes(error.code)) throw error
@@ -1063,7 +1073,7 @@ export async function requestProductionBrowserDrain({ stateDirectory, operation,
       settled = true; clearTimeout(timer); signal?.removeEventListener('abort', aborted); socket.destroy()
       if (error) reject(error); else resolve(value)
     }
-    const timer = setTimeout(() => finish(new Error('Browser host drain request timed out.')), timeoutMs)
+    const timer = setTimeout(() => finish(Object.assign(new Error('Browser host drain request timed out.'), { code: 'ETIMEDOUT' })), timeoutMs)
     const aborted = () => finish(signal.reason ?? new Error('Browser drain was canceled.'))
     signal?.addEventListener('abort', aborted, { once: true })
     socket.once('connect', () => socket.write(`${JSON.stringify({ operation, commandId })}\n`))

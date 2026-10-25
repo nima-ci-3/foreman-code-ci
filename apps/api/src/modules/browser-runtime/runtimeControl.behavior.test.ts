@@ -167,3 +167,28 @@ it.each(['ready', 'recovered'])('reconciles a retained drain from an already %s 
     expect(stop).not.toHaveBeenCalled()
   } finally { await control?.close(); await rm(directory, { recursive: true, force: true }) }
 })
+
+it('resumes browser admission after a release whose freshly started host answers slower than one request timeout', async () => {
+  // Production: the new host was busy starting up, the single 5 s cancel request timed out and the deploy rolled back.
+  const parent = join(homedir(), '.cache', 'foreman-tmp')
+  await mkdir(parent, { recursive: true, mode: 0o700 })
+  const directory = await mkdtemp(join(parent, 'browser-busy-cancel-'))
+  const stateDirectory = join(directory, 'state'), root = join(stateDirectory, 'browser')
+  await mkdir(root, { recursive: true, mode: 0o700 })
+  const installer = await import(new URL('../../../../../scripts/local-production-runtime.mjs', import.meta.url).href)
+  const host = { stopAdmission: vi.fn(), resumeAdmission: vi.fn(), activeSessionCount: () => 0,
+    closeIdleProfiles: async () => undefined }
+  let busy = false
+  let control: Awaited<ReturnType<typeof startBrowserRuntimeControl>> | undefined
+  try {
+    control = await startBrowserRuntimeControl(root, host, async () => {
+      if (busy) { busy = false; await new Promise(resolve => setTimeout(resolve, 5500)) }
+    }, error => { throw error })
+    await installer.requestProductionBrowserDrain({ stateDirectory, operation: 'beginDrain', commandId: 'update' })
+    busy = true
+    await installer.productionBrowserRuntimeLifecycle({ appRoot: join(directory, 'app'), stateDirectory })
+      .cancelDrain('update')
+    expect(control.draining()).toBe(false)
+    expect(host.resumeAdmission).toHaveBeenCalled()
+  } finally { await control?.close(); await rm(directory, { recursive: true, force: true }) }
+}, 20_000)

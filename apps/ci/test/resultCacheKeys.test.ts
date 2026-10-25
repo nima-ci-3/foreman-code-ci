@@ -163,3 +163,34 @@ it('keys tests that fork a repository file by URL or declare the inputs of artif
     expect(await keyOf(test!, { [input!]: 'export const changed = 2\n' })).not.toBe(first)
   }
 })
+
+it('keeps test keys when only CI code that cannot change a test outcome, a type-only import or the root version changes', async () => {
+  // Production: every commit touching any CI file reran all tests; nothing was ever served from the cache.
+  const files = { ...base,
+    'scripts/check-import-cycles.mjs': 'export const check = 1\n',
+    'scripts/ci-suite.sh': 'pnpm vitest run\n',
+    'apps/api/src/lib/shape.ts': 'export type Shape = { a: string }\nexport const shape = 1\n',
+    'apps/api/test/typed.test.ts': "import type { Shape } from '../src/lib/shape.js'\nexport const value: Shape = { a: 'a' }\n" }
+  const keyOf = async (changes: Record<string, string>, path = 'apps/api/test/label.test.ts') =>
+    (await (await CiResultKeys.create(tree({ ...files, ...changes }), AbortSignal.timeout(10_000))).key(path, 'unit', 'unit-api')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'scripts/check-import-cycles.mjs': 'export const check = 2\n' })).toBe(first)
+  expect(await keyOf({ 'package.json': JSON.stringify({ name: 'site', private: true, version: '0.0.2' }) })).toBe(first)
+  const typed = await keyOf({}, 'apps/api/test/typed.test.ts')
+  expect(await keyOf({ 'apps/api/src/lib/shape.ts': 'export type Shape = { a: string }\nexport const shape = 2\n' },
+    'apps/api/test/typed.test.ts')).toBe(typed)
+  // The script that runs the tests still changes every key.
+  expect(await keyOf({ 'scripts/ci-suite.sh': 'pnpm vitest run --pool=forks\n' })).not.toBe(first)
+})
+
+it('gives each test its own key although two tests import each other', async () => {
+  // Production: tests whose closures reached each other shared one key, and recording their proofs failed
+  // ("ON CONFLICT DO UPDATE command cannot affect row a second time"), so no proof was ever stored.
+  const keys = await CiResultKeys.create(tree({ ...base,
+    'apps/api/test/one.test.ts': "import './two.test.js'\nexport const one = 1\n",
+    'apps/api/test/two.test.ts': "import './one.test.js'\nexport const two = 2\n" }), AbortSignal.timeout(10_000))
+  const one = (await keys.key('apps/api/test/one.test.ts', 'unit', 'unit-api')).key
+  expect(one).toMatch(/^[a-f0-9]{64}$/)
+  expect((await keys.key('apps/api/test/two.test.ts', 'unit', 'unit-api')).key).not.toBe(one)
+})

@@ -1,6 +1,6 @@
 import { isBuiltin } from 'node:module'
 import { posix } from 'node:path'
-import { ciCodeFile, ciExportSource, ciInfrastructureFile, importSpecifiers, resolveImport } from '@foreman-code/contracts/ci-import-graph'
+import { ciCodeFile, ciExportSource, importSpecifiers, resolveImport } from '@foreman-code/contracts/ci-import-graph'
 import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
 
 /** Bump when the key inputs or the doubt rules change, so earlier passes stop matching. */
@@ -32,6 +32,21 @@ interface Analysis {
 const ANALYSES_MAX = 50_000
 /** By blob and extension: a blob's imports never change. */
 const analyses = new Map<string, Analysis>()
+
+/**
+ * Files that run tests and report their results, wherever a test lives: the suite script and what it runs, the test
+ * runners and reporters, result parsing and collection, and the CI workflows. Their imports join every key too.
+ * Other CI code (selection, admission, planning, Main's result collection, lint checks) cannot change a test's
+ * outcome; a test that uses it imports it and is keyed on it like any other code.
+ */
+const TEST_EXECUTION_FILES = [
+  /^scripts\/(?:ci-suite\.sh|ci-user-systemd\.sh|ci-affected-run\.mjs|ci-files\.mjs|ci-unit-files\.mjs|ci-test-results\.mjs|ci-node-test-reporter\.mjs|ci-progress-reporter\.mjs|ci-package-paths\.mjs|ci-packages\.mjs|ci-contracts\.mjs|ci-watchdog\.mjs|ci-remote\.mjs|heavy-job\.mjs|test-command\.mjs|test-db\.mjs|test-integration[^/]*\.mjs|test-resources[^/]*\.mjs|integration-[^/]+\.mjs|vitest-[^/]+\.mjs)$/,
+  /^packages\/contracts\/ci-test-runner\.mjs$/,
+  /^packages\/ci-protocol\/src\//,
+  /^(?:\.github\/workflows|\.circleci)\//,
+]
+/** A project's own run configuration: its manifest, TypeScript and Vitest configs (setup files follow from the config). */
+const PROJECT_CONFIG = /(?:^|\/)(?:package\.json|tsconfig[^/]*\.json|vitest\.config\.[cm]?[jt]s)$/
 
 const DOUBTS: [RegExp, string][] = [
   [/import\.meta\.glob/, 'imports a glob'],
@@ -182,8 +197,11 @@ function boundedTree(tree: CiTestTree, signal: AbortSignal): CiTestTree {
   } }
 }
 
-function analyze(path: string, text: string): Analysis {
+function analyze(path: string, source: string): Analysis {
   const css = path.endsWith('.css')
+  // Type-only imports are erased before tests run; they cannot change a unit or integration result.
+  const text = css ? source : source.replace(/^[ \t]*(?:import|export)[ \t]+type\b[^;'"]*?\bfrom[ \t]*['"][^'"\n]+['"]/gm,
+    statement => statement.replace(/[^\n]/g, ' '))
   const data = css || path.endsWith('.json')
   const code = data ? new Uint8Array(0) : codeMask(text)
   // CSS imports name their files like JS imports; one that names no literal could load anything.
@@ -223,6 +241,8 @@ function exportsOf(manifests: { path: string; value: Record<string, unknown> }[]
 interface SharedGraph {
   resolvedEdges: Map<string, Promise<string[]>>; harness: Map<string, Promise<Set<string>>>
   environments: Map<string, string[]>; directories: Set<string>
+  /** Content identities that replace a file's blob in keys (the root manifest without its release version). */
+  identities: Map<string, string>
 }
 
 /** Conservative input keys for test files of one commit: a file's key changes whenever anything it can observe
@@ -235,6 +255,7 @@ export class CiResultKeys {
   private readonly harness: Map<string, Promise<Set<string>>>
   private readonly environments: Map<string, string[]>
   private readonly directories: Set<string>
+  private readonly identities: Map<string, string>
 
   private constructor(private readonly source: CiTestTree, private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
     private readonly workspacePackages: ReadonlyMap<string, { directory: string; exports: Record<string, unknown> }>,
@@ -244,6 +265,7 @@ export class CiResultKeys {
     this.harness = shared?.harness ?? new Map()
     this.environments = shared?.environments ?? new Map()
     this.directories = shared?.directories ?? new Set()
+    this.identities = shared?.identities ?? new Map()
     if (shared) return
     for (const path of tree.blobs.keys()) {
       const parts = path.split('/')
@@ -272,13 +294,18 @@ export class CiResultKeys {
     // Every workspace package resolves through its own exports to its sources, as tests run them.
     const workspacePackages = new Map(manifests.flatMap(manifest => typeof manifest.value.name === 'string'
       ? [[manifest.value.name, { directory: posix.dirname(manifest.path), exports: exportsOf(manifests, manifest.path) }] as const] : []))
-    return new CiResultKeys(input, tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
+    const keys = new CiResultKeys(input, tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
+    // A release only bumps the root manifest's version, which no test reads; it must not invalidate every proof.
+    const root = manifests.find(manifest => manifest.path === 'package.json')
+    if (root) keys.identities.set('package.json', `version-free:${sha256Hex(JSON.stringify({ ...root.value, version: null }))}`)
+    return keys
   }
 
   /** The same commit's keys under another deadline, for a graph that outlives the work that built it. */
   bounded(signal: AbortSignal) {
     return new CiResultKeys(this.source, boundedTree(this.source, signal), this.exports, this.workspacePackages, this.packages, signal,
-      { resolvedEdges: this.resolvedEdges, harness: this.harness, environments: this.environments, directories: this.directories })
+      { resolvedEdges: this.resolvedEdges, harness: this.harness, environments: this.environments, directories: this.directories,
+        identities: this.identities })
   }
 
   /** The file's key for the suite and part, or null with the reason it must run. */
@@ -290,8 +317,10 @@ export class CiResultKeys {
       const harness = await this.harnessFiles(project, environment)
       const own = await this.closure([file], true)
       const paths = [...new Set([...environment, ...harness, ...own])].sort()
-      return { key: sha256Hex(JSON.stringify([CI_RESULT_CACHE_VERSION, suite, part,
-        paths.map(path => [path, this.tree.blobs.get(path)])])) }
+      // The file is part of its key: tests whose closures reach each other cover the same paths, and one proof per
+      // key would otherwise stand for several files.
+      return { key: sha256Hex(JSON.stringify([CI_RESULT_CACHE_VERSION, suite, part, file,
+        paths.map(path => [path, this.identities.get(path) ?? this.tree.blobs.get(path)])])) }
     } catch (error) {
       if (error instanceof CacheDoubt) return { key: null, reason: error.message }
       throw error
@@ -313,12 +342,8 @@ export class CiResultKeys {
     return [...this.tree.blobs.keys()].filter(path => {
       if (/\.md$/i.test(path)) return false
       if (!path.includes('/')) return true
-      if (ciInfrastructureFile(path)) {
-        // The CI package was part of the API before it moved to apps/ci; API tests still exercise it.
-        return ['scripts/', '.github/', '.circleci/', `${project}/`, 'packages/contracts/',
-          ...project === 'apps/api' ? ['apps/ci/'] : []].some(prefix => path.startsWith(prefix))
-      }
-      return path.startsWith(`${project}/`) && !ciCodeFile.test(path)
+      if (TEST_EXECUTION_FILES.some(pattern => pattern.test(path))) return true
+      return path.startsWith(`${project}/`) && (!ciCodeFile.test(path) || PROJECT_CONFIG.test(path))
     })
   }
 
