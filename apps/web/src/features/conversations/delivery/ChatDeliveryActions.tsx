@@ -1,7 +1,7 @@
 import type { ChatDeliveryIntent } from '@foreman-code/contracts'
 import { deliveryAction, type DeliveryPresentation } from '../../chat-core'
 import { ArrowUp, Square, X } from 'lucide-react'
-import { IconButton, Select, Tooltip } from '../../../shared/ui/nocturne'
+import { DropdownMenu, IconButton, Tooltip } from '../../../shared/ui/nocturne'
 
 /** Selecting an intent never submits. The primary button and composer Enter share one action. */
 export function ChatDeliveryActions({ presentation, intent, onIntentChange, onSubmit, pending, empty, reason,
@@ -28,11 +28,9 @@ export function ChatDeliveryActions({ presentation, intent, onIntentChange, onSu
   // Icon controls that sit inside the composer box; why sending is blocked shows in the composer itself.
   return <div className="chat-delivery-actions" role="group" aria-label="Message delivery">
     {/* Keep a chosen mode visible after settlement so it can be reset without losing the draft. */}
-    {presentation.state === 'active' || intent !== 'auto' ? <Select label="Delivery action" value={intent} options={options} disabled={pending}
-      onChange={event => {
-        const selected = options.find(option => option.value === event.target.value)
-        if (selected) onIntentChange(selected.value)
-      }} /> : null}
+    {presentation.state === 'active' || intent !== 'auto' ? <DropdownMenu label="Delivery action" disabled={pending}
+      trigger={options.find(option => option.value === intent)?.label ?? 'Automatic'} checkedId={intent}
+      items={options.map(option => ({ id: option.value, label: option.label, onSelect: () => onIntentChange(option.value) }))} /> : null}
     {onCancelQueued && queueCount > 0 ? <Tooltip content={controlsReason ?? `Cancel queued messages (${queueCount})`}>
       <IconButton label={`Cancel queued messages (${queueCount})`} variant="ghost" disabled={pending || !!controlsReason}
         onClick={onCancelQueued}><X size={14} aria-hidden="true" /></IconButton></Tooltip> : null}

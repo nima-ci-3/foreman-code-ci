@@ -46,7 +46,7 @@ function ShellFixture({ slots, captureNavigation }: { slots?: WorkflowCollaborat
       <Button onClick={() => void selectedRun.selectRun('run-b')}>Select Run B</Button>
       <Button onClick={() => void selectedRun.selectRun(null)}>Return to draft</Button>
     </nav>
-    <main aria-label="Board canvas">{side.view === 'overview' ? 'Overview is not available yet.' : 'Editing surface'}
+    <main aria-label="Board canvas">Editing surface
       <p>{readback.messages[0]!.content}</p>
     </main>
     <WorkflowSidePanel scope={side.scope} workspaceId="workspace" workflowId="workflow" opener={side.opener} runId={resolved.run?.runId}

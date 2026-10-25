@@ -69,3 +69,18 @@ jobs:
           key: contracts-build-${{ runner.os }}-${{ steps.cache-inputs.outputs.contracts }}
       - run: corepack pnpm --filter @foreman-code/contracts build
       - run: corepack pnpm --filter @foreman-code/contracts-node build
+      # TypeScript build info and ESLint content caches for snapshot runs. Caches saved on the default branch are the
+      # only ones every immutable ci-snapshot ref can restore, so snapshot typecheck and lint start from main's state
+      # and re-check only what changed since. The checks' own result does not matter here.
+      - name: Typecheck and lint state for snapshot runs
+        continue-on-error: true
+        run: corepack pnpm typecheck && corepack pnpm lint
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            apps/*/node_modules/.cache/tsc
+            apps/*/node_modules/.cache/eslint
+            packages/*/node_modules/.cache/tsc
+            packages/*/node_modules/.cache/eslint
+          key: suite-state-v1-${{ runner.os }}-node22.23.2-${{ steps.cache-inputs.outputs.packages }}-${{ github.sha }}

@@ -3,7 +3,7 @@ import type { MemoryChange } from '../../memory-boards'
 
 /** One card an Agent just changed. The card shows who changed it for SHOW_MS; a light travels from the
  * Agent's node to the Kanban while pulsing. Local interaction state, never shared or saved. */
-export type KanbanCardActivity = { key: string; cardId: string; agent: string; nodeId?: string; startsAt: number; pulsing: boolean }
+export type KanbanCardActivity = { key: string; cardId: string; agent: string; nodeId?: string; status?: string; startsAt: number; pulsing: boolean }
 const SHOW_MS = 8000, PULSE_MS = 3600
 
 export const useKanbanActivity = create<{ items: Record<string, readonly KanbanCardActivity[]> }>(() => ({ items: {} }))
@@ -19,8 +19,10 @@ export function reportKanbanActivity(scope: string, change: MemoryChange, nodes:
   if (change.entity !== 'card' || change.actor.kind === 'operator') return
   const running = nodes.filter((node) => node.agentId === change.actor.id)
   const nodeId = change.provenance?.subject?.agent.workflowNodeId ?? (running.length === 1 ? running[0]!.id : undefined)
+  // The light lands on the column the card is in after the change.
+  const status = change.changes?.status?.after
   const item: KanbanCardActivity = { key: change.id, cardId: change.entityId, agent: change.actor.displayName,
-    ...(nodeId ? { nodeId } : {}), startsAt: performance.now(), pulsing: true }
+    ...(nodeId ? { nodeId } : {}), ...(typeof status === 'string' ? { status } : {}), startsAt: performance.now(), pulsing: true }
   update(scope, (items) => [...items.filter((old) => old.cardId !== item.cardId), item])
   setTimeout(() => update(scope, (items) => items.map((old) => old.key === item.key ? { ...old, pulsing: false } : old)), PULSE_MS)
   setTimeout(() => update(scope, (items) => items.filter((old) => old.key !== item.key)), SHOW_MS)

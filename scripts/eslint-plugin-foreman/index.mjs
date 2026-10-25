@@ -6,6 +6,7 @@ import { pendingSqlTextTests } from './pendingSqlTextTests.mjs'
 import { readFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -295,7 +296,12 @@ const rules = {
     })),
 }
 
-export const plugin = { meta: { name: 'eslint-plugin-foreman' }, rules }
+// ESLint serializes plugin metadata, not rule bodies, when validating its content cache.
+const version = createHash('sha256')
+  .update(readFileSync(new URL('./index.mjs', import.meta.url)))
+  .update(readFileSync(new URL('./pendingSqlTextTests.mjs', import.meta.url)))
+  .update(readFileSync(new URL('../lint-allowlist.mjs', import.meta.url))).digest('hex')
+export const plugin = { meta: { name: 'eslint-plugin-foreman', version }, rules }
 
 const tests = ['**/*.test.*', '**/*.spec.*', '**/test/**', '**/tests/**', '**/__tests__/**']
 
