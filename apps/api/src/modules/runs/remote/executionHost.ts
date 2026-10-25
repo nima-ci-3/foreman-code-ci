@@ -611,15 +611,21 @@ export class RemoteExecutionHost {
       const status = await this.ports.journal.status(resident.intent.operationId)
       const settled = { stopFence: status.status === 'known' && status.receipt.stopFence }
       if (status.status === 'known' && status.receipt.terminal) return settled
-      const history = resident.settlementHistory ?? resident.workflowHistory ?? await resident.manager.reconcile(resident.session, correlationId)
+      // After a result repair the journal owns the corrective turn; Stop settles it, not the replaced original.
+      const owned = status.status === 'known' ? status.receipt.turnInput?.correlationId : undefined
+      const correlation = owned && correlationId === `execution:${resident.intent.executionId}` ? owned : correlationId
+      const cached = resident.settlementHistory
+        && (resident.settlementHistory.terminalTurn?.correlationId ?? resident.settlementHistory.correlationId) === correlation
+        ? resident.settlementHistory : undefined
+      const history = cached ?? resident.workflowHistory ?? await resident.manager.reconcile(resident.session, correlation)
       // Preserve the actual last provider snapshot before a closure producer removes its runtime.
-      if (history.terminalTurn?.correlationId === correlationId || (history.correlationId === correlationId && history.terminalResult)) resident.settlementHistory = structuredClone(history)
+      if (history.terminalTurn?.correlationId === correlation || (history.correlationId === correlation && history.terminalResult)) resident.settlementHistory = structuredClone(history)
       if (status.status === 'known' && status.receipt.turnInput?.deferSettlement
         && !status.receipt.outputValidationComplete && !status.receipt.stopFence) return settled
       const evidence = resident.settlementEvidence ?? await this.ports.settle(resident.intent, history, resident)
       const retained = await this.ports.journal.status(resident.intent.operationId)
       if (retained.status === 'known' && retained.receipt.retainedReviewer
-        && correlationId === retained.receipt.turnInput?.correlationId) resident.workflowHistory = structuredClone(history)
+        && correlation === retained.receipt.turnInput?.correlationId) resident.workflowHistory = structuredClone(history)
       if (evidence) {
         resident.settlementHistory = structuredClone(history)
         resident.settlementEvidence = structuredClone(evidence)
