@@ -138,6 +138,11 @@ describe('Worker output validation', () => {
         { timeoutMs: 2000, description: 'corrective turn submitted' })
       const current = await f.journal.status(f.intent.operationId)
       if (current.status !== 'known') throw new Error('Expected the corrective turn')
+      // Stop interrupts the corrective turn; the replaced original keeps its own earlier terminal.
+      f.cancel.mockImplementation(async () => {
+        f.history.terminalTurn = { correlationId, providerId: `turn-${correlationId}`, result: { outcome: 'canceled' } }
+        return true
+      })
       await f.call('control', { command: { schemaVersion: 1, protocolVersion: 1, commandId: 'stop-correction',
         operationId: f.intent.operationId, attemptId: f.intent.attemptId, executionId: f.intent.executionId,
         bindingHash: f.intent.bindingHash, owner: f.intent.owner, native: current.receipt.native, action: { kind: 'stop' } } })
