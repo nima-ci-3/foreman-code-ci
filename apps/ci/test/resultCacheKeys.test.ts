@@ -94,3 +94,25 @@ it('still refuses a key when tested code loads a module whose path names nothing
     'apps/api/test/loader.test.ts': "import { load } from '../src/loader.js'\nexport const value = load\n" }), AbortSignal.timeout(10_000))
   expect(await keys.key('apps/api/test/loader.test.ts', 'unit', 'unit-api')).toMatchObject({ key: null })
 })
+
+it('keys tests whose helpers read sibling files and run system tools, and follows the files they read', async () => {
+  // Production: any import.meta.url or child_process in a test helper left every test using it unkeyed (434 files).
+  const files = { ...base,
+    'apps/api/test/fixtures/server.cjs': 'module.exports = 1\n',
+    'apps/api/test/fixtures/helpers.ts': "import { execFileSync } from 'node:child_process'\nimport { readFileSync } from 'node:fs'\n"
+      + "export const source = () => readFileSync(new URL('./server.cjs', import.meta.url), 'utf8')\n"
+      + "export const head = (cwd: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' })\n",
+    'apps/api/test/helpers.test.ts': "import { source } from './fixtures/helpers.js'\nexport const value = source\n" }
+  const keyOf = async (changed: Record<string, string>) => (await (await CiResultKeys.create(tree({ ...files, ...changed }),
+    AbortSignal.timeout(10_000))).key('apps/api/test/helpers.test.ts', 'unit', 'unit-api')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'apps/api/test/fixtures/server.cjs': 'module.exports = 2\n' })).not.toBe(first)
+})
+
+it('still refuses a key when a test helper starts a process it names by a computed path', async () => {
+  const keys = await CiResultKeys.create(tree({ ...base,
+    'apps/api/test/fixtures/run.ts': "import { spawn } from 'node:child_process'\nexport const run = (binary: string) => spawn(binary, [])\n",
+    'apps/api/test/run.test.ts': "import { run } from './fixtures/run.js'\nexport const value = run\n" }), AbortSignal.timeout(10_000))
+  expect(await keys.key('apps/api/test/run.test.ts', 'unit', 'unit-api')).toMatchObject({ key: null })
+})

@@ -120,7 +120,9 @@ export class GitCiCommits implements CiCommits {
       if (!id) throw new Error(`The CI commit has no file ${path}.`)
       const blob = await this.git.git(['cat-file', 'blob', id], { cwd: clone,
         signal: AbortSignal.any([readSignal, AbortSignal.timeout(30_000)]) })
-      if (blob.code !== 0) throw new Error(`Could not read ${path} from the CI commit.`)
+      if (blob.code !== 0) {
+        throw new Error(`Could not read ${path} from the CI commit (git exit ${blob.code}: ${blob.stderr.trim().slice(0, 200)}).`)
+      }
       return blob.stdout
     } }
   }

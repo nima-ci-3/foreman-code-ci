@@ -100,7 +100,8 @@ test('a clean gate releases HEAD with every gate ticket recorded and pushes it',
   assert.equal(result.status, 0, result.output)
   const started = main.calls.filter(call => call.name === 'ci_run').map(call => call.arguments)
   assert.deepEqual(started.map(value => [value.suite, value.scope, value.commit, value.gate, value.priority, value.commandId]),
-    [['integration', 'full', tested, true, 'high', `gate-${tested}`]])
+    // The default release gate is proven (owner 2026-10-25): files with a passing result at their inputs are skipped.
+    [['integration', 'affected', tested, true, 'high', `gate-${tested}`]])
   assert.equal(git('log', '-1', '--format=%s'), 'Release v1.1.0')
   assert.equal(git('rev-parse', 'HEAD^'), tested)
   assert.equal(git('rev-parse', 'origin/main'), git('rev-parse', 'HEAD'))

@@ -1762,8 +1762,9 @@ export class HostCiService {
   }
 
   private async dispatchOnce() {
-    // Once per service start, in the background: record the files that finished parts already proved.
-    this.backfillingResults ??= this.context.platform.withoutCiDatabasePriority(() => this.backfillResultCache())
+    // Once per service start, in the background and after startup settles: record the files finished parts proved.
+    this.backfillingResults ??= new Promise(resolve => setTimeout(resolve, 120_000).unref())
+      .then(() => this.context.platform.withoutCiDatabasePriority(() => this.backfillResultCache()))
       .catch(error => this.context.log.warn({ err: error }, 'CI result cache backfill failed'))
     const snapshots: PolicySnapshots = new Map()
     this.cleaningTickets ??= this.context.platform.withoutCiDatabasePriority(() => this.cancelObsoleteTickets())
