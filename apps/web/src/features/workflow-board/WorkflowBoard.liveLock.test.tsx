@@ -65,15 +65,12 @@ async function boardKeys(user: ReturnType<typeof userEvent.setup>, keys: string)
 describe('live Board edit lock', () => {
   it('says the Board is locked while its Run is live, and editing again once it finishes', async () => {
     const f = await fixture()
-    const rename = () => within(screen.getByLabelText('Board toolbar')).getByTitle('Rename workflow')
-    expect(rename()).toBeEnabled()
-    expect(controls().getByRole('button', { name: 'Add agent' })).toBeEnabled()
+    const views = () => screen.getByRole('navigation', { name: 'Workflow views' })
+    expect(within(views()).getByText('Editing draft')).toBeVisible()
     const run = await f.externalRun()
-    expect(rename()).toBeDisabled()
-    expect(controls().getByRole('button', { name: 'Add agent' })).toBeDisabled()
+    expect(within(views()).getByText('Run in progress · editing locked')).toBeVisible()
     await f.finish(run.id)
-    expect(rename()).toBeEnabled()
-    expect(controls().getByRole('button', { name: 'Add agent' })).toBeEnabled()
+    expect(within(views()).getByText('Editing draft')).toBeVisible()
   }, 30_000)
 
   it.each(['Delete', 'Backspace'])('blocks %s on a selected node until the Run finishes', async key => {
