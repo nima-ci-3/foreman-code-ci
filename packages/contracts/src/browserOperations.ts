@@ -16,7 +16,9 @@ export const BrowserActorSchema = z.object({ kind: z.enum(['agent', 'viewer']), 
   { message: 'A viewer action requires its viewer identity.' });
 export const BrowserPageGestureSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pointer'), phase: z.enum(['move', 'down', 'up']), x: z.number(), y: z.number(),
-    button: z.number().int(), buttons: z.number().int() }).strict(),
+    button: z.number().int(), buttons: z.number().int(),
+    // Double-click selection and Ctrl/Shift-click: CDP clickCount and modifier bits (Alt 1, Ctrl 2, Meta 4, Shift 8).
+    clickCount: z.number().int().min(1).max(3).optional(), modifiers: z.number().int().min(0).max(15).optional() }).strict(),
   z.object({ kind: z.literal('wheel'), x: z.number(), y: z.number(), deltaX: z.number(), deltaY: z.number() }).strict(),
   z.object({ kind: z.literal('key'), phase: z.enum(['down', 'up']), key: z.string(), code: z.string(),
     alt: z.boolean(), control: z.boolean(), meta: z.boolean(), shift: z.boolean(), repeat: z.boolean() }).strict(),

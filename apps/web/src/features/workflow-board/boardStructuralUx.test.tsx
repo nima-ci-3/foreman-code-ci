@@ -66,7 +66,7 @@ it('shows immutable saved Settings with a direct transition to edit the same cur
   const settings = await screen.findByRole('region', { name: 'Saved Agent settings' })
   expect(await within(settings).findByLabelText('Saved Agent configuration')).toHaveTextContent(owner.version.agentConfigurationVersionIds[fixture.first.agentId]!)
   expect(within(settings).getByLabelText('Saved node settings')).toHaveTextContent(fixture.first.id)
-  await userEvent.click(within(settings).getByRole('button', { name: 'Edit current workflow' }))
+  await userEvent.click(within(settings).getByRole('button', { name: 'Change settings for the next Run' }))
   await waitFor(() => expect(router.state.location.search.runId).toBeUndefined())
   expect(router.state.location.search).toMatchObject({ boardNodeId: fixture.first.id, boardAgentTab: 'settings' })
 }, 15_000)

@@ -1,9 +1,11 @@
 import { isAutoJobSpecRecord, type JobDefinitionSpecRecord, type JobAcceptedSpecRecord } from '@foreman-code/contracts/job-verification'
 import { jobQueueHasExecution, type JobPlacementIntent, type JobQueueTicket } from '@foreman-code/contracts/job-admission'
 import { CodeBlock } from '../../shared/ui/nocturne'
+import { useComputerName } from '../../shared/api/computerActivity'
 import { jobNetworkLabel, queueLabel } from './model'
 
 export function JobQueueFacts({ ticket }: { ticket: JobQueueTicket }) {
+  const computerName = useComputerName()
   const awaitingAssignment = ticket.placement.kind === 'auto' && ['waiting', 'blocked'].includes(ticket.state)
   const accepted = jobQueueHasExecution(ticket)
   let computer = ticket.reservationId ? 'Computer reserved; concrete facts appear in the accepted execution' : 'Not assigned'
@@ -11,11 +13,11 @@ export function JobQueueFacts({ ticket }: { ticket: JobQueueTicket }) {
   if (awaitingAssignment) computer = 'Waiting for an eligible computer'
   if (ticket.placement.kind === 'explicit') {
     const { target } = ticket.placement
-    computer = target.labelAtAcceptance ?? (target.hostRef.kind === 'device' ? target.hostRef.deviceId : 'Main computer')
+    computer = target.labelAtAcceptance ?? computerName(target) ?? (target.hostRef.kind === 'device' ? target.hostRef.deviceId : 'Main computer')
   }
   if (ticket.selectedComputer) {
     const { target } = ticket.selectedComputer
-    computer = target.labelAtAcceptance ?? (target.hostRef.kind === 'device' ? target.hostRef.deviceId : 'Main computer')
+    computer = target.labelAtAcceptance ?? computerName(target) ?? (target.hostRef.kind === 'device' ? target.hostRef.deviceId : 'Main computer')
   }
   return <dl className="job-facts">
     <dt>Job</dt><dd>{ticket.definition.name}</dd>
@@ -25,8 +27,8 @@ export function JobQueueFacts({ ticket }: { ticket: JobQueueTicket }) {
     <dt>Request</dt><dd>{ticket.id}</dd>
     <dt>Queue status</dt><dd>{queueLabel(ticket)}</dd>
     {ticket.placement.kind === 'prefer' && <>
-      <dt>Preferred computer</dt><dd>{ticket.placement.hostRef.kind === 'device'
-        ? ticket.placement.hostRef.deviceId : `Main computer (${ticket.placement.hostRef.mainId})`}</dd>
+      <dt>Preferred computer</dt><dd>{computerName(ticket.placement) ?? (ticket.placement.hostRef.kind === 'device'
+        ? ticket.placement.hostRef.deviceId : `Main computer (${ticket.placement.hostRef.mainId})`)}</dd>
       <dt>Fallback policy</dt><dd>Then try eligible computers in build priority order.</dd>
     </>}
     <dt>{accepted ? 'Accepted computer' : 'Computer assignment'}</dt><dd>{computer}</dd>
@@ -54,6 +56,7 @@ export function JobSpecFacts({ spec, placementOverride }: {
   placementOverride?: JobPlacementIntent
 }) {
   const policy = spec.policy
+  const computerName = useComputerName()
   let target = isAutoJobSpecRecord(spec) ? undefined : spec.target
   if (placementOverride) {
     target = placementOverride.kind === 'explicit' ? placementOverride.target : undefined
@@ -61,7 +64,7 @@ export function JobSpecFacts({ spec, placementOverride }: {
   return <div className="job-spec">
     <h3>Exact command</h3><CodeBlock code={JSON.stringify(spec.argv)} language="json" />
     <dl className="job-facts">
-      <dt>Computer</dt><dd>{target ? target.labelAtAcceptance ?? (target.hostRef.kind === 'device' ? target.hostRef.deviceId : 'Main computer') : 'Auto · highest-priority eligible computer'}</dd>
+      <dt>Computer</dt><dd>{target ? target.labelAtAcceptance ?? computerName(target) ?? (target.hostRef.kind === 'device' ? target.hostRef.deviceId : 'Main computer') : 'Auto · highest-priority eligible computer'}</dd>
       <dt>Validated root</dt><dd>{target?.destination.canonicalProjectRoot ?? 'Resolved at Start'}</dd>
       <dt>Working directory</dt><dd>{spec.relativeCwd ?? '(materialized repository root)'}</dd>
       <dt>Source commit</dt><dd>{spec.source.commit}</dd>

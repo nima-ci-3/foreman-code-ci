@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, expect, it } from 'vitest'
 import { server } from '../../mocks/server'
+import { seedComputerNames } from '../../shared/api/computerNames.testSupport'
 import { PinnedProviderAccount } from './PinnedProviderAccount'
 import { accountBinding, observedAccount } from './providerAccounts.fixtures'
 
@@ -67,4 +68,12 @@ it('says an unrecorded account is not recorded without the retained-profile assu
   render(<QueryClientProvider client={client}><PinnedProviderAccount /></QueryClientProvider>)
   expect(screen.getByText(/Saved account: not recorded/)).toBeVisible()
   expect(screen.queryByText(/The saved native profile is retained/)).not.toBeInTheDocument()
+})
+
+it('names the saved account computer instead of showing its device ID', async () => {
+  const binding = accountBinding()
+  server.use(http.get('/api/provider-accounts/:id', () => HttpResponse.json({ ...observedAccount(), isDefault: false })))
+  mount()
+  act(() => seedComputerNames(clients.at(-1)!, binding.target.hostRef.mainId, [{ hostRef: binding.target.hostRef, name: 'Office laptop' }]))
+  expect(await screen.findByText('Office laptop')).toBeVisible()
 })

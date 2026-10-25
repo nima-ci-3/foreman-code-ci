@@ -100,7 +100,7 @@ it.each(['execution', 'coordinator'] as const)('pins the resolved %s before moun
   expect(pins.has(kind === 'execution' ? 'waitingActivationId' : 'executionId')).toBe(false)
 })
 
-it('requires an explicit Run and execution choice and never follows a successor on refresh', async () => {
+it('requires an explicit Run choice, opens its attempt and never follows a successor on refresh', async () => {
   const wire = install({ kind: 'run_selection_required', items: [{ runId: 'run', workflowVersionId: 'version' }],
     revision: 1, nextCursor: null, hasMore: false })
   const cache = mount()
@@ -110,14 +110,12 @@ it('requires an explicit Run and execution choice and never follows a successor 
   if (choice.kind !== 'selected') throw new Error('Expected selected fixture')
   const candidate = { target: choice.target, agent: choice.agent, workflowVersionId: choice.workflowVersionId,
     source: choice.source, state: choice.state }
-  wire.controls.resolution = { kind: 'selection_required', items: [candidate], revision: 1, nextCursor: null, hasMore: false }
+  let pinned: WorkflowExecutionChatResolution = choice
+  server.use(http.get(`${base}/target`, ({ request }) => HttpResponse.json(new URL(request.url).searchParams.get('executionId')
+    ? pinned : { kind: 'selection_required', items: [candidate], revision: 1, nextCursor: null, hasMore: false })))
   fireEvent.click(screen.getByRole('button', { name: 'Run run' }))
-  await screen.findByRole('button', { name: 'Execution execution · Attempt 1' })
-  expect(wire.reads).toEqual([])
-  wire.controls.resolution = choice
-  fireEvent.click(screen.getByRole('button', { name: 'Execution execution · Attempt 1' }))
   await screen.findByText('Working on the task.')
-  wire.controls.resolution = selected({ ...executionTarget,
+  pinned = selected({ ...executionTarget,
     execution: { ...fixture.execution, executionId: 'successor', activationId: 'successor-activation' } })
   await act(async () => { await cache.invalidateQueries({ queryKey: [...executionChatScopeKey(scope), 'selection'] }) })
   expect(await screen.findByRole('alert')).toHaveTextContent('another saved selection')
@@ -126,22 +124,59 @@ it('requires an explicit Run and execution choice and never follows a successor 
   expect(screen.queryByRole('region', { name: 'Execution conversation' })).not.toBeInTheDocument()
 })
 
-it('requires an explicit attempt choice for a finished Run and keeps history switching available', async () => {
+it('opens the latest attempt of a finished Run and keeps history switching available', async () => {
   const choice = selected()
   if (choice.kind !== 'selected') throw new Error('Expected selected fixture')
-  const candidate = (executionId: string) => ({ target: { ...choice.target, execution: { ...fixture.execution, executionId } },
-    agent: choice.agent, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
+  const candidate = (executionId: string, attempt: number) => ({ target: { ...choice.target,
+    execution: { ...fixture.execution, executionId, attempt } },
+  agent: choice.agent, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
   install()
-  const choices: WorkflowExecutionChatResolution = { kind: 'selection_required', items: [candidate('execution'), candidate('check')],
-    revision: 1, nextCursor: null, hasMore: false }
-  server.use(http.get(`${base}/target`, ({ request }) => HttpResponse.json(new URL(request.url).searchParams.get('executionId')
-    ? { ...choice, state: 'idle' } : choices)))
+  // Newest first, as the server lists them; attempt numbers restart for each activation.
+  const items = [candidate('check', 1), candidate('execution', 2)]
+  server.use(http.get(`${base}/target`, ({ request }) => {
+    const pinned = items.find(item => item.target.execution.executionId === new URL(request.url).searchParams.get('executionId'))
+    return HttpResponse.json(pinned ? { ...choice, target: pinned.target, state: 'idle' }
+      : { kind: 'selection_required', items, revision: 1, nextCursor: null, hasMore: false })
+  }))
   mount({ runId: 'run' })
-  fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 1' }))
-  expect(await screen.findByText('Working on the task.')).toBeInTheDocument()
-  expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"execution"')
+  expect(await screen.findByRole('region', { name: 'Execution conversation' })).toHaveTextContent('check')
+  expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"check"')
   fireEvent.click(screen.getByRole('button', { name: 'Other attempts' }))
-  expect(await screen.findByRole('button', { name: 'Execution check · Attempt 1' })).toBeInTheDocument()
+  fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 2' }))
+  await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"execution"'))
+})
+
+it('opens the newest execution again for another Agent of the same Run', async () => {
+  const choice = selected()
+  if (choice.kind !== 'selected') throw new Error('Expected selected fixture')
+  install()
+  const item = (nodeId: string, executionId: string) => ({ target: { ...choice.target,
+    agent: { ...choice.target.agent, workflowNodeId: nodeId }, execution: { ...fixture.execution, executionId } },
+  agent: { ...choice.agent, workflowNodeId: nodeId }, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
+  server.use(http.get(`${base}/target`, ({ request }) => {
+    const params = new URL(request.url).searchParams, node = params.get('workflowNodeId')!
+    const items = [item(node, `${node}-new`), item(node, `${node}-old`)]
+    const pinned = items.find(entry => entry.target.execution.executionId === params.get('executionId'))
+    return HttpResponse.json(pinned ? { ...choice, agent: pinned.agent, target: pinned.target, state: 'idle' }
+      : { kind: 'selection_required', items, revision: 1, nextCursor: null, hasMore: false })
+  }))
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.push(cache)
+  function Shell() {
+    const [pins, setPins] = useState<Omit<WorkflowExecutionChatSlotSelection, 'onSelectRun' | 'onSelectTarget'>>(
+      { ...scope, nodeId: 'first', runId: 'run' })
+    return <>
+      <button onClick={() => setPins({ ...scope, nodeId: 'second', runId: 'run' })}>Second Agent</button>
+      <output aria-label="Chat selection">{JSON.stringify(pins)}</output>
+      {slot({ ...pins, onSelectRun: run => setPins({ ...scope, nodeId: pins.nodeId, ...run }),
+        onSelectTarget: (target, workflowVersionId) => setPins({ ...scope, nodeId: pins.nodeId, workflowVersionId,
+          runId: 'run', ...(target.kind === 'workflow_execution' ? { executionId: target.execution.executionId } : {}) }) })}
+    </>
+  }
+  render(<QueryClientProvider client={cache}><Shell /></QueryClientProvider>)
+  await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"first-new"'))
+  fireEvent.click(screen.getByRole('button', { name: 'Second Agent' }))
+  await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"second-new"'))
 })
 
 it('retains transient status, hides denied history through a failed retry, and resumes only after a successful read', async () => {
@@ -244,7 +279,6 @@ it.each(['NO_EXECUTION', 'NODE_UNAVAILABLE', 'WORKFLOW_UNAVAILABLE', 'missing-ru
     expect(screen.getByLabelText('Chat selection')).toHaveTextContent('unavailable-run')
     fireEvent.click(escape)
     fireEvent.click(await screen.findByRole('button', { name: 'Run run' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 1' }))
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Unsent exact execution question')
     expect(wire.reads).toEqual([])
     expect(screen.getByLabelText('Chat selection')).not.toHaveTextContent('unavailable-version')
