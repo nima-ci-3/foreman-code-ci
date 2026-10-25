@@ -107,18 +107,12 @@ it('labels the Board status Stopping while an accepted Stop is cleaning up', asy
   expect(status).not.toHaveTextContent('Running')
 }, 15_000)
 
-it('labels an earlier-version Run Stopping while retaining the current draft', async () => {
+it('opens a live Run of another saved version in its own view instead of hiding it behind the draft', async () => {
   const { scope, run } = fixture.runs.before
   setRunState(fixture, scope, 'running', true)
   const current = fixture.mock.currents.get(run.id)!
   fixture.mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...current,
     state: { ...current.state, run: { ...current.state.run, stopRequested: true } } }))
   await mountMeasuredBoard(href())
-  expect(await screen.findByText('Cleaning up…')).toBeVisible()
-  const controls = within(screen.getByRole('group', { name: 'Board controls' }))
-  expect(await controls.findByRole('button', { name: 'Stopping' })).toHaveAttribute('title',
-    'A Run of an earlier saved version is running. Show it.')
-  expect(controls.queryByRole('button', { name: 'Running' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /^Added later,/ })).toBeVisible()
-  expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
+  expect(await screen.findByRole('region', { name: 'Selected Run board' })).toBeInTheDocument()
 }, 15_000)

@@ -79,7 +79,7 @@ async function choose(runId: string | null) {
   })
   await userEvent.click(item)
 }
-const savedY = () => screen.findByRole('button', { name: 'Inspect Y' })
+const savedY = () => screen.findByRole('button', { name: 'Open Y information' })
 const pinnedUrl = (runId: string) => `${runsUrl(null, scope)}&runId=${runId}&workflowVersionId=version-${runId.slice(4)}&executionSemanticsVersion=3`
 async function openActivities() {
   // The retained editor's own Activities button is hidden while a Run is shown.
@@ -223,7 +223,7 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
     const current = getMockFixture(scope.workspaceId)!.workflows.find(item => item.id === scope.workflowId)!
     expect(current.nodes.some(node => node.id === 'node-x')).toBe(false)
     const { router, unmount } = await mount(`${pinnedUrl('run-a')}&runNodeId=node-x`)
-    const inspect = await screen.findByRole('button', { name: 'Inspect X before rename' }, { timeout: 5000 })
+    const inspect = await screen.findByRole('button', { name: 'Open X before rename information' }, { timeout: 5000 })
     expect(inspect).toBeEnabled()
     // The linked node opens its saved details in the shared rail and retains the Activities filter.
     const rail = await screen.findByRole('complementary', { name: 'Workflow side panel' })
@@ -288,11 +288,11 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
     const canvas = await screen.findByLabelText('Selected Run board')
     expect(canvas).toHaveRole('region')
     expect(canvas).toBeVisible()
-    const savedNode = await within(canvas).findByLabelText('Inspect Y')
+    const savedNode = await within(canvas).findByLabelText('Open Y information')
     expect(savedNode).toHaveRole('button')
     expect(savedNode).toBeVisible()
     expect(canvas.getBoundingClientRect().width).toBe(320)
-    const node = within(canvas).getByLabelText('Inspect X before rename')
+    const node = within(canvas).getByLabelText('Open X before rename information')
     expect(node).toHaveRole('button')
     expect(node).toBeVisible()
     expect(screen.queryByRole('complementary', { name: 'Workflow side panel' })).toBeNull()
@@ -505,7 +505,7 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
     expect(router.state.location.search.runNodeId).toBe('node-x')
     const hash = router.history.location.hash
     await choose('run-b')
-    await screen.findByRole('button', { name: 'Inspect X in B' })
+    await screen.findByRole('button', { name: 'Open X in B information' })
     const activities = await openActivities()
     await within(activities).findByText('History for run-b')
     await userEvent.click(within(activities).getByRole('button', { name: 'Close Activities' }))

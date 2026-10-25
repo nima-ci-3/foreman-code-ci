@@ -52,7 +52,8 @@ export function useBoardKanban({ workspaceId, workflowId, nodes, nodeIds, enable
     item.pulsing && item.nodeId && nodeIds.has(item.nodeId) ? [{
       id: `kanban-activity:${item.key}`, type: 'kanbanActivity' as const, source: item.nodeId, target: KANBAN_NODE_ID,
       sourceHandle: 'right', targetHandle: 'left', selectable: false, focusable: false, deletable: false,
-      data: { pulse: { key: item.key, signal: 'task' as const, reversed: false, startsAt: item.startsAt, word: 'Card updated' } },
+      data: { cardId: item.cardId, ...(item.status ? { status: item.status } : {}),
+        pulse: { key: item.key, signal: 'task' as const, reversed: false, startsAt: item.startsAt, word: 'Card updated' } },
     }] : []), [node, reduced, activity, nodeIds])
   /** Live drag and resize of the Kanban; every other change belongs to the canvas. */
   const applyChanges = (changes: readonly NodeChange[]) => {

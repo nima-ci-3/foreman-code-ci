@@ -72,7 +72,10 @@ function updateChip({ status, readiness, starting }: {
       detail: running ? `${taskLabel(running.kind)} is running.` : workerUpdating ? 'The Worker is updating.' : 'Starting the update.' }
   }
   if (!status) return { id: 'update', label, state: 'unknown', text: 'unknown', tone: 'neutral', detail: 'Update state is not available yet.' }
-  const failedTask: MaintenanceTask | undefined = tasks.find(task => task.state === 'failed')
+  // A failed Worker update is settled once the Worker runs the version it should (a later update finished it).
+  const workerSettled = worker?.state === 'current' && !workerBehind(status, readiness)
+  const failedTask: MaintenanceTask | undefined = tasks.find(task => task.state === 'failed'
+    && !(task.kind === 'update-worker' && workerSettled))
   const failedWorker = worker?.state === 'failed' || worker?.state === 'rolled-back'
   if (failedTask || failedWorker) {
     const raw = failedTask?.summary ?? worker?.lastError ?? 'Worker update failed.'

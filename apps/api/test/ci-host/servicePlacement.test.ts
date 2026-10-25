@@ -1188,3 +1188,23 @@ it('keeps structural protocol rejections blocked across time until executor stat
     await f.service.close()
   }
 })
+
+it.each(['integration', 'unit', 'lint', 'build'] as const)(
+  'uses every free GitHub slot before CircleCI for ordinary %s tickets', async suite => {
+    const github = Array.from({ length: 3 }, (_, slot): HostCiComputer => ({
+      key: `cloud:github:${slot}`, label: `GitHub ${slot}`, priority: -10,
+      hostRef: { kind: 'cloud', mainId: 'main', provider: 'github', slot },
+    }))
+    const records = queuedRuns(4).map(run => CiRunRecordSchema.parse({ ...run,
+      groupId: randomUUID(), suite, part: suite === 'unit' ? 'unit-api' : null, partition: null }))
+    const f = fleet(records, [cloud, ...github])
+    try {
+      await f.service.dispatch()
+      await f.service.drain()
+      expect(f.started).toHaveLength(4)
+      expect(f.started.slice(0, 3).map(start => start.computer.key).sort()).toEqual(github.map(computer => computer.key).sort())
+      expect(f.started[3]!.computer.key).toBe(cloud.key)
+      expect(records.map(record => record.state)).toEqual(['running', 'running', 'running', 'running'])
+    } finally { await f.service.close() }
+  },
+)

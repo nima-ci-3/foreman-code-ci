@@ -232,7 +232,7 @@ it('keeps a registered dirty editor mounted when a new build arrives and reloads
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
   server.use(http.get('*/api/runtime/build-identity/v1', () => HttpResponse.json({ ...buildIdentity, buildId: 'c'.repeat(64), contractsId: 'd'.repeat(64) })))
   await act(async () => { await client.invalidateQueries({ queryKey: ['workbench', 'runtime-build-identity'] }) })
-  await screen.findByText('App updated. Your pending changes are kept until it can reload.')
+  await screen.findByText('App updated.')
   expect(reload).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: 'Registered draft' })).toBe(draft)
   expect(draft).toHaveValue('Unsaved draft')
