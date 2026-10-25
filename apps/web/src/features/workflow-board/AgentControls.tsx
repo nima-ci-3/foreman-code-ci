@@ -75,11 +75,8 @@ function BoardAgentSettingsVisit({ draftKey, edit, nodeId, close, remove, placem
   const saved = edit.context.savedDraft ?? edit.context.draft
   const savedNode = node && saved.graph.nodes.filter(item => item.kind !== 'job').find((item) => item.id === node.id && item.agentId === node.agentId)
   const savedAgent = savedNode && edit.context.agents.find((item) => item.agent.id === savedNode.agentId)?.agent
-  // An Agent with a saved configuration chooses its computer with it, also on a node only in the draft; only unsaved
-  // Agent edits (which can change the harness) wait for a save.
-  const configurationVersionId = (savedAgent ?? agent)?.configurationVersionId
-  const choiceScope = node && configurationVersionId && !edit.agentEdits?.[node.agentId]
-    ? { workspaceId: edit.graph.workspaceId, workflowId: edit.graph.id, nodeId: node.id, agentConfigurationVersionId: configurationVersionId } : undefined
+  const choiceScope = savedNode && savedAgent?.configurationVersionId && !edit.agentEdits?.[savedNode.agentId]
+    ? { workspaceId: edit.graph.workspaceId, workflowId: edit.graph.id, nodeId: savedNode.id, agentConfigurationVersionId: savedAgent.configurationVersionId } : undefined
   const choices = usePlacementChoices(choiceScope, `${visit}:${edit.instanceId}`)
   const worktrees = useWorktreeChoices(edit.graph.workspaceId,
     Boolean(edit.graph.defaultWorktree || node?.placement?.rootBinding))

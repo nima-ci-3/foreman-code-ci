@@ -6,11 +6,11 @@ import { BrowserSidebar, type BrowserSidebarStatus, type BrowserSidebarTab, tabL
 import { useBrowserSidebar, useBrowserSidebarTabs } from '../features/workflow-board'
 import { useWorkflowBoard } from '../features/board-core'
 import { useManagedWorkflowQuery } from '../shared/api/query'
-import { Button, Select } from '../shared/ui/nocturne'
+import { Select } from '../shared/ui/nocturne'
 import { errorMessage } from '../shared/errorMessage'
 import { browserSessionClient } from './browserRecovery'
 import { browserAuthBoundary, useBrowserComputers } from './browserComputerFacts'
-import { readBrowserSessions } from './liveBrowserSessions'
+import { readLiveBrowserSessions } from './liveBrowserSessions'
 import { WorkflowBrowserTarget } from './WorkflowBrowser'
 
 export interface WorkflowBrowserSidebarProps { workspaceId: string; workflowId: string; runId?: string; workflowVersionId?: string }
@@ -22,20 +22,13 @@ const runOf = (subject: AgentSubject) => subject.kind === 'execution' ? subject.
   : subject.kind === 'coordinator_consultation' ? subject.binding.runId : undefined
 
 /** Every live browser session this person can see, read per online computer so one that cannot answer hides nothing else. */
-function useComputerBrowserSessions(liveOnly: boolean, enabled = true) {
+function useLiveBrowserSessions() {
   const facts = useBrowserComputers()
   const computers = facts.computers.filter(computer => computer.online).map(computer => computer.id).sort()
-  return useQuery({ queryKey: ['browser-sidebar', browserAuthBoundary(), liveOnly ? 'sessions' : 'history', computers], enabled: enabled && computers.length > 0,
-    refetchInterval: liveOnly ? POLL_MS : false, refetchOnWindowFocus: false,
-    queryFn: ({ signal }) => readBrowserSessions(computers.map(id => ({ id,
-      name: facts.computers.find(computer => computer.id === id)?.name ?? 'A computer' })), signal, liveOnly) })
-}
-
-function inWorkflow(session: BrowserSession, workspaceId: string, workflowId: string, runId?: string) {
-  const subject = session.subject
-  if (!subject || subject.agent.workspaceId !== workspaceId || subject.agent.workflowId !== workflowId) return false
-  const sessionRun = runOf(subject)
-  return !runId || !sessionRun || sessionRun === runId
+  return useQuery({ queryKey: ['browser-sidebar', browserAuthBoundary(), 'sessions', computers], enabled: computers.length > 0,
+    refetchInterval: POLL_MS, refetchOnWindowFocus: false,
+    queryFn: ({ signal }) => readLiveBrowserSessions(computers.map(id => ({ id,
+      name: facts.computers.find(computer => computer.id === id)?.name ?? 'A computer' })), signal) })
 }
 
 type Activity = { signature: string; changedAt: number; page?: string }
@@ -72,14 +65,16 @@ export function WorkflowBrowserSidebar({ workspaceId, workflowId, runId, workflo
   const board = useWorkflowBoard()
   const location = useLocation(), navigate = useNavigate()
   const workflow = useManagedWorkflowQuery(workspaceId, workflowId)
-  const listed = useComputerBrowserSessions(true)
-  const [downloadsOpen, setDownloadsOpen] = useState(false)
-  const history = useComputerBrowserSessions(false, downloadsOpen)
+  const listed = useLiveBrowserSessions()
   const opened = useBrowserSidebarTabs(state => state.opened[sidebar.scope])
   const closed = useBrowserSidebarTabs(state => state.closed[sidebar.scope])
   // Sessions of this workflow: the selected Run's executions, plus Agent chats, which belong to no Run.
-  const sessions = useMemo(() => (listed.data?.sessions ?? []).filter(session => inWorkflow(session, workspaceId, workflowId, runId)),
-    [listed.data, workspaceId, workflowId, runId])
+  const sessions = useMemo(() => (listed.data?.sessions ?? []).filter(session => {
+    const subject = session.subject
+    if (!subject || subject.agent.workspaceId !== workspaceId || subject.agent.workflowId !== workflowId) return false
+    const sessionRun = runOf(subject)
+    return !runId || !sessionRun || sessionRun === runId
+  }), [listed.data, workspaceId, workflowId, runId])
   const byNode = useMemo(() => {
     const groups = new Map<string, BrowserSession[]>()
     for (const session of sessions) {
@@ -112,18 +107,7 @@ export function WorkflowBrowserSidebar({ workspaceId, workflowId, runId, workflo
   })
   const selectedId = sidebar.selected && ids.includes(sidebar.selected) ? sidebar.selected : ids[0]
   const choices = selectedId ? byNode.get(selectedId) ?? [] : []
-  const requestedSessionId = location.search.browserSessionId
-  const requestedHistory = !!requestedSessionId && !choices.some(session => session.id === requestedSessionId)
-  const selectedSession = useQuery({ queryKey: ['browser-sidebar', browserAuthBoundary(), 'selected-session', requestedSessionId],
-    enabled: requestedHistory && !!selectedId,
-    queryFn: ({ signal }) => browserSessionClient.readSession(requestedSessionId!, signal), refetchOnWindowFocus: false })
-  const historicalSessions = (history.data?.sessions ?? []).filter(session => inWorkflow(session, workspaceId, workflowId, runId)
-    && session.subject!.agent.workflowNodeId === selectedId && (session.state === 'closed' || session.state === 'failed'))
-  const requested = historicalSessions.find(session => session.id === requestedSessionId) ?? selectedSession.data?.session
-  const historical = requested && inWorkflow(requested, workspaceId, workflowId, runId)
-    && requested.subject!.agent.workflowNodeId === selectedId ? requested : undefined
-  const primary = requestedHistory ? historical : preferred(choices)
-  const contexts = primary && !choices.some(session => session.id === primary.id) ? [primary, ...choices] : choices
+  const primary = preferred(choices)
   const hidden = [...byNode.keys()].filter(nodeId => closed?.includes(nodeId))
   const notice = listed.error ? <p className="browser-sidebar-notice" role="alert">{errorMessage(listed.error, 'Agent browsers could not be read.')}</p>
     : listed.data?.unreachable.length ? <p className="browser-sidebar-notice">{listed.data.unreachable.join(', ')} could not be reached; its browsers are not shown.</p>
@@ -138,31 +122,13 @@ export function WorkflowBrowserSidebar({ workspaceId, workflowId, runId, workflo
       const index = ids.indexOf(nodeId)
       sidebar.closeTab(nodeId, ids[index + 1] ?? ids[index - 1])
     }}>
-    {contexts.length > 1 ? <Select label="Browser context" value={primary?.id}
+    {choices.length ? <Select label="Browser context" value={primary?.id}
       onChange={event => { const browserSessionId = event.currentTarget.value
         void navigate({ to: location.pathname, replace: true, search: previous => ({ ...previous, browserSessionId, browserTabId: undefined }) })
-      }} options={contexts.map(session => ({ value: session.id, label: `${workflow.data?.workflow.name ?? 'Workflow'} · ${nodeName(selectedId!)} · ${session.startedAt
+      }} options={choices.map(session => ({ value: session.id, label: `${workflow.data?.workflow.name ?? 'Workflow'} · ${nodeName(selectedId!)} · ${session.startedAt
         ? new Date(session.startedAt).toLocaleString() : 'Start time unavailable'} · ${session.subject?.kind === 'execution'
         ? `Attempt ${session.subject.execution.attempt}` : session.subject?.kind === 'coordinator_consultation' ? 'Consultation' : 'Agent chat'}` }))} /> : null}
-    {selectedId ? <details open={downloadsOpen} onToggle={event => setDownloadsOpen(event.currentTarget.open)}>
-      <summary>Browser downloads</summary>
-      {downloadsOpen ? <>
-        {history.isPending ? <p role="status">Loading browser downloads…</p> : null}
-        {history.error ? <p role="alert">{errorMessage(history.error, 'Browser downloads could not be read.')} <Button size="sm" onClick={() => void history.refetch()}>Retry downloads</Button></p> : null}
-        {history.data?.unreachable.length ? <p role="status">Downloads on {history.data.unreachable.join(', ')} could not be read.</p> : null}
-        {historicalSessions.map(session => <Button key={session.id} size="sm" onClick={() => {
-          void navigate({ to: location.pathname, replace: true, search: previous => ({ ...previous,
-            browserTab: selectedId, browserSessionId: session.id, browserTabId: undefined }) })
-          setDownloadsOpen(false)
-        }}>Downloads · {session.subject?.kind === 'execution' ? `Attempt ${session.subject.execution.attempt}` : 'Agent chat'}
-          {session.startedAt ? ` · ${new Date(session.startedAt).toLocaleString()}` : ''}</Button>)}
-        {history.isSuccess && !historicalSessions.length ? <p>No ended browser sessions.</p> : null}
-      </> : null}
-    </details> : null}
-    {selectedId && requestedHistory && !primary ? <p role={selectedSession.isPending ? 'status' : 'alert'}>
-      {selectedSession.isPending ? 'Loading selected browser…' : 'This browser session is unavailable.'}
-      {selectedSession.isError ? <Button size="sm" onClick={() => void selectedSession.refetch()}>Retry selected browser</Button> : null}
-    </p> : selectedId ? <SidebarBrowser key={`${selectedId}:${primary?.id ?? ''}`} workspaceId={workspaceId} workflowId={workflowId}
+    {selectedId ? <SidebarBrowser key={`${selectedId}:${primary?.id ?? ''}`} workspaceId={workspaceId} workflowId={workflowId}
       nodeId={selectedId} session={primary} runId={runId} workflowVersionId={workflowVersionId}
       onOpenSettings={() => board?.selectSidePanel?.({ kind: 'agent', nodeId: selectedId, tab: 'settings' })} /> : null}
   </BrowserSidebar>
@@ -186,34 +152,19 @@ function SidebarBrowser({ session, runId, workflowVersionId, ...props }: {
 }) {
   const subject = session?.subject
   const board = useWorkflowBoard()
-  const location = useLocation(), navigate = useNavigate()
   // A node not saved in the workflow yet finds its chat's browser through its Agent.
   const agentId = subject?.agent.agentId ?? board?.draftNodeAgentId?.(props.nodeId)
   const [picked, setPicked] = useState<{ runId: string; workflowVersionId: string; executionId?: string; waitingActivationId?: string }>()
-  const sessionId = session?.id ?? (location.search.browserTab === props.nodeId ? location.search.browserSessionId : undefined)
-  const pageKey = JSON.stringify([browserAuthBoundary(), sessionId])
-  const rememberedPage = useBrowserSidebarTabs(state => state.pages[pageKey])
-  const tabId = sessionId === location.search.browserSessionId ? location.search.browserTabId ?? rememberedPage : rememberedPage
-  // Only inactive selections are remembered locally; the displayed page is linkable through the URL.
-  useEffect(() => {
-    if (!sessionId || location.search.browserSessionId === sessionId && location.search.browserTabId === tabId) return
-    void navigate({ to: location.pathname, replace: true, search: previous => ({ ...previous,
-      browserTab: props.nodeId, browserSessionId: sessionId, browserTabId: tabId }) })
-  }, [sessionId, tabId, location.pathname, location.search.browserSessionId, location.search.browserTabId, navigate, props.nodeId])
+  const [view, setView] = useState<{ sessionId?: string; tabId?: string }>({ sessionId: session?.id })
   const target = picked ?? (subject?.kind === 'execution' ? { runId: subject.execution.runId, workflowVersionId: subject.execution.workflowVersionId,
     executionId: subject.execution.executionId }
     : subject?.kind === 'coordinator_consultation' ? { runId: subject.binding.runId, workflowVersionId: subject.binding.workflowVersionId,
       waitingActivationId: subject.binding.waitingActivationId }
       : subject?.kind === 'conversation' ? {} : runId && workflowVersionId ? { runId, workflowVersionId } : {})
   return <WorkflowBrowserTarget key={JSON.stringify(target)} {...props} {...target} {...(agentId ? { agentId } : {})} compact
-    {...(sessionId ? { sessionId } : {})} {...(tabId ? { tabId } : {})}
-    onSelect={(sessionId, tabId) => {
-      if (sessionId && tabId) useBrowserSidebarTabs.getState().selectPage(JSON.stringify([browserAuthBoundary(), sessionId]), tabId)
-      void navigate({ to: location.pathname, replace: true, search: previous => ({ ...previous,
-        browserTab: props.nodeId, browserSessionId: sessionId, browserTabId: tabId }) })
-    }}
+    {...(view.sessionId ? { sessionId: view.sessionId } : {})} {...(view.tabId ? { tabId: view.tabId } : {})}
+    onSelect={(sessionId, tabId) => setView({ sessionId, tabId })}
     onPickTarget={(pickedRun, pickedVersion, executionId, waitingActivationId) => {
-      void navigate({ to: location.pathname, replace: true, search: previous => ({ ...previous, browserSessionId: undefined, browserTabId: undefined }) })
-      setPicked({ runId: pickedRun, workflowVersionId: pickedVersion, executionId, waitingActivationId })
+      setView({}); setPicked({ runId: pickedRun, workflowVersionId: pickedVersion, executionId, waitingActivationId })
     }} />
 }

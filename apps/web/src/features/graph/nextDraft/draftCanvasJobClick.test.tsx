@@ -27,26 +27,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); useGraphDraftStore.getState().clearAllDrafts() })
 
 function mount(canvasGraph = graph) {
-  const change = vi.fn(), setOpen = vi.fn()
+  const change = vi.fn()
   render(<QueryClientProvider client={new QueryClient()}><GraphPresentationProvider><DraftCanvas draftKey={key} graph={canvasGraph} agents={context.agents.map((item) => item.agent)} kind="execution"
-    change={change} geometry={vi.fn()} pending={vi.fn()} report={vi.fn()} setOpen={setOpen} /></GraphPresentationProvider></QueryClientProvider>)
+    change={change} geometry={vi.fn()} pending={vi.fn()} report={vi.fn()} /></GraphPresentationProvider></QueryClientProvider>)
   const job = () => screen.getByRole('button', { name: new RegExp(`${definition.name}, job`) })
   const agent = (index: number) => screen.getByRole('button', { name: new RegExp(`^Node ${index}, `) })
   const edges = () => change.mock.calls.map(([update]) => update(graph).edges.at(-1)).map((edge: { source: string; target: string }) => `${edge.source}>${edge.target}`)
-  return { change, job, agent, edges, setOpen }
+  return { change, job, agent, edges }
 }
-
-it('selects a Job without opening a panel and exposes explicit information and settings actions', () => {
-  const { job, setOpen } = mount()
-  fireEvent.click(job())
-  expect(job()).toHaveAttribute('aria-pressed', 'true')
-  expect(setOpen).not.toHaveBeenCalled()
-  expect(screen.queryByRole('button', { name: `Open ${definition.name} chat` })).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: `Open ${definition.name} information` }))
-  expect(setOpen).toHaveBeenLastCalledWith({ nodeId: 'job-node', panel: 'info' })
-  fireEvent.click(screen.getByRole('button', { name: `Open ${definition.name} settings` }))
-  expect(setOpen).toHaveBeenLastCalledWith({ nodeId: 'job-node', panel: 'settings' })
-})
 
 it('selects Job then Agent without changing workflow connections', async () => {
   const { job, agent, change } = mount()

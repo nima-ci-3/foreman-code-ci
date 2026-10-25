@@ -27,20 +27,6 @@ describe.skipIf(!postgresEnabled)('Memory boards public persistence and engine p
   afterAll(async()=>{await database?.close()})
   beforeEach(async()=>{f=memoryFixture(database.pool,principal);boardId=(await f.snapshot()).board.id})
 
-  it.each(['waiting_for_user', 'blocked'] as const)('preserves an owner-set %s Agent card when another execution launches', async status => {
-    const task = await f.prepareWork()
-    if (task.subject.kind !== 'execution') throw new Error('Expected workflow execution')
-    const assignee = { workspaceId: f.workspaceId, workflowId: f.workflowId,
-      workflowNodeId: f.agent.workflowNodeId, agentId: f.agent.agentId }
-    const saved = await f.create(boardId, 'Owner-held Agent task', { status, reason: 'Wait for my decision', assignee })
-    const subject = task.subject
-    await f.transaction(tx => f.service.ensureAgentCardLocked(tx, { subject, work: task.work, title: 'Worker' }))
-    await f.publish(f.fact(task, 'launched'))
-    const detail = await f.card(boardId, saved.card!.id)
-    expect(detail.card).toMatchObject({ status, reason: 'Wait for my decision' })
-    expect(detail.bindings).toContainEqual(expect.objectContaining({ state: 'running', currentExecutionId: task.execution.executionId }))
-  })
-
   it('shares one database listener across boards and service instances until the last subscriber closes', async () => {
     const workspace = await f.service.read(principal, { scope: { kind: 'workspace', workspaceId: f.workspaceId } }) as BoardSnapshot
     const checkedOut = () => database.pool.totalCount - database.pool.idleCount
