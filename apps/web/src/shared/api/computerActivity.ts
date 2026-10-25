@@ -44,6 +44,11 @@ export function useComputerActivity() {
     queryFn: async ({ signal }) => withReconnectGrace(
       await apiClient.request('/api/management/computers/activity', ComputerActivityListSchema, { signal })) })
 }
+/** The owner's name for a computer, or undefined until the activity list has it. */
+export function useComputerName(): (target: Pick<DeviceProvisioningTarget, 'hostRef'>) => string | undefined {
+  const activity = useComputerActivity()
+  return target => activity.data?.computers.find(computer => computerKey(computer.target) === computerKey(target))?.name
+}
 /** Saves a computer's name; every list refreshes from the activity readback. */
 export function useRenameComputer() {
   const client = useQueryClient()

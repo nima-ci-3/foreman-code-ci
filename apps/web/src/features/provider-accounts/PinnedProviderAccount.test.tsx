@@ -68,3 +68,13 @@ it('says an unrecorded account is not recorded without the retained-profile assu
   expect(screen.getByText(/Saved account: not recorded/)).toBeVisible()
   expect(screen.queryByText(/The saved native profile is retained/)).not.toBeInTheDocument()
 })
+
+it('names the saved account computer instead of showing its device ID', async () => {
+  const binding = accountBinding()
+  server.use(http.get('/api/provider-accounts/:id', () => HttpResponse.json({ ...observedAccount(), isDefault: false })),
+    http.get('*/api/management/computers/activity', () => HttpResponse.json({ mainId: binding.target.hostRef.mainId,
+      computers: [{ target: binding.target, online: true, name: 'Office laptop', jobs: [], agents: [] }],
+      cloud: [], truncated: false, activityComplete: true })))
+  mount()
+  expect(await screen.findByText('Office laptop')).toBeVisible()
+})

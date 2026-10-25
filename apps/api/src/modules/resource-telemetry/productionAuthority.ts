@@ -258,7 +258,6 @@ export function createPassiveTelemetryAuthorities(input: PassiveTelemetryService
       && registration.data.authorizationRevision === observed.binding.authorizationRevision
       && !!rows.rows[0]!.credential_expires_at && rows.rows[0]!.credential_expires_at.getTime() > Date.now()
       && registration.data.scopes.includes('connect') && registration.data.scopes.includes('heartbeat')
-      && registration.data.scopes.includes('metrics:report')
   }
   const targets: TelemetryTargetAuthority = {
     allowTarget: (principal, target, signal) => withSql(signal, async sql => await authorized(sql, principal, target)
