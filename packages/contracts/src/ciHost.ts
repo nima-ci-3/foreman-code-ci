@@ -41,6 +41,7 @@ export const CiSelectedFilesSchema = z.array(z.string().min(1)
 export const CiSelectionSchema = z.object({ scope: CiScopeSchema, files: CiSelectedFilesSchema,
   reason: z.string().max(2000), staticFallbackFiles: CiSelectedFilesSchema.optional()
     .describe('Selected integration files that used static imports because their coverage record is missing.') }).strict()
+export type CiSelection = z.infer<typeof CiSelectionSchema>
 
 export function validCiSelection(value: { suite: CiSuite; scope?: CiScope | undefined; files?: string[] | undefined }) {
   if (value.scope === 'full') return !value.files?.length
@@ -283,6 +284,8 @@ export const CiRunRecordSchema = z.object({
   gate: z.boolean().optional(), integrationShards: z.number().int().min(1).max(64).optional(),
   /** An omitted caller selection is computed on the runner; an explicit empty list is already complete. */
   deriveFiles: z.boolean().optional(), defaultBranch: WorkspaceRepositorySchema.shape.defaultBranch.optional(),
+  /** Main ran the repository's affected selector for a caller that gave no files; files holds that selection. */
+  selectedOnMain: z.literal(true).optional(),
   baseCommit: CommitSchema.optional(),
   /** On a request's first ticket: selected files skipped because an earlier passed ticket proved identical inputs. */
   cachedFiles: z.array(CiCachedFileSchema).optional(),

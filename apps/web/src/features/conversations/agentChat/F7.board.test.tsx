@@ -120,7 +120,7 @@ describe.each(chatHarnesses)('mounted Board chat: %s', (harness) => {
       search: { workflowId: saved.workflowId, runId: saved.runId, workflowVersionId: saved.workflowVersionId, executionSemanticsVersion: 3 } }) })
     await screen.findByRole('region', { name: 'Selected Run board' })
     expect(screen.getByTestId('unified-workflow-board')).toBe(board)
-    const runName = fixture.first.name!, runTrigger = await screen.findByRole('button', { name: `Inspect ${runName}` })
+    const runName = fixture.first.name!, runTrigger = await screen.findByRole('button', { name: `Open ${runName} information` })
     // This face is also a drag target; d3 needs the browser view on mousedown.
     act(() => runTrigger.focus())
     for (const type of ['mousedown', 'mouseup', 'click']) {
@@ -140,7 +140,8 @@ describe.each(chatHarnesses)('mounted Board chat: %s', (harness) => {
     expect(mounted.history.location.search).toContain(`runId=${saved.runId}`)
     // Steer reaches the running turn only where the harness supports it; Stop ends the active turn.
     fireEvent.change(input, { target: { value: 'Steer the pinned Run Agent' } })
-    await userEvent.selectOptions(within(runChat).getByRole('combobox', { name: 'Delivery action' }), 'steer')
+    await userEvent.click(within(runChat).getByRole('button', { name: /^Delivery action:/ }))
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Steer now' }))
     const steer = within(runChat).getByRole('button', { name: 'Steer now' })
     if (harness === 'codex') {
       await waitFor(() => expect(steer).toBeEnabled())

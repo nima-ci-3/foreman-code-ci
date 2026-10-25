@@ -25,8 +25,8 @@ export interface HarnessCapabilityDescriptors {
 export const CODEX_CAPABILITY_DESCRIPTORS: HarnessCapabilityDescriptors = { steer: 'native_expected_turn', compact: 'native',
   inputIdentity: 'turn', files: 'turn_mcp', applicationMcp: 'session_config', autoCompact: false }
 
-/** Claude has no expected-turn steer; callers use Queue or Interrupt and send. */
-export const CLAUDE_CAPABILITY_DESCRIPTORS: HarnessCapabilityDescriptors = { steer: 'unavailable', compact: 'native',
+/** Claude steers the active turn with an SDK input of priority 'next', joining it after its current step. */
+export const CLAUDE_CAPABILITY_DESCRIPTORS: HarnessCapabilityDescriptors = { steer: 'native_expected_turn', compact: 'native',
   inputIdentity: 'message', files: 'session_bridge', applicationMcp: 'startup_config', autoCompact: true }
 
 const NO_CAPABILITIES: HarnessCapabilityDescriptors = { steer: 'unavailable', compact: 'unavailable',

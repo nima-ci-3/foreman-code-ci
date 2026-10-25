@@ -8,6 +8,8 @@ import { useProviderHarnessModels } from '../provider-accounts'
 import { selectNativeModel, supportedEfforts, claudeAccessOptions, fieldMessage, type FieldIssue } from '../settings'
 import { memoryAccess, memoryToolNames, replaceMemoryAccess } from '../memory-boards'
 import type { DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
+import { modelLabel } from './modelLabel'
+
 
 /** One compact settings row: a plain label on the left, its control on the right, an optional note below. */
 export function NodeRow({ label, children, note, tone }: { label: string; children: ReactNode; note?: ReactNode; tone?: 'warning' }) {
@@ -31,7 +33,7 @@ function EditableAgentHarnessRows({ value, onChange, issues = [], accountHost }:
   const selected = models.find(model => model.id === value.model)
   const modelOptions: { value: string; label: string; description?: string; disabled?: boolean }[] = models.map(model => ({ value: model.id, label: model.name || model.id }))
   if (!modelOptions.some(option => option.value === value.model)) modelOptions.unshift({ value: value.model,
-    label: value.model || 'Choose a model', description: query.isPending ? 'Loading models…' : 'Saved model', disabled: true })
+    label: value.model ? modelLabel(value.model) : 'Choose a model', description: query.isPending ? 'Loading models…' : 'Saved model', disabled: true })
   const modelsNote = query.isError ? `Model list unavailable: ${query.error?.message ?? 'try again shortly.'}` : undefined
   const knownEfforts = value.harness === 'claude'
     ? selected?.reasoningEfforts?.filter(effort => ClaudeEffortSchema.safeParse(effort).success) ?? ClaudeEffortSchema.options

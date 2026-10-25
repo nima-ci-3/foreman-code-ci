@@ -46,7 +46,7 @@ function ShellFixture({ slots, captureNavigation }: { slots?: WorkflowCollaborat
       <Button onClick={() => void selectedRun.selectRun('run-b')}>Select Run B</Button>
       <Button onClick={() => void selectedRun.selectRun(null)}>Return to draft</Button>
     </nav>
-    <main aria-label="Board canvas">{side.view === 'overview' ? 'Overview is not available yet.' : 'Editing surface'}
+    <main aria-label="Board canvas">Editing surface
       <p>{readback.messages[0]!.content}</p>
     </main>
     <WorkflowSidePanel scope={side.scope} workspaceId="workspace" workflowId="workflow" opener={side.opener} runId={resolved.run?.runId}
@@ -350,7 +350,7 @@ describe('disabled collaboration shell through navigation and rendered controls'
     await user.click(await screen.findByRole('button', { name: 'Open Browser' }))
     expect(await screen.findByText('Browser is not available yet. No browser session has been started.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /^Overview$/ }))
-    expect(screen.getByRole('main', { name: 'Board canvas' })).toHaveTextContent('Overview is not available yet.')
+    expect(screen.getByRole('main', { name: 'Board canvas' })).toHaveTextContent('Editing surface')
     await act(async () => { router.history.back() })
     await waitFor(() => expect(screen.getByRole('main', { name: 'Board canvas' })).toHaveTextContent('Editing surface'))
     expect(router.state.location.search).toMatchObject({ workflowId: 'workflow', runId: 'run-a',

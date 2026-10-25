@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { collaborationContractFixtures, WorkflowExecutionChatTargetSchema, type WorkflowExecutionChatResolution,
   type WorkflowExecutionChatTarget } from '@foreman-code/contracts'
@@ -328,4 +328,40 @@ it('labels the attempt and separates its history control in plain words', async 
   expect(screen.getByTestId('agent-chat-scope')).toHaveTextContent('Attempt 1 · Other attempts')
   fireEvent.click(screen.getByRole('button', { name: 'Other attempts' }))
   expect(screen.getByLabelText('Chat selection')).not.toHaveTextContent('"executionId"')
+})
+
+it('discovers an execution that starts after its Run chat was opened', async () => {
+  const wire = install({ kind: 'unavailable', reason: 'NO_EXECUTION' })
+  mount({ runId: 'run', workflowVersionId: 'version' })
+  await screen.findByText(/This saved node has no available execution/)
+  wire.controls.resolution = selected()
+  expect(await screen.findByText('Working on the task.', {}, { timeout: 7000 })).toBeVisible()
+  expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"execution"')
+})
+
+it('prepares each newly selected draft Agent instead of retaining the previous Agent preparation flags', async () => {
+  install()
+  const saved = new Set<string>()
+  const saveChatAgent = vi.fn(async (nodeId: string) => { saved.add(nodeId); return undefined })
+  server.use(http.get(`${base}/target`, ({ request }) => {
+    const nodeId = new URL(request.url).searchParams.get('workflowNodeId')!
+    return HttpResponse.json(saved.has(nodeId) ? { kind: 'outside_run', reason: 'NO_LIVE_RUN',
+      agent: { ...fixture.node, workflowNodeId: nodeId }, workflowVersionId: 'version' }
+      : { kind: 'unavailable', reason: 'NODE_UNAVAILABLE' })
+  }))
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.push(cache)
+  function Shell() {
+    const [nodeId, setNodeId] = useState('first')
+    return <><button onClick={() => setNodeId('second')}>Next draft Agent</button>
+      {slot({ ...scope, nodeId, onSelectRun: () => undefined, onSelectTarget: () => undefined })}</>
+  }
+  render(<QueryClientProvider client={cache}><BoardAuthoringContext.Provider value={{
+    draftNodeAgentId: nodeId => `agent-${nodeId}`, saveChatAgent,
+  }}><Shell /></BoardAuthoringContext.Provider></QueryClientProvider>)
+  await screen.findByRole('region', { name: 'Outside run conversation' })
+  expect(saveChatAgent).toHaveBeenCalledWith('first')
+  fireEvent.click(screen.getByRole('button', { name: 'Next draft Agent' }))
+  await waitFor(() => expect(saveChatAgent).toHaveBeenCalledWith('second'))
+  expect(await screen.findByRole('region', { name: 'Outside run conversation' })).toBeVisible()
 })
