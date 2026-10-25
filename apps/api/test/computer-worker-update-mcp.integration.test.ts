@@ -239,7 +239,7 @@ it('reports concrete updater failures through authenticated HTTP and persists th
   const { WorkerUpdater } = await import(new URL('../../worker/src/update.mjs', import.meta.url).href)
   const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
   const bytes = Buffer.from('export {}\n')
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
   const manifest = { format: 1, version: '1.1.0', commit: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64),
     packageManager: 'pnpm@11.27.0', protocolVersion: 1, identityFormat: 1, target,
     files: [{ path: 'src/cli.mjs', size: bytes.length, sha256: hash(bytes) }] }

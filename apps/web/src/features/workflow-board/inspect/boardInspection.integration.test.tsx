@@ -1,3 +1,4 @@
+import { executionNodeCut } from '../../../shared/mocks/executionNodeCut'
 import { nativeNode } from '../../../shared/mocks/nativeFixtureTypes'
 // @vitest-environment jsdom
 import { webcrypto } from 'node:crypto'
@@ -8,7 +9,7 @@ import { RouterProvider, createMemoryHistory, createRouter } from '@tanstack/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import {
-  boardSearchForInspection, boardSearchForRun, runInspectionKey, RepeatGraphCurrentStateSchema,
+  boardSearchForInspection, boardSearchForRun, runInspectionKey,
   type RepeatGraphScopeCurrent, type WorkspaceBoardInspection,
 } from '@foreman-code/contracts/current'
 import { routeTree } from '../../../app/router'
@@ -210,7 +211,7 @@ describe('Run inspection inside the one mounted Board', () => {
     const pinned = await screen.findByRole('region', { name: 'Selected Run board' })
     expect(pinned).toHaveAttribute('data-run-id', scope.runId)
     expect(await within(pinned).findByRole('button', {
-      name: `Inspect ${fixture.first.name ?? fixture.first.label ?? fixture.first.id}`,
+      name: name => name.startsWith(`${fixture.first.name ?? fixture.first.label ?? fixture.first.id}, `),
     })).toBeVisible()
     expect(authoring).not.toBeVisible()
 
@@ -345,7 +346,7 @@ describe('Run inspection inside the one mounted Board', () => {
     const { router, cache } = await mount(href(scope, { runNodeId: fixture.added.id }))
     const rail = await screen.findByRole('complementary', { name: 'Workflow side panel' })
     expect(await within(rail).findByText('This node is not in the saved Run.')).toBeVisible()
-    expect(within(pinnedCanvas()).queryByRole('button', { name: 'Inspect Added later' })).not.toBeInTheDocument()
+    expect(within(pinnedCanvas()).queryByRole('button', { name: name => name.startsWith('Added later, ') })).not.toBeInTheDocument()
     // The unavailable node reads no history, and the link stays on the node the person named.
     expect(requests.some((query) => query.get('workflowNodeId') === fixture.added.id)).toBe(false)
     expect(router.state.location.search).toMatchObject({ boardPanel: 'agent', boardNodeId: fixture.added.id })
@@ -604,7 +605,7 @@ describe('Live Run status on the Board', () => {
     const node = nativeNode(version.definition.nodes[0]!)
     const message = 'Waiting for the browser profile on Worker A: Computer offline.'
     const base = fixture.mock.currents.get(run.id)!
-    fixture.mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...base, state: { ...base.state,
+    fixture.mock.currents.set(run.id, executionNodeCut({ ...base, state: { ...base.state,
       run: { ...base.state.run, executionState: 'running', outcome: 'pending' },
       executions: [{ identity: { workflowNodeId: node.id, executionId: 'preparing-browser', agentId: node.agentId,
         agentConfigurationVersionId: version.agentConfigurationVersionIds[node.agentId]!, attempt: 1, occurrence: null },
@@ -615,7 +616,7 @@ describe('Live Run status on the Board', () => {
         reason: { kind: 'preparation', message, since: '2026-10-01T00:00:00.000Z' } }] })
     }))
     await mount(href(scope))
-    const button = await within(pinnedCanvas()).findByLabelText(`Inspect ${node.name ?? node.label ?? node.id}`, { selector: 'button' })
+    const button = await within(pinnedCanvas()).findByRole('button', { name: name => name.startsWith(`${node.name ?? node.label ?? node.id}, `) })
     const agent = button.closest('.react-flow__node')!.querySelector<HTMLElement>('.n-agent')!
     await waitFor(() => expect(within(agent).getByText(message)).toBeVisible())
     expect(agent).toHaveAttribute('data-state', 'queued')
@@ -632,7 +633,7 @@ describe('Live Run status on the Board', () => {
       resultOutcome: state === 'completed' ? 'succeeded' : null })
     const base = fixture.mock.currents.get(run.id)!
     const cut = (sequence: string, executionState: 'running' | 'waiting', executions: unknown[]) => fixture.mock.currents.set(run.id,
-      RepeatGraphCurrentStateSchema.parse({ ...base, asOfSequence: sequence, state: { ...base.state, executions,
+      executionNodeCut({ ...base, asOfSequence: sequence, state: { ...base.state, executions,
         run: { ...base.state.run, executionState, outcome: 'pending', pendingInteractionCount: executionState === 'waiting' ? 1 : 0 } } }))
     cut('1', 'running', [execution(first, 'running'), execution(added, 'queued')])
     const ticket = '00000000-0000-4000-8000-000000000011'
@@ -667,7 +668,7 @@ describe('Live Run status on the Board', () => {
     const canvas = pinnedCanvas()
     expect(canvas).toBeVisible()
     expect(run.id).toBe(canvas.getAttribute('data-run-id'))
-    const agentButton = (node: typeof first) => within(canvas).getByLabelText(`Inspect ${nameOf(node)}`, { selector: 'button' })
+    const agentButton = (node: typeof first) => within(canvas).getByRole('button', { name: name => name.startsWith(`${nameOf(node)}, `) })
     const agentNode = (node: typeof first) => agentButton(node).closest('.react-flow__node')!.querySelector<HTMLElement>('.n-agent')!
     const expectAgentVisible = (node: typeof first) => expect(agentButton(node)).toBeVisible()
     const nodeState = (node: typeof first) => agentNode(node).getAttribute('data-state')
@@ -770,7 +771,7 @@ describe('CI server on the Board', () => {
     jobs = [job('running')]
     await refresh()
     expect((await serverNode(/^CI server, 1 running/)).getAttribute('data-state')).toBe('running')
-    const agentNode = within(pinnedCanvas()).getByRole('button', { name: `Inspect ${name}` })
+    const agentNode = within(pinnedCanvas()).getByRole('button', { name: label => label.startsWith(`${name}, `) })
       .closest('.react-flow__node')!.querySelector<HTMLElement>('.n-agent')!
     await waitFor(() => expect(agentNode).toHaveAttribute('data-state', 'waiting'))
     expect(agentNode).toHaveTextContent('Waiting for CI unit-api · running')
@@ -868,10 +869,17 @@ it('inspects an immutable Run node named ci-server independently of its CI tower
     server.use(...fixture.mock.handlers)
     await mount(href(fixture.runs.before.scope))
     const canvas = pinnedCanvas()
-    const owner = await within(canvas).findByRole('button', { name: `Inspect ${fixture.first.name}` })
+    const owner = await within(canvas).findByRole('button', { name: name => name.startsWith(`${fixture.first.name}, `) })
     expect(owner.closest('.react-flow__node')).toHaveAttribute('data-id', 'ci-server')
     // jsdom mouse-down events lack the window view required by the canvas drag handlers.
     fireEvent.click(owner)
+    expect(owner).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('complementary', { name: 'Workflow side panel' })).not.toBeInTheDocument()
+    await userEvent.hover(owner)
+    await userEvent.click(within(canvas).getByRole('button', { name: `Open ${fixture.first.name} information` }))
+    expect(owner).toHaveAttribute('aria-pressed', 'false')
+    const panel = await screen.findByRole('complementary', { name: 'Workflow side panel' })
+    expect(within(panel).getByRole('button', { name: 'Details' })).toHaveAttribute('aria-pressed', 'true')
     await openDetails()
     await userEvent.setup().selectOptions(within(inspector()).getByRole('combobox', { name: 'Run node' }), 'ci-server')
     expect(within(inspector()).getByRole('combobox', { name: 'Run node' })).toHaveValue('ci-server')

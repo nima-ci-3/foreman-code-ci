@@ -49,7 +49,8 @@ it('shows the later skipped repeat occurrence on both the popover and canvas', (
     outside: false, deferredRelationshipIds: [],
   })
   const record: PinnedNodeDisplayCut & { topology: typeof topology } = {
-    topology, state: { executions: [execution], resolutions: [resolution] },
+    topology, state: { nodes: [{ state: { workflowNodeId: identity.workflowNodeId, lifecycle: 'skipped' } }],
+      executions: [execution], resolutions: [resolution] },
   }
   expect(pinnedNodeStates(record).get(identity.workflowNodeId)?.label).toBe('skipped')
   expect(runNodeView(record, true, identity.workflowNodeId, identity.agentId)).toEqual({
@@ -62,6 +63,7 @@ it('keeps execution attempt details when both facts describe the same completed 
   const identity = fixture.identities[1]!
   const occurrence = { scope: fixture.scope, blockId: 'repair', occurrenceId: 'occ-1', occurrenceIndex: 1 }
   const record: PinnedNodeDisplayCut & { topology: typeof topology } = { topology, state: {
+    nodes: [{ state: { workflowNodeId: identity.workflowNodeId, lifecycle: 'succeeded', execution: identity } }],
     resolutions: [{ ref: { nodeId: identity.workflowNodeId, occurrence }, value: { resolution: 'succeeded' } }],
     executions: [{ identity: { ...identity, occurrence }, state: 'completed', resultOutcome: 'succeeded' }],
   } }
@@ -76,7 +78,8 @@ it('shows the Agent awake on an interval check, then its graph state again', () 
   const identity = fixture.identities[0]!
   const graph = { identity: { ...identity, occurrence: null }, state: 'completed' as const, resultOutcome: 'succeeded' as const }
   const check = { identity: { ...identity, executionId: 'check-2', occurrence: null }, state: 'running' as const, resultOutcome: null, tickIndex: 2 }
-  const record = (executions: PinnedNodeDisplayCut['state']['executions']) => ({ topology, state: { resolutions: [], executions } })
+  const record = (executions: PinnedNodeDisplayCut['state']['executions']) => ({ topology, state: {
+    nodes: [{ state: { workflowNodeId: identity.workflowNodeId, lifecycle: 'succeeded' as const, execution: identity } }], resolutions: [], executions } })
   expect(runNodeView(record([graph, check]), true, identity.workflowNodeId, identity.agentId)).toEqual({
     state: 'running', label: 'Looping · loop 2', inRun: true })
   expect(runNodeView(record([graph, { ...check, state: 'completed', resultOutcome: 'succeeded' }]), true,

@@ -104,7 +104,10 @@ describe('Claude native session manager admission', () => {
     await expect(manager.createSession(start)).rejects.toThrow('atomic initial-turn')
     expect(() => manager.startInitialTurn(start, { prompt: 'first', clientCorrelationId: 'operator:one', onSessionObserved: async () => undefined })).toThrow('not been qualified')
     expect((await manager.capabilities()).cancellation).toBe(false)
-    expect(manager.steerTurn).toBeUndefined()
+    await expect(manager.steerTurn!({ harness: 'claude', providerVersion: '2.1.284', nativeSessionId: 'absent' },
+      { prompt: 'steer', expectedTurnId: 'absent-turn', clientCorrelationId: 'steer-unqualified' }))
+      .rejects.toThrow('not resident')
+    expect(runner.open).not.toHaveBeenCalled()
     await manager.dispose?.()
   })
 

@@ -470,9 +470,8 @@ describe('NIM-2644 mounted frontend recovery through the real edit-intent hook',
     const advance = vi.spyOn(nextDraftApi, 'editAdvance').mockImplementation(async () => (persisted = published(persisted)))
     const user = userEvent.setup(), first = mount(), node = createWorker()
     const rawWorker = structuredClone(edit().agentEdits![nativeNode(node).agentId]!)
-    await user.click(screen.getByRole('button', { name: 'Entry · Node 0' }))
-    await user.click(screen.getByRole('button', { name: /from workflow$/ }))
-    await user.click(within(await screen.findByRole('alertdialog', { name: /^Remove .*\?$/ })).getByRole('button', { name: 'Remove' }))
+    // This suite mounts the edit-intent hook with a synthetic canvas; stage the removal through the public draft action.
+    act(() => useGraphDraftStore.getState().changeNextDraft(key, graph => removeNode(graph, 'node-0')))
     expect(edit().graph.entryNodeId).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Workflow settings' }))
     const option = screen.getByRole('option', { name: /^Worker \d$/ })

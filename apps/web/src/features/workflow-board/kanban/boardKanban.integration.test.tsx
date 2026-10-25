@@ -10,6 +10,7 @@ import { fixture } from '../../graph/nextDraft/core.cases'
 import { createMemoryBoardHandlers } from '../../memory-boards/mocks'
 import { createMemoryTestPort, memoryTestCard, memoryTestIds, memoryTestTime } from '../../memory-boards/testing'
 import type { MemoryChange } from '../../memory-boards'
+import { ApiError } from '../../../shared/api/client'
 import { installFlowLayout } from '../../run-board/testFlowLayout'
 import { installBoardTestLifecycle, mountMeasuredBoard } from '../eng05D.testSupport'
 
@@ -81,6 +82,7 @@ it('adds the Kanban from the toolbar and keeps its moved place and cards across 
   expect(board.saves).toHaveLength(1)
 
   // Dragged by its bar, the Kanban keeps its new place on the server.
+  await user.hover(kanban)
   const before = placed('board-kanban')
   const bar = kanban.querySelector<HTMLElement>('.board-kanban-bar h2')!
   const view = bar.ownerDocument.defaultView!
@@ -127,6 +129,7 @@ it('opens a card, closes the Kanban into the dock, restores it, and hides it wit
 
   // Its X only minimizes it into the dock: the saved layout and the cards stay, and the dock item restores it.
   const saved = board.saves.length
+  await user.hover(again)
   await user.click(within(again).getByRole('button', { name: 'Close Kanban to the dock' }))
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Kanban' })).not.toBeInTheDocument())
   await user.click(screen.getByRole('button', { name: /^Restore Kanban/ }))
@@ -214,6 +217,8 @@ it('opens memory from an empty Kanban so its first card can be created', async (
   await mountMeasuredBoard(board.href)
   await streamOpened()
   const kanban = await screen.findByRole('region', { name: 'Kanban' })
+  await userEvent.hover(kanban)
+  expect(within(kanban).getByRole('button', { name: 'Open memory board' })).toBeVisible()
   await userEvent.click(within(kanban).getByRole('button', { name: 'Open memory board' }))
   const dialog = await screen.findByRole('dialog', { name: 'Memory board' })
   expect(await within(dialog).findByRole('button', { name: 'Add card' })).toBeVisible()
@@ -236,16 +241,34 @@ it('labels Kanban memory as live and shared across Runs', async () => {
   const board = install('kanban-scope', { visible: true, frame: null })
   await mountMeasuredBoard(board.href)
   const kanban = await screen.findByRole('region', { name: 'Kanban' })
+  await userEvent.hover(kanban)
   expect(within(kanban).getByText('Live memory · shared across runs')).toBeVisible()
   await streamOpened()
   await userEvent.click(await within(kanban).findByRole('button', { name: 'Prepare release notes' }))
   expect(within(await screen.findByRole('dialog')).getByText('Live memory · shared across runs')).toBeVisible()
 }, 15_000)
 
+it('shows a failed snapshot refresh beside retained cards and retries the board counts', async () => {
+  const board = install('kanban-count-refresh', { visible: true, frame: null })
+  await mountMeasuredBoard(board.href)
+  const source = await streamOpened()
+  const kanban = await screen.findByRole('region', { name: 'Kanban' })
+  await within(kanban).findByRole('button', { name: 'Prepare release notes' })
+  board.memory.control.snapshot = async () => { throw new ApiError({ code: 'TEMPORARILY_UNAVAILABLE', message: 'Snapshot unavailable' }, 503) }
+  act(() => source.dispatchEvent(new Event('reset')))
+  expect(await within(kanban).findByRole('alert')).toHaveTextContent('Counts may be out of date')
+  expect(within(kanban).getByRole('button', { name: 'Prepare release notes' })).toBeVisible()
+  delete board.memory.control.snapshot
+  await userEvent.click(within(kanban).getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(within(kanban).queryByRole('alert')).not.toBeInTheDocument())
+}, 15_000)
+
 it('restores a minimized Kanban from its toolbar without removing its saved layout', async () => {
   const board = install('kanban-toolbar-restore', { visible: true, frame: { x: 500, y: 100, width: 760, height: 460 } })
   await mountMeasuredBoard(board.href)
   const kanban = await screen.findByRole('region', { name: 'Kanban' })
+  await userEvent.hover(kanban)
+  expect(within(kanban).getByRole('button', { name: 'Close Kanban to the dock' })).toBeVisible()
   await userEvent.click(within(kanban).getByRole('button', { name: 'Close Kanban to the dock' }))
   await screen.findByRole('button', { name: /^Restore Kanban/ })
   const before = board.saves.length

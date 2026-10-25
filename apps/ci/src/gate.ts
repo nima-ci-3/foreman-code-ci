@@ -94,7 +94,13 @@ async function gateComputers(context: CiContext, endpoint: HostCiEndpoint, reser
   return available.filter((value): value is GateComputer => value !== null)
 }
 
-/** Prefer one wave; GitHub slots can take integration after checks when no unused cloud slot is free.
+/** Other executors take work only once every eligible GitHub slot has some. */
+function preferGithub(items: GateComputer[], unused: (item: GateComputer) => boolean): GateComputer[] {
+  const github = items.filter(item => item.computer.hostRef.kind === 'cloud' && item.computer.hostRef.provider === 'github' && unused(item))
+  return github.length ? github : items
+}
+
+/** Prefer one wave; GitHub slots can also take integration after checks when that finishes earlier.
  * Measured build throughput sizes integration parts; CPU, memory and build allowance bound execution shards.
  * Busy builders are a fallback when no free executor can take a file; not-ready computers and reserved cloud slots stay out. */
 export async function planCiGate(context: CiContext, input: CiRunInput, integration: CiIntegrationInventory,
@@ -117,17 +123,19 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
   for (const part of [...checks].sort((left, right) => Number(runsOnCircleCi(left)) - Number(runsOnCircleCi(right)))) {
     const expectedDurationMs = part.expectedDurationMs ?? (part.suite === 'unit' ? 210_000 : 150_000)
     const candidates = expectedDurationMs > CLOUD_GATE_JOB_BUDGET_MS ? hosts : clouds
-    const eligible = candidates.filter(item => item.computer.hostRef.provider !== 'circleci' || runsOnCircleCi(part))
+    const eligible = preferGithub(candidates.filter(item => item.computer.hostRef.provider !== 'circleci' || runsOnCircleCi(part)),
+      item => item.checkMs === 0)
     const target = [...eligible].sort((left, right) => left.checkMs - right.checkMs)[0]
     if (!target) throw new DomainError('CI_GATE_CAPACITY_REQUIRED', `No cloud executor can run ${part.part ?? part.suite}.`, 409)
     target.checkMs += expectedDurationMs
     placed.set(part, { ...part, plannedHostKey: target.computer.key, expectedDurationMs })
   }
   const result: GatePart[] = checks.map(part => placed.get(part)!)
-  // A second GitHub boot includes its check backlog and the integration setup cost in the finish estimate.
+  // GitHub remains eligible after checks even when unused CircleCI slots cannot run a particular file.
+  // Finish estimates include the check backlog and a second integration setup.
   const secondWave = !clouds.some(item => item.checkMs === 0 && item.freeSlots > 0)
   const integrationFleet = [...hosts, ...clouds.filter(item => item.checkMs === 0
-    || secondWave && item.computer.hostRef.provider === 'github')]
+    || item.computer.hostRef.provider === 'github')]
   const known = Object.values(integration.durations).sort((left, right) => left - right)
   const median = known[Math.floor(known.length / 2)] ?? 30_000
   const duration = (file: string) => integration.durations[file] ?? median
@@ -161,6 +169,13 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
     || ((!requiresUserSystemd(file) || item.computer.userSystemd?.supported)
       && factor(item) * (SETUP_MS + duration(file)) <= CLOUD_GATE_JOB_BUDGET_MS
       && cloudPartCount - load.get(item)!.length + withFile(item, file).length <= maxCloudParts)
+  const eligibleForFile = (file: string) => {
+    const eligible = integrationFleet.filter(item => canRunFile(item, file))
+    const firstWave = eligible.filter(item => item.computer.hostRef.kind !== 'cloud' || item.checkMs === 0)
+    // Preserve one wave whenever unused cloud capacity can actually run this file.
+    return !secondWave && firstWave.some(item => item.computer.hostRef.kind === 'cloud' && item.freeSlots > 0)
+      ? firstWave : eligible
+  }
   const finishLoads = (item: GateComputer, parts: IntegrationLoad[], estimate: 'typical' | 'conservative' = 'typical') =>
     item.checkMs + parts.reduce((sum, state) =>
       sum + measuredTime(item, state.work, integrationLoadMs(state), estimate), 0)
@@ -178,10 +193,11 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
   const exclusiveCount = (item: GateComputer) => item.files.filter(file => exclusive.has(file) || requiresUserSystemd(file)).length
   for (const file of files) {
     const serial = exclusive.has(file) || requiresUserSystemd(file)
-    const eligible = integrationFleet.filter(item => canRunFile(item, file))
+    const eligible = eligibleForFile(file)
     const free = eligible.filter(item => item.freeSlots > 0)
     // Future cloud capacity behind checks does not exclude the existing busy-builder fallback.
-    const candidates = free.some(item => item.checkMs === 0) ? free : eligible
+    const candidates = preferGithub(free.some(item => item.checkMs === 0) ? free : eligible,
+      item => item.checkMs === 0 && !item.files.length)
     const target = candidates.map((item, order) => ({ item, order, finish: finishWith(item, file) }))
       .sort((left, right) => left.finish - right.finish
         || (serial ? exclusiveCount(left.item) - exclusiveCount(right.item) : 0) || left.order - right.order)[0]?.item
@@ -191,15 +207,15 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
     addFile(target, file)
   }
   // A recent slowdown bounds host work even if the typical estimate is optimistic.
-  const integrationClouds = integrationFleet.filter(item => item.computer.hostRef.kind === 'cloud')
+  const integrationClouds = (file: string) => eligibleForFile(file).filter(item => item.computer.hostRef.kind === 'cloud')
   // Each file can move from a builder to a cloud only once, bounding the number of improving passes.
   for (let pass = 0; pass < files.length; pass++) {
     let moved = false
     for (const host of hosts) {
       while (host.files.length && finish(host, 'conservative') > Math.max(...clouds.map(item => finish(item)))) {
-        const file = [...host.files].reverse().find(file => integrationClouds.some(item => canRunFile(item, file)))
+        const file = [...host.files].reverse().find(file => integrationClouds(file).length > 0)
         if (!file) break
-        const target = [...integrationClouds].filter(item => canRunFile(item, file))
+        const target = integrationClouds(file)
           .sort((left, right) => finishWith(left, file) - finishWith(right, file))[0]!
         const remaining = host.files.filter(value => value !== file)
         let remainingLoad = emptyIntegrationLoad(host.shards)

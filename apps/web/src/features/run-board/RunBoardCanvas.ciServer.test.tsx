@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ActivitySnapshotV1, CiRunJob } from '@foreman-code/contracts'
@@ -43,6 +44,21 @@ it('shows the CI server on a saved Run Board and opens the Run CI jobs', async (
   fireEvent.click(await screen.findByRole('button', { name: /^CI server, .*Open CI jobs/ }))
   const dialog = await screen.findByRole('complementary', { name: 'CI server' })
   expect(await within(dialog).findByRole('button', { name: 'Show tests of unit · unit-api requested by X before rename' })).toBeVisible()
+})
+
+it.each(['{Enter}', ' '])('opens the CI server with %s after a pointer drag without opening on the drag', async key => {
+  server.use(http.get('*/api/management/workspaces/:workspaceId/ci', () =>
+    HttpResponse.json({ runId: runA.runId, jobs: [], truncated: false })))
+  const user = userEvent.setup()
+  await mount()
+  const button = await screen.findByRole('button', { name: /^CI server, .*Open CI jobs/ })
+  fireEvent.pointerDown(button, { clientX: 100, clientY: 100 })
+  fireEvent.pointerUp(button, { clientX: 140, clientY: 150 })
+  fireEvent.click(button, { clientX: 140, clientY: 150, detail: 1 })
+  expect(screen.queryByRole('complementary', { name: 'CI server' })).not.toBeInTheDocument()
+  button.focus()
+  await user.keyboard(key)
+  expect(await screen.findByRole('complementary', { name: 'CI server' })).toBeVisible()
 })
 
 it('keeps the CI server on a saved Run Board when CI cannot be read', async () => {
