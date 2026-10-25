@@ -190,7 +190,7 @@ async function fixture(options: { cloudSlots?: number; files?: string[]; offline
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
     integrationInventory: async () => ({ files, durations: Object.fromEntries(files.map(file => [file, 120_000])) }),
     unitInventory: async () => ({ files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.tsx'],
-      durations: {}}),
+      durations: {}, heavy: [] }),
   }, {
     computers: async () => computers,
     request: async (computer, request) => {
@@ -844,8 +844,7 @@ it('runs cloud checks before systemd integration overflow even when checks move 
 })
 
 it('queues a second gate behind the first while full and affected requests keep using spare cloud slots', async () => {
-  // Leave spare slots explicitly: GitHub-first placement can fill the fleet for a large gate.
-  const f = await fixture({ cloudSlots: 40, files: [...userSystemdIntegrationFiles].slice(0, 4) })
+  const f = await fixture({ cloudSlots: 40 })
   try {
     const gate = { suite: 'integration', scope: 'full', gate: true, commit: 'a'.repeat(40) }
     const first = CiRunOutputSchema.parse(await f.value('ci_run', { ...gate, commandId: randomUUID() }))
@@ -857,10 +856,7 @@ it('queues a second gate behind the first while full and affected requests keep 
     }))
     const second = CiRunOutputSchema.parse(await f.value('ci_run', { ...gate, commandId: randomUUID() }))
     await settle(f.ci)
-    const firstRead = CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: first.ticketId }))
-    expect(firstRead.group?.state).toBe('running')
-    expect(firstRead.partitions!.every(run => run.computer?.hostRef.kind === 'cloud'
-      && run.computer.hostRef.provider === 'github')).toBe(true)
+    expect(CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: first.ticketId })).group?.state).toBe('running')
     expect(CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: second.ticketId }))).toMatchObject({
       run: { state: 'queued', message: expect.stringContaining('gate') },
       queue: { reason: expect.stringContaining('gate') },

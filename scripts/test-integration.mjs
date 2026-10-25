@@ -1,5 +1,4 @@
 import { INSTALLATION_NAMES } from '../packages/contracts/src/installationNames.mjs'
-import { integrationTestFile } from '../packages/contracts/src/ciTestInventory.mjs'
 import { diagnosticWarning } from './diagnostic-warning.mjs'
 import { exclusiveIntegrationFiles, integrationCpuCost,
   requirements } from '../packages/contracts/src/integrationScheduling.mjs'
@@ -11,7 +10,7 @@ import { closeSync, openSync, copyFileSync, existsSync, lstatSync, mkdirSync, mk
   readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { availableParallelism, freemem } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, posix, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { cleanupTestResources, createTestDatabase, createTestRoot, dropTestDatabase, recoverAbandonedTestRoots,
   removeTestRoot, requireTestServerUrl,
@@ -42,7 +41,10 @@ export function partitionIntegrationFiles(files) {
   }
 }
 
-export const isIntegrationTestPath = integrationTestFile
+export function isIntegrationTestPath(file) {
+  if (!file.startsWith('apps/api/test/') || !file.endsWith('.integration.test.ts')) return false
+  return posix.normalize(file) === file && file.split('/').every((part) => part && part !== '.' && part !== '..')
+}
 
 export function isRegularIntegrationFile(base, file) {
   if (!isIntegrationTestPath(file)) return false
@@ -60,7 +62,7 @@ export function isRegularIntegrationFile(base, file) {
 }
 
 export function discoverFiles() {
-  const result = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'apps/api'], { cwd: root })
+  const result = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'apps/api/test'], { cwd: root })
   if (result.status !== 0) throw new Error('Could not discover tracked integration files')
   const files = result.stdout.toString('utf8').split('\0').filter((file) => isRegularIntegrationFile(root, file)).sort()
   if (!files.length || !files.includes(startupFile)) throw new Error('Integration file discovery is incomplete')

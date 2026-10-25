@@ -3,7 +3,6 @@ import { Icon, type IconName } from './Icon'
 import { useFloatingSurface } from './useFloatingSurface'
 import { useOutsidePress } from '../useOutsidePress'
 import { cx } from './utils'
-import { menuKeyTarget, tabOutOfMenu, type MenuTypeahead } from './menuKeys'
 
 interface BaseItem { id: string; label: string; description?: string; icon?: IconName; disabled?: boolean; shortcut?: string }
 export type ActionMenuItem =
@@ -46,7 +45,7 @@ function MenuLevel({ id, label, items, anchor, initial = 'first', onClose, onBac
   const refs = useRef<(HTMLButtonElement | null)[]>([])
   const [submenu, setSubmenu] = useState<string | null>(null)
   const submenuAnchor = useRef<HTMLButtonElement | null>(null)
-  const typeahead = useRef<MenuTypeahead>({ text: '', at: 0 })
+  const typeahead = useRef({ text: '', at: 0 })
   useFloatingSurface(true, anchor, surface, width, nested ? 'start' : 'end', nested ? 'inline' : 'block')
   useEffect(() => {
     const buttons = refs.current.filter((node): node is HTMLButtonElement => Boolean(node))
@@ -65,20 +64,39 @@ function MenuLevel({ id, label, items, anchor, initial = 'first', onClose, onBac
     if ((event.target as HTMLElement).closest('[role="menu"]') !== event.currentTarget) return
     const rtl = getComputedStyle(event.currentTarget).direction === 'rtl'
     const index = refs.current.indexOf(document.activeElement as HTMLButtonElement)
+    const order = items.map((item, i) => item.kind === 'separator' ? -1 : i).filter(i => i >= 0)
+    const offset = order.indexOf(index)
+    let next = -1
     if (event.key === 'Escape' || (nested && event.key === (rtl ? 'ArrowRight' : 'ArrowLeft'))) {
       event.preventDefault(); event.stopPropagation(); onBack(); return
     }
     if (event.key === 'Tab') {
-      const trigger = { current: anchor.current?.closest('.n-action-menu')?.querySelector<HTMLElement>(':scope > button') ?? null }
-      tabOutOfMenu(event, trigger, () => onClose(false))
+      // Resolve a real adjacent focus target before removing the focused menu item.
+      event.preventDefault(); event.stopPropagation()
+      const root = anchor.current?.closest('.n-action-menu')
+      const scope = root?.closest('dialog') ?? document.body
+      const candidates = Array.from(scope.querySelectorAll<HTMLElement>('button,a[href],input,select,textarea,[tabindex="0"]'))
+        .filter(el => !el.closest('[role="menu"],[hidden],[inert]') && !el.matches(':disabled') && el.getClientRects().length > 0)
+      const button = root?.querySelector<HTMLElement>(':scope > button')
+      const current = button ? candidates.indexOf(button) : -1
+      onClose(false)
+      ;(candidates[current + (event.shiftKey ? -1 : 1)] ?? button)?.focus()
       return
     }
     if (event.key === (rtl ? 'ArrowLeft' : 'ArrowRight') && index >= 0 && items[index].kind === 'submenu') {
       event.preventDefault(); event.stopPropagation(); choose(items[index], index); return
     }
-    // Disabled items stay focusable here (aria-disabled), so they stay discoverable.
-    const next = menuKeyTarget(event, { labels: items.map(item => item.label),
-      focusable: items.flatMap((item, i) => item.kind === 'separator' ? [] : [i]), current: index, typeahead: typeahead.current })
+    if (event.key === 'ArrowDown') next = order[(offset + 1) % order.length] ?? -1
+    if (event.key === 'ArrowUp') next = order[(offset - 1 + order.length) % order.length] ?? -1
+    if (event.key === 'Home') next = order[0] ?? -1
+    if (event.key === 'End') next = order.at(-1) ?? -1
+    if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) {
+      const now = Date.now(); const char = event.key.toLocaleLowerCase()
+      const previous = now - typeahead.current.at < 650 ? typeahead.current.text : ''
+      const text = previous === char ? char : previous + char
+      typeahead.current = { text, at: now }
+      next = [...order.slice(offset + 1), ...order.slice(0, offset + 1)].find(i => items[i].label?.toLocaleLowerCase().startsWith(text)) ?? -1
+    }
     if (next >= 0) { event.preventDefault(); setSubmenu(null); refs.current[next]?.focus() }
   }}>
     {items.length === 0 && <p className="n-menu-empty">No actions available.</p>}

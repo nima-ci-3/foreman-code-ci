@@ -22,6 +22,12 @@ export function isRasterImage(mediaType: string): boolean {
   return ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mediaType)
 }
 
+export function formatFileSize(byteSize: number): string {
+  if (byteSize < 1024) return `${byteSize} B`
+  if (byteSize < 1024 * 1024) return `${Number((byteSize / 1024).toFixed(1))} KB`
+  return `${Number((byteSize / (1024 * 1024)).toFixed(1))} MB`
+}
+
 /** IDs are a tuple, never joined with an ambiguous separator or replaced by currentRevisionId. */
 export function fileCardKey(pin: MessageAttachmentRef): string {
   return JSON.stringify([pin.fileId, pin.revisionId])

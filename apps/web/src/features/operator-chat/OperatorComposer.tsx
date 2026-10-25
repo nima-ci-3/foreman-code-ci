@@ -1,5 +1,4 @@
 import { useId, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { isComposerSendKey, useAutosizeTextarea } from '../../shared/ui/composerInput'
 import { parseSessionCommand, type SessionMode } from '@foreman-code/contracts'
 import { Icon, IconButton } from '../../shared/ui/nocturne'
 import { useComposerDraft, useSessionCommandSubmit } from '../conversations'
@@ -24,7 +23,11 @@ export function OperatorComposer({ conversationId, context, attachmentControl, d
   const isNew = command.kind === 'new'
   const pending = commandOnly ? sessionControls?.mutation.isPending : isSending
   const cannotSend = (!isNew && (pending || (!commandOnly && sendDisabled))) || (!value.trim() && !hasAttachments)
-  useAutosizeTextarea(input, value, { minHeight: 36, maxHeight: 144 })
+  useLayoutEffect(() => {
+    if (!input.current) return
+    input.current.style.height = '0px'
+    input.current.style.height = `${Math.min(144, Math.max(36, input.current.scrollHeight))}px`
+  }, [value])
   useLayoutEffect(() => { input.current?.focus() }, [conversationId])
   async function send(content = value.trim()) {
     const parsed = parseSessionCommand(content)
@@ -46,7 +49,9 @@ export function OperatorComposer({ conversationId, context, attachmentControl, d
         onChange={event => change(event.target.value)}
         onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || menu.onKeyDown(event)) return
-          if (isComposerSendKey(event)) { event.preventDefault(); void send() }
+          if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+            event.preventDefault(); void send()
+          }
         }} />
       <div className="operator-composer-actions">
         <ChatPrimaryActions appearance="icon" stopLabel="Stop response" {...(onCancel ? { onStop: onCancel } : {})}>

@@ -1,4 +1,3 @@
-// ci-key-inputs: @modelcontextprotocol/client
 /* global Buffer, process, setInterval, setTimeout, URL */
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'

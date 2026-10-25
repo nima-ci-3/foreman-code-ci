@@ -1,4 +1,3 @@
-import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY } from '@foreman-code/contracts/package-policy'
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
@@ -366,8 +365,8 @@ export async function createSeedReceipt(context: CiContext, { repository, seed, 
   const capturedAt = new Date().toISOString()
   const releases = packages.map(pkg => ({ ...pkg, publishedAt: captured.get(pkg.name)!.metadata.time[pkg.version],
     metadataPath: captured.get(pkg.name)!.metadataPath }))
-  return { schemaVersion: 1, packageManager: PACKAGE_MANAGER, platform: { os: 'linux', arch: 'x64', libc: 'glibc' },
-    ...PACKAGE_RELEASE_POLICY, capturedAt,
+  return { schemaVersion: 1, packageManager: 'pnpm@11.27.0', platform: { os: 'linux', arch: 'x64', libc: 'glibc' },
+    minimumReleaseAge: 2880, minimumReleaseAgeStrict: true, minimumReleaseAgeIgnoreMissingTime: false, capturedAt,
     provenanceDigest: hash(JSON.stringify({ dependencyInputs, releases, inventory: files })),
     review: { ...review, reviewedAt: capturedAt }, maxBytes: 20 * 2 ** 30, maxInodes: 1_000_000, dependencyInputs, files, packages: releases }
 }

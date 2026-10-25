@@ -76,12 +76,9 @@ not a reason to leave the result slow or broken. Report what was fixed and how i
 
 ## Releases
 
-- No release without one clean round on the release commit's code: typecheck, lint, unit and integration, every part
-  passed, on the exact commit the release builds on. A failed round blocks the release; fix and run a new round.
-- By default the round is a proven gate: typecheck and lint run (restoring their saved state), and unit and integration
-  run every test file without a passing result at its current inputs — a file's key covers its text, its imports and
-  the shared inputs (lockfile, CI scripts, test config) — while files no key can prove always run. `--full` runs every
-  file. Owner decision 2026-10-25: no full run is required before a release.
+- No release without one clean full round on the release commit's code: typecheck, lint, unit and integration,
+  all with full scope and every part passed, on the exact commit the release builds on. A failed or affected-scope
+  round blocks the release; fix and run a new full round.
 - The round runs through Foreman CI, not locally. Release only with `corepack pnpm release <X.Y.Z>`
   (`scripts/release.mjs`), which records the passing tickets in the commit's `Clean-Round` trailers. Deployers
   verify a release commit with `node scripts/verify-release-round.mjs <commit>` before deploying it.
@@ -115,13 +112,6 @@ behavior.
 Every bug fix ships its own regression test, through a public interface, that
 fails on the code before the fix and passes after it. Show the failing run on
 the pre-fix commit before merging the fix.
-
-No unit tests for the interface (owner decision 2026-10-25). `apps/web` has no
-unit or component tests: they locked low-quality UI code in place and cost CI
-compute, tokens and time. Do not add any, and do not add test-only fixtures,
-mocks or helpers for it. Verify interface changes in the running app in the
-browser instead. The regression-test rule above applies to the backend, CI,
-Worker and scripts, not to `apps/web`.
 
 Keep generated output, local environment files, caches, and credentials out of
 Git. Make focused changes and preserve unrelated worktree edits.

@@ -226,7 +226,7 @@ export async function superviseWorkerUpdate(record, ports = {}) {
       process.stderr.write('Worker CI smoke explicitly skipped (FOREMAN_INSTALL_SKIP_CI_SMOKE=1).\n');
       return;
     }
-    const { runInstalledCiSmoke } = await import(/* ci-key: apps/worker/src/workerFactory.mjs */ pathToFileURL(join(plan.directory, 'src/worker.mjs')));
+    const { runInstalledCiSmoke } = await import(pathToFileURL(join(plan.directory, 'src/worker.mjs')));
     signal.throwIfAborted();
     await runInstalledCiSmoke(plan.ciSmoke, { signal });
   } } = ports;

@@ -72,7 +72,7 @@ async function builderPlan(speeds?: Map<string, number>) {
   const durations = Object.fromEntries(files.map(file => [file, 30_000]))
   const input: CiRunInput = { suite: 'integration', scope: 'full', gate: true, commandId: 'gate' }
   const parts = await planCiGate(mainCiContext, input, { files, durations },
-    { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, endpoint(), speeds)
+    { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, endpoint(), speeds)
   const integration = parts.filter(part => part.suite === 'integration')
   expect(integration.flatMap(part => part.files).sort()).toEqual([...files].sort())
   const part = (key: string) => integration.find(item => item.plannedHostKey === key)!
@@ -124,16 +124,14 @@ it.each([
   const files = Array.from({ length: 700 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'throughput' },
     { files, durations: Object.fromEntries(files.map(file => [file, 20_000])) },
-    { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, fleet, speeds)
+    { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, fleet, speeds)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
     .toEqual([...files].sort())
   const host = parts.find(part => part.plannedHostKey === builder.key)!
-  // A cloud host finishes after its checks and its integration part.
-  const cloudEnd = Math.max(...[...new Set(parts.map(part => part.plannedHostKey))].filter(key => key !== builder.key)
-    .map(key => parts.filter(part => part.plannedHostKey === key).reduce((sum, part) => sum + part.expectedDurationMs, 0)))
+  const cloudEnd = Math.max(...parts.filter(part => part.plannedHostKey !== builder.key)
+    .map(part => part.expectedDurationMs))
   const measuredEnd = host.files.length * 20_000 / (148 * 20_000 / 800_000)
-  // Files are placed whole: the builder may end at most one cloud wave (one 20 s file) after the clouds.
-  expect(measuredEnd).toBeLessThanOrEqual(cloudEnd + 20_000)
+  expect(measuredEnd).toBeLessThanOrEqual(cloudEnd)
   expect(host.expectedDurationMs).toBeGreaterThanOrEqual(measuredEnd)
 })
 

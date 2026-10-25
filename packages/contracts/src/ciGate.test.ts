@@ -21,19 +21,12 @@ it('rejects gate flags on host jobs outside full integration', () => {
 it('rejects gate requests that select only part of the gate', () => {
   for (const input of [
     { suite: 'unit', scope: 'full' },
-    { suite: 'integration', scope: 'affected', files: ['apps/api/test/site.integration.test.ts'] },
+    { suite: 'integration', scope: 'affected' },
     { suite: 'integration', scope: 'full', partitions: 2 },
     { suite: 'integration', scope: 'full', files: ['apps/api/test/site.integration.test.ts'] },
   ]) {
     expect(OperatorCiRunInputSchema.safeParse({ ...input, gate: true, commandId: 'gate', workspaceId: 'workspace' })
       .success).toBe(false)
-  }
-})
-
-it('accepts the proven gate (affected scope, owner default 2026-10-25) and the full gate', () => {
-  for (const scope of ['affected', 'full']) {
-    expect(OperatorCiRunInputSchema.safeParse({ suite: 'integration', scope, gate: true, commandId: 'gate',
-      workspaceId: 'workspace' }).success).toBe(true)
   }
 })
 

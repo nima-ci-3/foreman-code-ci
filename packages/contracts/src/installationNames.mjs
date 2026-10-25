@@ -175,25 +175,7 @@ export const INSTALLATION_NAMES = /** @type {const} */ ({
 /** Embed the frozen names when shipping a standalone launcher or Worker script.
  * @param {string} source
  */
-/** Constants a standalone installed file may import from a dependency-free contracts module; the installer inlines
- * them, since installed copies have no node_modules. */
-export const STANDALONE_INSTALLATION_NAMES = { module: /(?:installationNames\.mjs|installation-names)/, values: { INSTALLATION_NAMES } }
-
-/**
- * @param {string} source
- * @param {readonly { module: RegExp; values: Record<string, unknown> }[]} [modules] Further constant modules to inline
- *   (the package policy for Worker files).
- */
-export function standaloneInstallationSource(source, modules = []) {
-  let result = source
-  for (const { module, values } of [STANDALONE_INSTALLATION_NAMES, ...modules]) {
-    result = result.replace(new RegExp(`^import \\{ ([\\w$, ]+) \\} from ['"][^'"\\n]*${module.source}['"];?\\r?\\n`, 'm'),
-      (line, names) => {
-        const imported = names.split(',').map(name => name.trim()).filter(Boolean)
-        // Only constants inline; an import that also names a function stays as written.
-        if (!imported.every(name => Object.hasOwn(values, name))) return line
-        return imported.map(name => `const ${name} = ${JSON.stringify(values[name])}\n`).join('')
-      })
-  }
-  return result
+export function standaloneInstallationSource(source) {
+  return source.replace(/^import \{ INSTALLATION_NAMES \} from ['"][^'"\n]*(?:installationNames\.mjs|installation-names)['"]\r?\n/m,
+    `const INSTALLATION_NAMES = ${JSON.stringify(INSTALLATION_NAMES)}\n`)
 }

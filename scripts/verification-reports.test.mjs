@@ -83,6 +83,7 @@ test('unit package commands honor configured worker limits and local defaults', 
   const wrapper = new URL('./ci-remote.mjs', import.meta.url).pathname
   const projects = [
     ['apps/api', 'test', [{ phase: null, maxWorkers: 4 }]],
+    ['apps/web', 'test:unit', [{ phase: 'fast', maxWorkers: 4 }, { phase: 'heavy', maxWorkers: 4 }]],
     ['packages/contracts', 'test', [{ phase: null, maxWorkers: 12 }]],
   ]
   for (const [project, script, defaults] of projects) {
@@ -332,10 +333,10 @@ test('an already cancelled request never starts its command', async () => {
   } finally { f.close() }
 })
 
-test('unit inventory includes every package runner and the root scripts; the web interface has no unit tests', () => {
+test('unit inventory includes all package runners and both web/root smoke commands', () => {
   const portions = expectedPortions(new URL('..', import.meta.url).pathname, 'unit')
   assert.deepEqual(portions.map(({ key }) => key), ['root:install', 'root:worker-artifact', 'packages/contracts:test', 'packages/contracts-node:test', 'apps/api:test',
-    'apps/worker:test', 'root:test:scripts'])
+    'apps/web:test:unit', 'apps/web:test:run-graph-smoke', 'apps/worker:test', 'root:test:scripts'])
 })
 
 

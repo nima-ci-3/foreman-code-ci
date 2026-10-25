@@ -38,3 +38,8 @@ export function visibleReferenceRows(pages: readonly FilePage[] = []): FileRow[]
   return Array.from(rows.values()).filter(({ file }) => file.state !== 'removed')
 }
 
+export function referenceFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+}

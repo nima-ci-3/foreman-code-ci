@@ -50,6 +50,7 @@
 .run-subagent-summary .run-subagent-note { flex-basis: 100%; margin: 0; }
 .run-subagent-note { margin: 0; font-size: 12px; color: var(--text-muted); }
 .run-subagent-feed { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
+.run-subagent-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .run-subagent-feed .n-code pre { max-height: 260px; overflow: auto; }
 .run-subagent-steer { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .run-subagent-steer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }

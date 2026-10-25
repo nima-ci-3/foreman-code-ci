@@ -1,4 +1,3 @@
-// ci-key-inputs: apps/worker runtime/browser scripts/build-worker-artifact.mjs scripts/worker-snapshot-policy.mjs
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

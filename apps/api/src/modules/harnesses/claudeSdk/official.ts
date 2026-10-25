@@ -27,7 +27,7 @@ export async function loadInstalledClaudeSdk(sdkEntrypoint?: string): Promise<ty
   const entrypoint = await realpath(selected)
   const manifest = JSON.parse(await readFile(join(dirname(entrypoint), 'package.json'), 'utf8')) as { name?: unknown; version?: unknown }
   if (manifest.name !== '@anthropic-ai/claude-agent-sdk' || typeof manifest.version !== 'string' || !manifest.version) throw new Error('Claude SDK manifest is invalid')
-  const sdk = await import(/* ci-key: @anthropic-ai/claude-agent-sdk */ pathToFileURL(entrypoint).href) as typeof import('@anthropic-ai/claude-agent-sdk')
+  const sdk = await import(pathToFileURL(entrypoint).href) as typeof import('@anthropic-ai/claude-agent-sdk')
   assertClaudeSdkContract(sdk, manifest.version)
   return sdk
 }

@@ -4,13 +4,12 @@ import { useMutation } from '@tanstack/react-query'
 import { createStore, useStore } from 'zustand'
 import { Download, File as FileIcon, RotateCcw, Trash2, Upload } from 'lucide-react'
 import type { FileRow } from '@foreman-code/contracts/files'
+import { CommandAttempt } from '../../shared/api/commandAttempt'
 import { assertSession, sessionGeneration } from '../../shared/api/sessionBoundary'
-import { Button, IconButton, TextField } from '../../shared/ui/nocturne'
+import { Button, ConfirmDialog, IconButton, TextField } from '../../shared/ui/nocturne'
 import { useFileDrop } from '../../shared/ui/useFileDrop'
-import { formatFileSize } from '../../shared/ui/formatters'
 import { ATTACHMENT_ACCEPT, inspectAttachment } from '../attachments'
-import { FileRemovalDialog } from '../file-cards'
-import { projectFilesClient } from './projectFilesClient'
+import { projectFilesClient, type ProjectFileRemoveInput } from './projectFilesClient'
 import { useProjectFileRemove, useProjectFilesQuery, useProjectFileUpload } from './projectFilesQueries'
 import './projectFiles.css'
 
@@ -99,6 +98,12 @@ function WorkspaceProjectFiles({ workspaceId }: ProjectFilesSectionProps) {
   </section>
 }
 
+function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+}
+
 function ProjectFileItem({ workspaceId, row, onRemove }: ProjectFilesSectionProps & { row: FileRow; onRemove: () => void }) {
   const controller = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -137,7 +142,7 @@ function ProjectFileItem({ workspaceId, row, onRemove }: ProjectFilesSectionProp
       <span className="project-file-name" title={name}>{name}</span>
     </span>
     <span className="project-file-type" title={row.revision.mediaType}>{row.revision.filename.split('.').at(-1)?.toUpperCase()}</span>
-    <span className="project-file-size" title={`${row.revision.byteSize} bytes`}>{formatFileSize(row.revision.byteSize)}</span>
+    <span className="project-file-size" title={`${row.revision.byteSize} bytes`}>{fileSize(row.revision.byteSize)}</span>
     {row.file.state === 'ready' ? <IconButton label={`Download ${name}`} size="sm" variant="ghost"
       disabled={download.isPending} onClick={() => {
         const signal = controller.current?.signal
@@ -155,8 +160,28 @@ function ProjectFileRemoval({ workspaceId, row, onClose, onRemoved }: ProjectFil
   row: FileRow; onClose: () => void; onRemoved: () => void
 }) {
   const mutation = useProjectFileRemove(workspaceId)
-  return <FileRemovalDialog filename={row.revision.filename}
+  const attempt = useRef(new CommandAttempt<Omit<ProjectFileRemoveInput, 'commandId'>>())
+  const inFlight = useRef(false)
+  const locked = mutation.isPending || attempt.current.unresolved
+  const close = () => { if (!locked) onClose() }
+  const remove = async () => {
+    if (inFlight.current) return
+    inFlight.current = true
+    const generation = sessionGeneration()
+    try {
+      await mutation.mutateAsync({ ...attempt.current.input({ workspaceId, row }), generation })
+      assertSession(generation)
+      attempt.current.succeeded()
+      onRemoved()
+      onClose()
+    } catch (error) {
+      attempt.current.failed(error)
+    } finally { inFlight.current = false }
+  }
+  return <ConfirmDialog open title={`Remove ${row.revision.filename}?`}
     description="It’s removed from the project files. Runs that already used it keep their copy."
-    remove={(commandId) => mutation.mutateAsync({ workspaceId, row, commandId, generation: sessionGeneration() })}
-    onRemoved={onRemoved} onClose={onClose} />
+    dismissalReason={attempt.current.unresolved ? 'Removal is unconfirmed. Retry checks the original removal before you can close this dialog.' : undefined}
+      pending={mutation.isPending} confirmLabel={mutation.isError ? 'Retry' : 'Remove'}
+    error={mutation.isError ? 'Couldn’t remove the file.' : undefined}
+    onOpenChange={(open) => { if (!open) close() }} onConfirm={() => { void remove() }} />
 }

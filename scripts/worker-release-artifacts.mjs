@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { artifactFiles, validateWorkerTarget, workerReleaseVersion, assertWorkerUpdateToolchain } from './worker-artifact-files.mjs'
-import { WORKER_PUBLICATION_DEADLINE_MS as PUBLICATION_DEADLINE_MS } from '../packages/contracts/src/workerPublication.mjs'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 // Retain bounded publication retries for slow upload links.
 const PUBLICATION_COMMAND_TIMEOUT_MS = 15 * 60_000
 const PUBLICATION_RETRY_MS = 60_000
+// WORKER_PUBLICATION_DEADLINE_MS in packages/contracts/src/workerUpdate.ts; installed scripts cannot import contracts.
+const PUBLICATION_DEADLINE_MS = 2 * 60 * 60_000
 
 /** Retries keep the pending publication's start and deadline until it succeeds. */
 function publicationWindow(previous, now = Date.now()) {
@@ -313,14 +314,12 @@ export async function buildWorkerReleaseArtifacts({
       const identity = reused || await verifyArtifact(staging, target, version, commit)
       await chmod(staging, 0o700)
       await rename(staging, join(directory, identity.manifestSha256))
-      // Node 22 transition carriers are large (they embed Node 24) and serve only Workers still on Node 22: they are
-      // published when such a Worker asks for its update, not with every release.
-      return { target, ...identity, ...(bootstrapNode ? { transition: true } : {}) }
+      return { target, ...identity }
     }))
     const failed = builds.find(build => build.status === 'rejected')
     if (failed) throw failed.reason
     const artifacts = builds.map(build => build.value)
-    const unpublished = artifacts.filter(artifact => !artifact.github && !artifact.transition)
+    const unpublished = artifacts.filter(artifact => !artifact.github)
     const github = unpublished.length
       ? publish && await publish({ repository, directory, commit, artifacts: unpublished, run })
       : artifacts[0].github
@@ -368,7 +367,7 @@ export async function publishInstalledWorkerArtifacts({ directory, repositoryNam
   try {
     await writeArtifactIndex(directory, { ...index,
       publication: { state: 'pending', lastError: null, ...publicationWindow(index.publication) } })
-    const unpublished = index.artifacts.filter(artifact => !artifact.github && !artifact.transition)
+    const unpublished = index.artifacts.filter(artifact => !artifact.github)
     const github = await publish({ name: repositoryName, directory, commit, artifacts: unpublished,
       run: run ?? runWorkerPublicationCommand })
     const published = { ...index, github, publication: { state: 'published', lastError: null } }
@@ -377,29 +376,6 @@ export async function publishInstalledWorkerArtifacts({ directory, repositoryNam
   } catch (error) {
     await recordWorkerPublicationFailure(directory, error)
     throw error
-  }
-}
-
-/** Publishes one transition carrier on demand, once: concurrent requests for the same bundle share one upload. */
-export async function publishTransitionArtifact({ release, manifestSha256, run = runWorkerPublicationCommand,
-  publish = publishWorkerArtifactsToGitHub }) {
-  if (!/^[a-f0-9]{64}$/u.test(manifestSha256)) throw new Error('Invalid transition bundle identity.')
-  const directory = join(release, 'worker-artifacts')
-  const lock = join(directory, `.transition-${manifestSha256}.publishing`)
-  try { await writeFile(lock, String(process.pid), { flag: 'wx', mode: 0o600 }) }
-  catch (error) { if (error.code === 'EEXIST') return; throw error }
-  try {
-    const index = JSON.parse(await readFile(join(directory, 'index.json'), 'utf8'))
-    const artifact = index.artifacts.find(entry => entry.manifestSha256 === manifestSha256 && entry.transition)
-    if (!artifact || artifact.github) return
-    const { repository, commit } = JSON.parse(await readFile(join(release, 'ci-smoke.json'), 'utf8'))
-    const github = await publish({ name: repository, directory, commit, artifacts: [artifact], run })
-    // Re-read: the release publication may have rewritten the index meanwhile.
-    const current = JSON.parse(await readFile(join(directory, 'index.json'), 'utf8'))
-    await writeArtifactIndex(directory, { ...current, artifacts: current.artifacts.map(entry =>
-      entry.manifestSha256 === manifestSha256 ? { ...entry, github } : entry) })
-  } finally {
-    await rm(lock, { force: true })
   }
 }
 
@@ -438,7 +414,7 @@ UMask=0077
 
 // The publication service starts this script through the current-release symlink; Node reports the real path.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
-  && ['publish', 'recover', 'stopped', 'publish-transition'].includes(process.argv[2])) {
+  && ['publish', 'recover', 'stopped'].includes(process.argv[2])) {
   const [directory, repositoryName, commit] = process.argv.slice(3)
   try {
     if (process.argv[2] === 'stopped') {
@@ -448,8 +424,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
       }
     } else {
       const run = runWorkerPublicationCommand
-      if (process.argv[2] === 'publish-transition') await publishTransitionArtifact({ release: directory, manifestSha256: repositoryName, run })
-      else if (process.argv[2] === 'recover') await recoverInstalledWorkerArtifacts({ release: directory, run })
+      if (process.argv[2] === 'recover') await recoverInstalledWorkerArtifacts({ release: directory, run })
       else await publishInstalledWorkerArtifacts({ directory, repositoryName, commit, run })
       console.log('Worker artifacts published and verified on GitHub.')
     }
