@@ -1,9 +1,10 @@
+import { executionNodeCut } from '../../shared/mocks/executionNodeCut'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { RepeatGraphCurrentStateSchema, repeatGraphTopologyCurrent } from '@foreman-code/contracts/current'
+import { repeatGraphTopologyCurrent } from '@foreman-code/contracts/current'
 import { server } from '../../mocks/server'
 import { WorkflowBoardProvider } from '../board-core'
 import { RunBoardCanvas } from './RunBoardCanvas'
@@ -15,7 +16,7 @@ const { scope, version } = versionReply(runA)
 const identity = (node: string) => ({ workflowNodeId: node, executionId: `exec-${node}`, agentId: `agent-${node.slice(5)}`,
   agentConfigurationVersionId: version.agentConfigurationVersionIds[`agent-${node.slice(5)}`]!, attempt: 1, occurrence: null })
 // X has finished and handed its result to Y, which is now working on it.
-const current = RepeatGraphCurrentStateSchema.parse({
+const current = executionNodeCut({
   kind: 'current', protocolVersion: 1, scope, topology: repeatGraphTopologyCurrent(version),
   asOfSequence: '2', retentionFloor: '0', historyCoverage: 'from_admission',
   state: { run: { executionState: 'running', outcome: 'pending', stopRequested: false,
@@ -71,9 +72,9 @@ it.each([
   const transfer = { transferId: 'transfer-1', ...sent, relationshipId: 'edge-xy', fromNodeId: 'node-x',
     fromExecutionId: 'exec-node-x', toNodeId: 'node-y', toActivationId: 'activation-y' }
   server.use(
-    http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/graph/v1/current', () => HttpResponse.json({ ...current,
+    http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/graph/v1/current', () => HttpResponse.json(executionNodeCut({ ...current,
       state: { ...current.state, bindings: [], results: [],
-        executions: [worked('node-x', 'activation-x', 'completed'), worked('node-y', 'activation-y', 'running')] } })),
+        executions: [worked('node-x', 'activation-x', 'completed'), worked('node-y', 'activation-y', 'running')] } }))),
     http.get('*/api/management/workspaces/:workspaceId/runs/:runId/handoffs', () => HttpResponse.json({ scope, policy: 'work',
       runState: 'running', connections: [], routes: [], notices: [], unresolved: [], directionWait: false, transfers: [transfer] })))
   const container = await mount()
@@ -94,11 +95,11 @@ it('keeps the Orchestrator on its finished turn while the Worker result travels 
   let back_sent = false
   // The server commits each hand-off with the work it starts, so both reads always agree.
   server.use(
-    http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/graph/v1/current', () => HttpResponse.json({ ...current,
+    http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/graph/v1/current', () => HttpResponse.json(executionNodeCut({ ...current,
       asOfSequence: back_sent ? '3' : '2', state: { ...current.state, bindings: [], results: [], executions: back_sent
         ? [worked('node-x', 'exec-x-1', 'activation-x-1', 'completed'), worked('node-y', 'exec-y-1', 'activation-y', 'completed'),
           worked('node-x', 'exec-x-2', 'activation-x-2', 'queued')]
-        : [worked('node-x', 'exec-x-1', 'activation-x-1', 'completed'), worked('node-y', 'exec-y-1', 'activation-y', 'running')] } })),
+        : [worked('node-x', 'exec-x-1', 'activation-x-1', 'completed'), worked('node-y', 'exec-y-1', 'activation-y', 'running')] } }))),
     http.get('*/api/management/workspaces/:workspaceId/runs/:runId/handoffs', () => HttpResponse.json({ scope, policy: 'work',
       runState: 'running', connections: [], routes: [], notices: [], unresolved: [], directionWait: false,
       transfers: back_sent ? [send, back] : [send] })))

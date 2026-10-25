@@ -19,7 +19,7 @@ vi.mock('../src/modules/conversations/operatorChat.js', async original => {
 })
 afterEach(() => { composition.resolvers.splice(0) })
 
-it('offers live steering to production Codex Operator chats and not to Claude chats', async () => {
+it('offers live steering to production Codex and Claude Operator chats', async () => {
   const config = loadConfig({ DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/operator_chat_steering' })
   const database = createDatabase(config.database)
   const checkpoints = createCheckpointStore(config.database.connectionString, 'operator_chat_steering', config.database)
@@ -35,7 +35,7 @@ it('offers live steering to production Codex Operator chats and not to Claude ch
     // Qualification reads the accepted owner configuration; the live row/runtime checks stay in the service.
     const row = { harness: 'codex' } as ConversationRow
     expect(await resolver.qualifiedSteer?.(row, configuration('codex'))).toBe(true)
-    expect(await resolver.qualifiedSteer?.({ ...row, harness: 'claude' }, configuration('claude'))).toBe(false)
+    expect(await resolver.qualifiedSteer?.({ ...row, harness: 'claude' }, configuration('claude'))).toBe(true)
   } finally {
     await production.app.close()
     await production.engine.shutdown()

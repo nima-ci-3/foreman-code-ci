@@ -1,3 +1,4 @@
+import { executionNodeCut } from '../../shared/mocks/executionNodeCut'
 import { webcrypto } from 'node:crypto'
 import { digestCurrentValue } from './runDetailsClient'
 import { collaborationContractFixtures, WorkflowExecutionChatTargetSchema } from '@foreman-code/contracts'
@@ -14,7 +15,7 @@ import { RouterProvider, createMemoryHistory, createRouter } from '@tanstack/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import type { CiRunJob } from '@foreman-code/contracts'
-import { type WorkflowDefinitionCurrent, RepeatGraphCurrentStateSchema, WorkflowVersionCurrentSchema, CurrentWorkflowCreateInputSchema, RunStartCurrentInputSchema } from '@foreman-code/contracts/current'
+import { type WorkflowDefinitionCurrent, WorkflowVersionCurrentSchema, CurrentWorkflowCreateInputSchema, RunStartCurrentInputSchema } from '@foreman-code/contracts/current'
 import { routeTree } from '../../app/router'
 import { server } from '../../mocks/server'
 import { currentWorkflowFixture } from '../../shared/mocks/currentWorkflow'
@@ -192,7 +193,7 @@ function runningNodes(mock: Mock, runId: string) {
   const detail = mock.runs.get(runId)!, current = mock.currents.get(runId)!
   const version = mock.versions.get(detail.run.workflowVersionId)!
   detail.run.executionState = 'running'
-  mock.currents.set(runId, RepeatGraphCurrentStateSchema.parse({ ...current,
+  mock.currents.set(runId, executionNodeCut({ ...current,
     asOfSequence: String(BigInt(current.asOfSequence) + 1n), state: { ...current.state,
       run: { ...current.state.run, executionState: 'running' },
       executions: version.definition.nodes.map((node, index) => ({
@@ -784,7 +785,7 @@ describe('latest Run on the draft Board', () => {
     runningNodes(mock, run.id)
     const current = mock.currents.get(run.id)!
     mock.settle(run.id)
-    mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...mock.currents.get(run.id),
+    mock.currents.set(run.id, executionNodeCut({ ...mock.currents.get(run.id),
       state: { ...mock.currents.get(run.id)!.state,
         executions: current.state.executions.map(execution => ({ ...execution, state: 'completed', resultOutcome: 'succeeded' })) } }))
     await mounted.query.invalidateQueries()
@@ -890,7 +891,7 @@ describe('latest Run on the draft Board', () => {
     expect(within(controls()).queryByRole('button', { name: 'Start saved version' })).not.toBeInTheDocument()
     const current = mock.currents.get(run.id)!, sender = current.state.executions[0]!, recipient = current.state.executions[1]!
     const digest = `sha256:${'1'.repeat(64)}`
-    mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...current,
+    mock.currents.set(run.id, executionNodeCut({ ...current,
       asOfSequence: String(BigInt(current.asOfSequence) + 1n), state: { ...current.state,
         executions: [{ ...sender, state: 'completed', resultOutcome: 'succeeded' }, { ...recipient, state: 'running' }],
         results: [{ execution: sender.identity, resultDigest: digest }],
@@ -956,7 +957,7 @@ describe('latest Run on the draft Board', () => {
     expect(mock.versions.size).toBe(1)
     const current = mock.currents.get(run.id)!
     mock.settle(run.id)
-    mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...mock.currents.get(run.id),
+    mock.currents.set(run.id, executionNodeCut({ ...mock.currents.get(run.id),
       state: { ...mock.currents.get(run.id)!.state,
         executions: current.state.executions.map(execution => ({ ...execution, state: 'completed', resultOutcome: 'succeeded' })) } }))
     await mounted.query.invalidateQueries()
@@ -1060,7 +1061,7 @@ describe('retained Board Run polling and presentation', () => {
   function complete(mock: Mock, runId: string) {
     mock.settle(runId)
     const current = mock.currents.get(runId)!
-    mock.currents.set(runId, RepeatGraphCurrentStateSchema.parse({ ...current, state: { ...current.state,
+    mock.currents.set(runId, executionNodeCut({ ...current, state: { ...current.state,
       executions: current.state.executions.map(execution => ({ ...execution, state: 'completed', resultOutcome: 'succeeded' })) } }))
   }
   function ciJob(node: WorkflowDefinitionCurrent['nodes'][number]): CiRunJob {
@@ -1089,7 +1090,7 @@ describe('retained Board Run polling and presentation', () => {
     const { mock, user, mounted, run, graph } = await liveBoard()
     const work = (runId: string) => {
       const current = mock.currents.get(runId)!
-      mock.currents.set(runId, RepeatGraphCurrentStateSchema.parse({ ...current,
+      mock.currents.set(runId, executionNodeCut({ ...current,
         asOfSequence: String(BigInt(current.asOfSequence) + 1n), state: { ...current.state,
           executions: current.state.executions.map(execution => ({ ...execution, workActivationId: `work-${runId}-${execution.identity.workflowNodeId}` })) } }))
     }
@@ -1129,7 +1130,7 @@ describe('retained Board Run polling and presentation', () => {
     vi.spyOn(performance, 'now').mockReturnValue(performance.now())
     const current = mock.currents.get(run.id)!, sender = current.state.executions[0]!, recipient = current.state.executions[1]!
     const digest = `sha256:${'1'.repeat(64)}`
-    mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...current,
+    mock.currents.set(run.id, executionNodeCut({ ...current,
       asOfSequence: String(BigInt(current.asOfSequence) + 1n), state: { ...current.state,
         executions: [{ ...sender, state: 'completed', resultOutcome: 'succeeded' }, { ...recipient, state: 'running' }],
         results: [{ execution: sender.identity, resultDigest: digest }],
@@ -1344,7 +1345,7 @@ describe('latest Run inspection on the retained Board', () => {
     mock.runs.get(run.id)!.run.executionState = 'running'
     const execution = { kind: 'job', workflowNodeId: job.id, jobDefinitionId: job.jobDefinitionId,
       jobDefinitionVersionId: job.jobDefinitionVersionId, executionId: 'job-node-execution', attempt: 1 }
-    mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...current, asOfSequence: String(BigInt(current.asOfSequence) + 1n), state: { ...current.state,
+    mock.currents.set(run.id, executionNodeCut({ ...current, asOfSequence: String(BigInt(current.asOfSequence) + 1n), state: { ...current.state,
       run: { ...current.state.run, executionState: 'running' }, executions: [{ identity: { ...execution, occurrence: null }, inputDigest: digest,
         previousExecutionId: null, state: 'running', resultOutcome: null }] } }))
     const detail = RunExecutionDetailSchema.parse({ run: { ...current.scope, executionState: 'running', outcome: 'pending', createdAt: run.createdAt, cleanupPending: false },
@@ -1376,7 +1377,7 @@ describe('latest Run inspection on the retained Board', () => {
     expect(await screen.findByRole('region', { name: 'Job artifacts' })).toBeVisible()
     const final = mock.currents.get(run.id)!
     mock.settle(run.id)
-    mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...mock.currents.get(run.id), state: {
+    mock.currents.set(run.id, executionNodeCut({ ...mock.currents.get(run.id), state: {
       ...mock.currents.get(run.id)!.state, executions: final.state.executions.map(item => ({ ...item, state: 'completed', resultOutcome: 'failed' })) } }))
     await mounted.query.invalidateQueries()
     await waitFor(() => expect(canvasNode(job.id)).toHaveTextContent('Failed'))

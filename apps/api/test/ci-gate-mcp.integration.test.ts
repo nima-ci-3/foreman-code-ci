@@ -844,7 +844,8 @@ it('runs cloud checks before systemd integration overflow even when checks move 
 })
 
 it('queues a second gate behind the first while full and affected requests keep using spare cloud slots', async () => {
-  const f = await fixture({ cloudSlots: 40 })
+  // Leave spare slots explicitly: GitHub-first placement can fill the fleet for a large gate.
+  const f = await fixture({ cloudSlots: 40, files: [...userSystemdIntegrationFiles].slice(0, 4) })
   try {
     const gate = { suite: 'integration', scope: 'full', gate: true, commit: 'a'.repeat(40) }
     const first = CiRunOutputSchema.parse(await f.value('ci_run', { ...gate, commandId: randomUUID() }))
