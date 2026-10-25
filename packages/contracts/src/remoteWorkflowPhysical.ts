@@ -55,6 +55,13 @@ export const RemoteNativeHistorySchema = z.object({ nativeSubmission: z.lazy(() 
     semantic: z.lazy(() => ApprovalResponseSemanticSchema), responseDigest: z.string().regex(/^[a-f0-9]{64}$/).optional()
   }).strict()).max(128).optional(), canceledRequestIds: z.array(z.string()).max(128).optional(),
 }).strict()
+/** The provider's final answer: Codex reports { text }, Claude the bare text. */
+function nativeText(output: unknown): string | undefined {
+  if (typeof output === 'string') return output
+  const parsed = z.object({ text: z.string() }).strict().safeParse(output)
+  return parsed.success ? parsed.data.text : undefined
+}
+function fail(): never { throw new Error('original native text required') }
 /** Original terminal result and its declared command association only. Canonical
  * publication receipts, saved declarations and original lifetime ownership must
  * still be verified by the receiver before accepting any artifact digest. */
@@ -66,7 +73,7 @@ export const RemoteWorkflowPhysicalOutputSchema = z.discriminatedUnion('kind', [
     }
   }),
   z.object({ kind: z.literal('text-only'), result: z.lazy(() => ExecutionResultSchema).superRefine((value,context) => {
-    if (value.output !== undefined && !z.object({ text: z.string() }).strict().safeParse(value.output).success)
+    if (value.output !== undefined && nativeText(value.output) === undefined)
       context.addIssue({ code: 'custom', message: 'Only the actual provider text-only result can attest zero result artifacts.' })
   }) }).strict(),
   z.object({ kind: z.literal('published-artifacts'), resultProtocol: ResultProtocolSchema.optional(), result: z.lazy(() => ExecutionResultSchema),
@@ -74,7 +81,7 @@ export const RemoteWorkflowPhysicalOutputSchema = z.discriminatedUnion('kind', [
     try {
       canonicalGraphJson(value.result, 64 * 1024)
       if (value.result.outcome !== 'succeeded') throw new Error('successful original terminal result required')
-      const output = z.object({ text: z.string() }).strict().parse(value.result.output)
+      const output = { text: nativeText(value.result.output) ?? fail() }
       const schema = value.resultProtocol
         ? z.union([ArtifactCoordinationResultSchema, ChoiceArtifactCoordinationResultSchema, HandoffCoordinationResultSchema])
         : z.union([WorkflowArtifactResultEnvelopeV1Schema, WorkflowChoiceArtifactResultEnvelopeV1Schema, WorkHandoffResultSchema])
@@ -96,7 +103,7 @@ export function remoteWorkflowPhysicalOutput(result: z.infer<typeof ExecutionRes
   }
   if (failure) return RemoteWorkflowPhysicalOutputSchema.parse({ kind: 'invalid-artifacts', result, failure })
   try {
-    const native = z.object({ text: z.string() }).strict().parse(result.output)
+    const native = { text: nativeText(result.output) ?? fail() }
     const envelope = z.object({ artifactOutputs: WorkflowArtifactResultV1Schema }).passthrough().parse(JSON.parse(native.text))
     const keys = new Set(envelope.artifactOutputs.outputs.map((output) => output.outputKey))
     if (keys.size !== declaration.outputKeys.length || declaration.outputKeys.some((key) => !keys.has(key))) {
