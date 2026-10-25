@@ -51,6 +51,7 @@ export function allocateClaudeNativeHarness(input: ClaudeNativeAllocation): Clau
     ...(input.liveCallbacks ? { liveCallbacks: input.liveCallbacks } : {}),
     ...(input.cancelPendingRequests ? { cancelPendingRequests: input.cancelPendingRequests } : {}),
     ...(input.initializationTimeoutMs !== undefined ? { initializationTimeoutMs: input.initializationTimeoutMs } : {}),
+    ...(input.newSessionId ? { newSessionId: input.newSessionId } : {}),
     decodeFactory(start) {
       const normalizer = createClaudeEventNormalizer({ owner: input.ownerForStart(start), observedAt: now })
       return (raw) => normalizer.ingest(raw).map((event) => {

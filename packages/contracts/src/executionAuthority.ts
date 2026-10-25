@@ -5,6 +5,7 @@ import { RecordedHarnessQualificationSchema } from './harnessQualification.js'
 import { NativeExecutionPlacementSchema, AcceptedNodePlacementSchema, DispatchIntentSchema } from './nodePlacement.js'
 import { RemoteReviewerRequestSchema, RemoteOwnerControlSchema } from './remoteExecution.js'
 import { DEVICE_APPLICATION_JSON_BYTES } from './deviceApplication.js'
+import { WorkerClaudeAuthorityRequestSchema } from './workerConversations.js'
 export const ExecutionAuthorityRequestSchema = z.object({ version: z.literal(1),
   action: z.enum(['start', 'read', 'control', 'stop', 'retain-reviewer', 'review']),
   intent: DispatchIntentSchema, placement: AcceptedNodePlacementSchema, review: RemoteReviewerRequestSchema.optional(),
@@ -25,5 +26,10 @@ export const ExecutionFactsRequestSchema = z.object({ method: z.literal('read-fa
 export const ExecutionFactsResultSchema = z.object({ version: z.literal(1), intent: DispatchIntentSchema, placement: AcceptedNodePlacementSchema,
   executionPlacement: NativeExecutionPlacementSchema, configuration: z.lazy(() => AgentConfigurationVersionSchema),
   harness: z.object({ override: HostHarnessOverrideSchema, profileProof: HostHarnessProfileEvidenceSchema,
-    installation: HostHarnessInstallationSchema, qualification: RecordedHarnessQualificationSchema }).strict(),
+    installation: HostHarnessInstallationSchema, qualification: RecordedHarnessQualificationSchema.optional() }).strict(),
 }).strict()
+
+/** A paired Worker's Claude callback for its admitted workflow execution; Main authorizes it against the Run. */
+export const ExecutionClaudeAuthorityRequestSchema = z.object({ method: z.literal('claude-authority'),
+  authorization: ExecutionAuthorityRequestSchema, request: WorkerClaudeAuthorityRequestSchema }).strict()
+  .refine(value => value.authorization.action === 'read' && !['file', 'pending'].includes(value.request.phase))

@@ -107,7 +107,7 @@ export function createExecutionCredentialProvider(dependencies: ExecutionCredent
       const detection = remoteWorkflow.isRemote(input.executionId)
         ? remoteMcpPreflight(manager, preparedContext)
         : new McpDetectionService(nativeFactories.inspector(manager), appMcpEndpoint)
-      if (input.harness === 'claude') {
+      if (input.harness === 'claude' && !remoteWorkflow.isRemote(input.executionId)) {
         const claude = launches.claudeOf(manager)
         if (!claude || configuration.harness.harness !== 'claude') throw new DomainError('CLAUDE_OWNER_UNAVAILABLE', 'The exact Claude launch is unavailable.', 409)
         return prepareClaudeWorkflowCredentials({ input, configuration: configuration.harness, claude,
