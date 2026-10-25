@@ -15,7 +15,7 @@ const diagnosticsPath = new URL('../../../../worker/src/diagnostics.mjs', import
 const { WorkerError } = await import(diagnosticsPath) as { WorkerError: new (code: string) => Error & { code: string } }
 
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0' }
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2' }
 const facts = { ...target, rootPersistent: true, homePersistent: true, storagePersistent: true }
 const roots: string[] = []
 afterEach(async () => {
@@ -193,7 +193,7 @@ it('keeps the running product version when an equivalent bundle advertises a lat
 })
 
 it.each([
-  { target: { ...target, node: 'v24.22.1' } },
+  { target: { ...target, node: 'v22.23.3' } },
   { protocolVersion: 2 },
   { identityFormat: 2 },
 ])('does not treat changed target or protocol facts as current: %s', async change => {

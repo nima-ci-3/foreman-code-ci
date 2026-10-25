@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { canonicalJson } from '@foreman-code/contracts/canonical-json'
 import { RemoteExecutionRpcRequestSchema } from '@foreman-code/contracts/remote-execution-rpc'
 import { OUTPUT_SCHEMA_MAX_BYTES } from '@foreman-code/contracts/current'
 import type { NativeHistory } from '../../harnesses/port.js'
 import { RemoteNativeSessionManager } from './nativeManagerProxy.js'
+import { CodexAppServerSessionManager } from '../../harnesses/codexAppServer.js'
 import { RemoteOperationJournal } from './operationJournal.js'
 import { runningInstalledFixture } from './__tests__/installedWorkflowHost.js'
 import { readUntil } from '../../../../test/helpers/observableCondition.js'
@@ -102,6 +103,58 @@ describe('Worker output validation', () => {
       expect(f.turns.mock.calls[0]![1].outputSchema).toEqual(bounded)
       f.finish('succeeded')
       await f.settled
+    } finally {
+      f.finish('succeeded')
+      await f.host.close()
+    }
+  })
+
+  it('settles a Stop that arrives during a corrective turn', async () => {
+    const f = await runningInstalledFixture('generation', { deferTurn: true })
+    let sequence = f.history.nextSequence!
+    // Like Claude, each turn's reconciliation reports only that turn's terminal.
+    const terminals = new Map<string, NonNullable<NativeHistory['terminalTurn']>>()
+    vi.spyOn(CodexAppServerSessionManager.prototype, 'reconcile').mockImplementation(async (_session, correlationId) => {
+      const terminal = terminals.get(correlationId)
+      const history = structuredClone(f.history)
+      delete history.terminalTurn; delete history.terminalResult
+      return { ...history, correlationId, ...(terminal ? { terminalTurn: terminal, terminalResult: terminal.result } : {}) }
+    })
+    f.turns.mockImplementation(async function* (session, input) {
+      const turnId = `turn-${input.clientCorrelationId}`
+      await input.onSubmitted?.(turnId)
+      const event = { sequence: sequence++, type: 'turn.started', occurredAt: new Date().toISOString(),
+        payload: { threadId: session.nativeSessionId, turnId, clientCorrelationId: input.clientCorrelationId } }
+      Object.assign(f.history, { events: [...f.history.events, event], nextSequence: sequence, nativeTurnId: turnId })
+      // The corrective turn is still working when Stop arrives.
+      if (!input.clientCorrelationId.includes(':result-repair:')) terminals.set(input.clientCorrelationId, {
+        correlationId: input.clientCorrelationId, providerId: turnId,
+        result: { outcome: 'succeeded', output: { text: 'not the requested JSON' } } })
+      yield event
+    })
+    try {
+      await f.call('start-turn', { prompt: 'answer', correlationId: 'execution:execution', deferSettlement: true })
+      await readUntil(async () => (await f.call('history', { correlationId: 'execution:execution' })).payload,
+        value => (value as { history?: NativeHistory }).history?.terminalTurn?.correlationId === 'execution:execution',
+        { timeoutMs: 2000, description: 'original native terminal awaiting validation' })
+      const correlationId = 'execution:execution:result-repair:1'
+      await f.call('start-turn', { prompt: 'answer with JSON', correlationId, deferSettlement: true })
+      await readUntil(async () => f.journal.status(f.intent.operationId),
+        value => value.status === 'known' && value.receipt.native?.turnId === `turn-${correlationId}`,
+        { timeoutMs: 2000, description: 'corrective turn submitted' })
+      const current = await f.journal.status(f.intent.operationId)
+      if (current.status !== 'known') throw new Error('Expected the corrective turn')
+      f.cancel.mockImplementation(async () => {
+        terminals.set(correlationId, { correlationId, providerId: `turn-${correlationId}`, result: { outcome: 'canceled' } })
+        return true
+      })
+      await f.call('control', { command: { schemaVersion: 1, protocolVersion: 1, commandId: 'stop-correction',
+        operationId: f.intent.operationId, attemptId: f.intent.attemptId, executionId: f.intent.executionId,
+        bindingHash: f.intent.bindingHash, owner: f.intent.owner, native: current.receipt.native, action: { kind: 'stop' } } })
+      await readUntil(async () => f.journal.status(f.intent.operationId),
+        value => value.status === 'known' && value.receipt.terminal?.kind === 'cancelled',
+        { timeoutMs: 5000, description: 'stopped corrective turn settled' })
+      expect(f.closeOwner).toHaveBeenCalledTimes(1)
     } finally {
       f.finish('succeeded')
       await f.host.close()

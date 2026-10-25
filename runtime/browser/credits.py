@@ -57,7 +57,10 @@ with tempfile.TemporaryFile() as errors:
                 with connect(endpoint(page["webSocketDebuggerUrl"]), open_timeout=5, max_size=32 * 1024 * 1024) as channel:
                     sequence += 1
                     channel.send(json.dumps({"id": sequence, "method": "Runtime.evaluate", "params": {
-                        "expression": "document.documentElement.outerHTML", "returnByValue": True}}))
+                        "expression": "new Promise(resolve => { const capture = () => resolve(document.documentElement.outerHTML); "
+                                      "if (document.readyState === 'complete') capture(); "
+                                      "else window.addEventListener('load', capture, {once: true}); })",
+                        "awaitPromise": True, "returnByValue": True}}))
                     value = response(channel, sequence).get("result", {}).get("value", "")
                     if len(value) > 1000 and ("license" in value.lower() or "copyright" in value.lower()):
                         html = value

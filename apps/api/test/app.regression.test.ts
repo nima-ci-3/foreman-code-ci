@@ -2,6 +2,8 @@ import Fastify from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildApp } from '../src/app.js'
+import { DeviceApplicationError, deviceApplicationFailure } from '../src/modules/devices/index.js'
+import { DomainError } from '../src/modules/errors.js'
 import { loadConfig } from '../src/config.js'
 import { harnessBinaries } from '../src/modules/harnesses/binaries.js'
 import { resolveProductEnvironment } from '@foreman-code/contracts/product-environment'
@@ -132,4 +134,19 @@ it('accepts a separate production workspace root and rejects relative storage', 
   }
   expect(loadConfig(environment).workspaceStorageRoot).toBe(environment.WORKSPACE_STORAGE_ROOT)
   expect(() => loadConfig({ ...environment, WORKSPACE_STORAGE_ROOT: 'workspaces' })).toThrow()
+})
+
+it('answers a browser action a Worker refused with its reason, not a server failure', async () => {
+  const app = buildApp({ readiness: healthy() })
+  apps.push(app)
+  app.post('/worker-browser-action', async () => {
+    // The Worker's reply crosses the device link as JSON; Main rebuilds the error from it.
+    const reply = JSON.parse(JSON.stringify(deviceApplicationFailure(
+      new DomainError('BROWSER_URL_INVALID', 'Use an HTTP or HTTPS address, or about:blank.', 400))))
+    const failure = deviceApplicationFailure(reply)
+    throw new DeviceApplicationError(failure.code, undefined, { class: failure.class, ...(failure.rejection ? { rejection: failure.rejection } : {}) })
+  })
+  const response = await app.inject({ method: 'POST', url: '/worker-browser-action' })
+  expect(response.statusCode).toBe(400)
+  expect(response.json()).toMatchObject({ error: { code: 'BROWSER_URL_INVALID', message: 'Use an HTTP or HTTPS address, or about:blank.' } })
 })

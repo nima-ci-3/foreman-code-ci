@@ -89,6 +89,11 @@ export function queryOptions(ctx: ClaudeManagerContext, start: NativeSessionStar
     systemPrompt: [base, systemPrompt, instructions?.text].filter(Boolean).join('\n\n') }
 }
 
+/** Runner input for a query that starts a new session (never a resume). */
+export function newSessionOptions(ctx: ClaudeManagerContext): { newSessionId?: string } {
+  return ctx.options.newSessionId ? { newSessionId: ctx.options.newSessionId } : {}
+}
+
 export function qualified(ctx: ClaudeManagerContext, capability: 'basicTurns' | 'resume' | 'fork' | 'history') {
   if (!ctx.options.qualification[capability]) throw new HarnessExecutionError('CLAUDE_CAPABILITY_UNQUALIFIED', `Claude ${capability} has not been qualified on the selected installation.`)
 }

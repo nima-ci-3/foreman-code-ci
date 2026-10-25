@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.22.1
+          node-version: 22.23.2
       - run: corepack enable && corepack install
       - id: cache-inputs
         run: |
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .logs/ci-clis
-          key: clis-v1-${{ runner.os }}-${{ runner.arch }}-node24.22.1-${{ steps.cache-inputs.outputs.clis }}
+          key: clis-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.2-${{ steps.cache-inputs.outputs.clis }}
       - name: Warm harness CLIs
         run: |
           if [ ! -x .logs/ci-clis/bin/codex ] || [ ! -x .logs/ci-clis/bin/claude ]; then

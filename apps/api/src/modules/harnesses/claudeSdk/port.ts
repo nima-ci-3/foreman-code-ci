@@ -61,6 +61,8 @@ export interface ClaudeSdkOpenInput {
   scope: ClaudeSessionScope
   options: Readonly<Record<string, unknown>>
   resume?: ClaudePersistedSession
+  /** The ID a new session must use; never combined with resume. */
+  newSessionId?: string
   signal?: AbortSignal
   /** Persistence completes before the corresponding output is exposed. */
   onObservation?(observation: ClaudeNativeObservation): Promise<void>

@@ -387,40 +387,21 @@ describe('genuine passive telemetry production authorities', () => {
     s.remote({ ...binding, connectionGeneration: 4 }); expect(await s.authorities.sessions.active(remote, signal())).toBe(false)
     s.active(false); expect(await s.authorities.sessions.active(context, signal())).toBe(false)
   })
-  it('requires explicit reporting scope independently of connection and reader authority', async () => {
+  it('lets a computer paired from the UI report metrics without a separate reporting scope', async () => {
     const s = setup(), remote: TrustedTelemetryContext = { kind: 'remote', binding, capability: 'resource-telemetry/v1' }
     s.remote(binding); s.metrics(false)
-    expect(await s.authorities.sessions.active(remote, signal())).toBe(false)
+    expect(await s.authorities.sessions.active(remote, signal())).toBe(true)
     const reader: ManagementPrincipal = { ...principal, grants: [{ actions: ['devices:metrics:read' as const], scope: {} }] }
     s.live(reader)
     const target: TelemetrySelectorTarget = { schemaVersion: 1, scope: 'computer', mainId, hostRef: { kind: 'device', mainId, deviceId: binding.deviceId } }
-    expect(await s.authorities.targets.allowTarget(reader, target, signal())).toBe(false)
-    s.metrics(true)
-    expect(await s.authorities.sessions.active(remote, signal())).toBe(true)
     expect(await s.authorities.targets.allowTarget(reader, target, signal())).toBe(true)
     const deviceReader = { ...reader, grants: [{ actions: ['devices:read' as const], scope: {} }] }
     s.live(deviceReader)
     expect(await s.authorities.targets.allowTarget(deviceReader, target, signal())).toBe(false)
-    s.metrics(false)
+    s.revokeDevice()
     expect(await s.authorities.sessions.active(remote, signal())).toBe(false)
   })
-  it('joins original remote session/receipt/accepted Run without attributing it to the Main collector', async () => {
-    const s = remoteSetup(), remote: TrustedTelemetryContext = { kind: 'remote', binding, capability: 'resource-telemetry/v1' }
-    const service = new ResourceTelemetryService({ ...s.authorities, clock: { monotonicMs: () => 0, unixMs: Date.now } })
-    try {
-      const local = await service.handshake(context, 'local-collector', signal())
-      const identity = await service.handshake(remote, 'remote-collector', signal())
-      const result = await new ResourceTelemetrySelectors(service, s.authorities.targets).resolve(principal, target, signal())
-      expect(result.kind).toBe('selector')
-      if (result.kind !== 'selector' || result.selector.scope !== 'owned') throw new Error('selector')
-      expect(result.selector.host).toEqual(identity.host)
-      expect(await s.authorities.nativeScopes(local).snapshot(signal())).toEqual([])
-      expect(await s.authorities.ownership.resolve(result.selector, signal())).toMatchObject({ selector: result.selector, state: 'active' })
-      s.original.lane.connectionGeneration++
-      expect(await s.authorities.ownership.resolve(result.selector, signal())).toBeNull()
-    } finally { await service.close() }
-  })
-  it('keeps remote host freshness separate from online presence and clears values when reporting scope is revoked', async () => {
+  it('keeps remote host freshness separate from online presence and clears values when the computer is revoked', async () => {
     const s = setup(), remote: TrustedTelemetryContext = { kind: 'remote', binding, capability: 'resource-telemetry/v1' }
     const reader: ManagementPrincipal = { ...principal, grants: [{ actions: ['devices:metrics:read' as const], scope: {} }] }
     s.remote(binding); s.live(reader)
@@ -442,12 +423,12 @@ describe('genuine passive telemetry production authorities', () => {
       expect(await service.read(reader, selector, signal())).toMatchObject({ kind: 'sample', sample: { presence: 'online', memory: { value: null, reason: 'stale' } } })
       s.offline()
       expect(await service.read(reader, selector, signal())).toMatchObject({ kind: 'sample', sample: { presence: 'offline', memory: { value: null } }, lastKnown: { memory: { value: { bytes: 1024 } } } })
-      s.metrics(false)
+      s.revokeDevice()
       expect(await service.read(reader, selector, signal())).toEqual({ kind: 'denied', selectorKey: expect.any(String) })
       await expect(service.handshake(remote, 'other-collector', signal())).rejects.toThrow('authorization')
     } finally { await service.close() }
   })
-  it.each(['wrong-native-digest', 'wrong-receipt-host', 'wrong-attempt', 'wrong-registration-revision', 'expired-original', 'missing-metrics'] as const)(
+  it.each(['wrong-native-digest', 'wrong-receipt-host', 'wrong-attempt', 'wrong-registration-revision', 'expired-original', 'revoked-device'] as const)(
     'leaves remote %s unavailable', async defect => {
       const s = remoteSetup()
       if (defect === 'wrong-native-digest') s.receipt.native = { ...s.capture.native, processIdentityDigest: 'e'.repeat(64) }
@@ -461,7 +442,7 @@ describe('genuine passive telemetry production authorities', () => {
         s.receipt.intent = s.original.intent
       }
       if (defect === 'expired-original') s.capture.assertCurrent = () => { throw new Error('Original lifetime retired') }
-      if (defect === 'missing-metrics') s.metrics(false)
+      if (defect === 'revoked-device') s.revokeDevice()
       expect(await s.authorities.targets.resolveOwned(principal, target, signal())).toEqual({ kind: 'unavailable' })
     })
   it('leaves chat and CI unavailable without genuine captured writers or OCI ownership', async () => {

@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { readProtectedInstalledRsyncWriterSelection } from './installedRsyncSelection.js'
 
-const reviewedNodeBytes = 126_879_696
+const reviewedNodeBytes = 124_827_920
 const roots: string[] = []
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }) })
 async function digest(path: string) {

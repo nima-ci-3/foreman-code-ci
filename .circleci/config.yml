@@ -89,7 +89,7 @@ jobs:
       # The pinned Node toolchain is cached by version; hits use its bin directory directly.
       - restore_cache:
           keys:
-            - node-toolchain-v24.22.1-{{ arch }}
+            - node-toolchain-v22.23.2-{{ arch }}
       - run:
           name: Node and pnpm
           command: |
@@ -97,12 +97,12 @@ jobs:
             # The app keeps private files only under folders other users cannot replace; the image's home is group-writable.
             chmod go-w "$HOME"
             mkdir -p "$HOME/.cache" && chmod go-w "$HOME/.cache"
-            bin="$HOME/.nvm/versions/node/v24.22.1/bin"
+            bin="$HOME/.nvm/versions/node/v22.23.2/bin"
             if [ -x "$bin/node" ]; then
               touch "$HOME/.ci-node-restored"
             else
               for attempt in 1 2 3; do
-                if nvm install 24.22.1; then
+                if nvm install 22.23.2; then
                   break
                 else
                   status=$?
@@ -111,7 +111,7 @@ jobs:
                   sleep "$((attempt * 5))"
                 fi
               done
-              bin="$(dirname "$(nvm which 24.22.1)")"
+              bin="$(dirname "$(nvm which 22.23.2)")"
             fi
             echo "export PATH=\"$bin:\$PATH\"" >> "$BASH_ENV"
             export PATH="$bin:$PATH"
@@ -132,7 +132,7 @@ jobs:
           steps:
             - restore_cache:
                 keys:
-                  - clis-v1-{{ arch }}-node24.22.1-{{ checksum ".logs/ci-clis-key" }}
+                  - clis-v1-{{ arch }}-node22.23.2-{{ checksum ".logs/ci-clis-key" }}
       - run: scripts/ci-suite.sh start
       # Keep the pnpm store inside node_modules so cache hits retain the package integrity index.
       - restore_cache:
@@ -196,7 +196,7 @@ jobs:
               value: << pipeline.parameters.suite >>
           steps:
             - save_cache:
-                key: clis-v1-{{ arch }}-node24.22.1-{{ checksum ".logs/ci-clis-key" }}
+                key: clis-v1-{{ arch }}-node22.23.2-{{ checksum ".logs/ci-clis-key" }}
                 paths:
                   - .logs/ci-clis
       # Immutable keys already restored exactly need no save; a hit on all three ends the job here.
@@ -208,9 +208,9 @@ jobs:
               circleci-agent step halt
             fi
       - save_cache:
-          key: node-toolchain-v24.22.1-{{ arch }}
+          key: node-toolchain-v22.23.2-{{ arch }}
           paths:
-            - ~/.nvm/versions/node/v24.22.1
+            - ~/.nvm/versions/node/v22.23.2
       # The suite adds its own caches under these folders; the packages cache keeps only the installed state.
       - run: rm -rf node_modules/.vitest-cache apps/*/node_modules/.cache apps/*/node_modules/.tmp packages/*/node_modules/.cache
       - save_cache:
