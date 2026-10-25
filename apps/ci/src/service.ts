@@ -31,7 +31,7 @@ import { CiPrewarm } from './prewarm.js'
 import { collectCiResults } from './resultCollection.js'
 import { IntegrationCoverageStore } from './coverageStore.js'
 import { sanitizeCiText, serializeCiJson } from './text.js'
-import { isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
+import { ciComputerPreference, isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
 import { weighCiPartitions } from './partitionPlanning.js'
 import { invalidateExecutorSpeeds, readExecutorSpeeds } from './executorSpeed.js'
 import { readCiGateReservation, readQueuedCiRuns } from './queuedRuns.js'
@@ -1688,9 +1688,7 @@ export class HostCiService {
       const reasons = (run.unstartedProviders ?? []).map(provider => `${provider}: dispatch retries exhausted`)
       const preferred = (computer: HostCiComputer) => {
         if (run.gate && run.suite !== 'integration') return Number(computer.hostRef.kind === 'cloud')
-        if (computer.hostRef.kind !== 'cloud') return 3
-        if (run.suite !== 'integration') return Number(isGitHubComputer(computer))
-        return isGitHubComputer(computer) ? 1 : 2
+        return ciComputerPreference(computer)
       }
       const affectedFiles = run.scope === 'affected' && !run.deriveFiles ? { files: run.files } : {}
       const plannedProvider = run.gate

@@ -13,6 +13,8 @@ export const ciInfrastructure = [
   /^packages\/contracts\/src\/ci(?:Coverage|ImportGraph)\.[^/]+$/,
   /^apps\/ci\/src\//,
   /^scripts\/(?:test-integration[^/]*|test-resources[^/]*|integration-process[^/]*|integration-coverage[^/]*|ci-[^/]*|vitest-[^/]*|test-db\.mjs|test-command\.mjs|heavy-job\.mjs)$/,
+  /^scripts\/(?:eslint-plugin-foreman\/|lint-allowlist\.(?:mjs|json)$|check-[^/]+\.mjs$|api-module-boundaries-pending\.mjs$)/,
+  /^apps\/web\/heavy-tests\.json$/,
   /^apps\/api\/test\/(?:helpers\/|setup[^/]*$)|^apps\/web\/src\/test\//,
   /^(?:\.github\/workflows\/|\.circleci\/)/,
 ]
