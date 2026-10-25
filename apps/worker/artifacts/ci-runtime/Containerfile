@@ -1,5 +1,5 @@
-FROM docker.io/library/node@sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc40fdad6dccbaa2 AS toolchain
-RUN test "$(node --version)" = v22.23.3 \
+FROM docker.io/library/node@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a AS toolchain
+RUN test "$(node --version)" = v24.22.1 \
  && test "$(corepack --version)" = 0.36.0 \
  && git --version && flock --version
 # The unit suite needs a disposable PostgreSQL 17 server (the verification policy starts one per test run)
@@ -36,7 +36,7 @@ CMD ["node"]
 FROM toolchain AS build
 WORKDIR /opt/graphql-ci/source-lock
 COPY source-lock/ ./
-RUN test "$(node --version)" = v22.23.3 \
+RUN test "$(node --version)" = v24.22.1 \
  && test "$(corepack --version)" = 0.36.0 \
  && git --version && flock --version \
  && COREPACK_HOME=/opt/graphql-ci/corepack-cache corepack install --global pnpm@11.27.0 \

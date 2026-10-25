@@ -255,7 +255,7 @@ async function bundleNativeHost({ repository, unit, snapshot }) {
   const nodeContracts = JSON.parse(await snapshot.read('packages/contracts-node/package.json')).exports;
   const ci = JSON.parse(await snapshot.read('apps/ci/package.json')).exports;
   const result = await build({ absWorkingDir: repository, entryPoints: ['apps/api/src/modules/browser-runtime/hostFactory.ts'],
-    outfile: join(unit, 'native-host.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node22', metafile: true,
+    outfile: join(unit, 'native-host.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node24', metafile: true,
     legalComments: 'linked', sourcemap: false, alias: workerPackageAliases({ contracts, 'contracts-node': nodeContracts, ci }),
     define: { 'process.env.WS_NO_BUFFER_UTIL': '"1"', 'process.env.WS_NO_UTF_8_VALIDATE': '"1"' },
     banner: { js: "import { createRequire as runtimeRequire } from 'node:module'; const require = runtimeRequire(import.meta.url);" },

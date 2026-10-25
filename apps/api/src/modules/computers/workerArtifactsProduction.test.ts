@@ -8,7 +8,7 @@ import { WorkerArtifactReplySchema } from '@foreman-code/contracts/computer-main
 import { createWorkerArtifactExtension, readWorkerBundleIdentity } from './workerArtifacts.js'
 import { createProductionWorkerArtifactExtension } from './workerArtifactsProduction.js'
 
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
 const context = { binding: {
   mainId: '11111111-1111-4111-8111-111111111111', deviceId: '22222222-2222-4222-8222-222222222222',
   workerInstallationId: '33333333-3333-4333-8333-333333333333', bootId: '44444444-4444-4444-8444-444444444444',
