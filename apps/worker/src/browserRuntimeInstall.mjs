@@ -263,7 +263,7 @@ async function thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal
     await verifyInventory(directory, files);
     return { directory, files };
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const stage = await mkdtemp(join(cache, '.stage-'));
+  const stage = await mkdtemp(join(cache, '.browser-build-'));
   const unit = join(stage, 'unit'); await mkdir(unit, { mode: 0o700 });
   try {
     await installer.installBrowserThirdParty({ inputs: recipe.inputs, lock: recipe.resolvedLock, target: recipe.target,
@@ -299,7 +299,8 @@ async function stageRecipe({ runtimeRoot, artifact, recipe, expectedSha256, targ
     ...(signal ? { signal: AbortSignal.any([signal, options.signal]) } : {}) });
   const thirdParty = await thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal, fetchArtifact: fetchPinned, run: executePinned });
   const versions = join(runtimeRoot, 'versions'); await privateDirectory(versions, true);
-  const stage = await mkdtemp(join(versions, '.stage-'));
+  const temporary = await mkdtemp(join(versions, '.stage-'));
+  const stage = join(temporary, 'unit'); await mkdir(stage, { mode: 0o700 });
   try {
     await copyInventory(thirdParty.directory, stage, thirdParty.files);
     await copyInventory(artifact, stage, recipe.files);
@@ -327,7 +328,7 @@ async function stageRecipe({ runtimeRoot, artifact, recipe, expectedSha256, targ
     await syncUnit(stage, files);
     await rename(stage, destination); await syncDirectory(versions);
     return installedDescriptor(destination, manifest, manifestSha256);
-  } finally { await rm(stage, { recursive: true, force: true }); }
+  } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
 /** Consume a runner-built unit without launching target executables on the release assembler. */
