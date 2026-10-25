@@ -37,16 +37,17 @@ it('navigates node, repetition, attempt and clear filters from the normal Runs s
   expect(router.state.location.search.selectedRunId).toBe(owner.run.id)
 }, 15_000)
 
-it('keeps draft actions, settings and the native inbox available in Overview', async () => {
+it('opens legacy Overview links on the Board with draft actions, settings and the native inbox', async () => {
   measureBoardWire(fixture.mock)
-  await mountMeasuredBoard(currentHref())
+  await mountMeasuredBoard(`${currentHref()}&boardView=overview`)
   const key = nextDraftKey(fixture.mock.workspaceId, fixture.after.workflowId)
   await waitFor(() => expect(useGraphDraftStore.getState().nextDrafts[key]).toBeDefined())
   act(() => useGraphDraftStore.getState().changeNextDraft(key, graph => ({ ...graph, name: 'Unsaved Board name' })))
-  await userEvent.click(screen.getByRole('button', { name: 'Overview' }))
   expect(await screen.findByRole('button', { name: 'Save and run' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Save workflow' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Undo' })).toBeVisible()
+  expect(useGraphDraftStore.getState().nextDrafts[key]!.graph.name).toBe('Unsaved Board name')
+  expect(screen.queryByRole('navigation', { name: 'Workflow views' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Open human approval inbox/ })).toBeVisible()
   await userEvent.click(screen.getByRole('button', { name: 'Workflow settings' }))
   expect(await screen.findByRole('complementary', { name: 'Workflow settings' })).toBeVisible()
@@ -71,29 +72,14 @@ it('shows immutable saved Settings with a direct transition to edit the same cur
   expect(router.state.location.search).toMatchObject({ boardNodeId: fixture.first.id, boardAgentTab: 'settings' })
 }, 15_000)
 
-it('retains exact execution Details in Overview', async () => {
+it('retains exact execution Details when opening a legacy Overview link', async () => {
   const owner = fixture.runs.before, detail = fixture.ordinaryExecutions[1]!.detail
   measureBoardWire(fixture.mock)
-  await mountMeasuredBoard(`${boardHref(owner.scope)}&boardPanel=agent&boardNodeId=${fixture.first.id}&boardAgentTab=details&boardExecutionId=${detail.execution.executionId}`)
+  await mountMeasuredBoard(`${boardHref(owner.scope)}&boardPanel=agent&boardNodeId=${fixture.first.id}&boardAgentTab=details&boardExecutionId=${detail.execution.executionId}&boardView=overview`)
   const rail = await screen.findByRole('complementary', { name: 'Workflow side panel' })
   await within(rail).findByLabelText(`Accepted result ${detail.execution.executionId}`)
   await userEvent.click(within(rail).getByText('Accepted input and results', { selector: 'summary' }))
   expect(within(rail).getByLabelText(`Accepted result ${detail.execution.executionId}`)).toBeVisible()
-  await userEvent.click(screen.getByRole('button', { name: 'Overview' }))
-  expect(await within(rail).findByLabelText(`Accepted result ${detail.execution.executionId}`)).toBeVisible()
-}, 15_000)
-
-it('labels saved Overview scope while offering a return to unsaved draft changes', async () => {
-  measureBoardWire(fixture.mock)
-  const { router } = await mountMeasuredBoard(currentHref())
-  const key = nextDraftKey(fixture.mock.workspaceId, fixture.after.workflowId)
-  await waitFor(() => expect(useGraphDraftStore.getState().nextDrafts[key]).toBeDefined())
-  act(() => useGraphDraftStore.getState().changeNextDraft(key, graph => ({ ...graph, name: 'Pending hierarchy work' })))
-  await userEvent.click(screen.getByRole('button', { name: 'Overview' }))
-  expect(await screen.findByText('Overview shows the current saved workflow. Unsaved Board changes are not shown.')).toBeVisible()
-  await userEvent.click(screen.getByRole('button', { name: 'Review draft changes' }))
-  await waitFor(() => expect(router.state.location.search.boardView).toBe('graph'))
-  expect(useGraphDraftStore.getState().nextDrafts[key]!.graph.name).toBe('Pending hierarchy work')
 }, 15_000)
 
 it('uses the saved node name for historical panel headings after a current rename', async () => {

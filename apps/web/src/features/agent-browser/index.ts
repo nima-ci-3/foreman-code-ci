@@ -1,4 +1,5 @@
 export { AgentBrowserPanel, BrowserSessionPanel } from './AgentBrowserPanel'
+export { BrowserEmptySession } from './BrowserEmptySession'
 export type { AgentBrowserPanelProps, BrowserSessionPanelProps } from './AgentBrowserPanel'
 export { BrowserSettingsFields } from './BrowserSettingsFields'
 export type { BrowserSettingsFieldsProps } from './BrowserSettingsFields'
