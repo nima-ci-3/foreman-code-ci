@@ -5,15 +5,13 @@ import { IconButton, Textarea, Tooltip } from '../../../shared/ui/nocturne'
 import { useComposerDraft } from '../useComposerDraft'
 
 export function AgentChatComposer({ name, draftKey, inputRef, disabled, reason, controlReason, pending, controlPending,
-  hasAttachments, attachmentControl, actions, canStop, stopReason, onStop, onSubmit, deliveryActions, sessionCommands = true, onRecall }: {
+  hasAttachments, attachmentControl, actions, canStop, stopReason, onStop, onSubmit, deliveryActions, sessionCommands = true }: {
   name: string; draftKey: string; inputRef: RefObject<HTMLTextAreaElement | null>
   disabled: boolean; reason?: string; controlReason?: string
   pending: boolean; controlPending: boolean
   hasAttachments: boolean; attachmentControl?: ReactNode; actions?: ReactNode
   canStop: boolean; stopReason?: string; onStop(): void; onSubmit(content: string, mode?: SessionMode): void
   deliveryActions?: ReactNode; sessionCommands?: boolean
-  /** ↑ in the empty composer: takes the newest queued message or command back for editing; returns its text. */
-  onRecall?(): string | undefined
 }) {
   const id = useId()
   const { draft, command, menu, change } = useComposerDraft(draftKey, content => submit(content), {
@@ -57,10 +55,6 @@ export function AgentChatComposer({ name, draftKey, inputRef, disabled, reason, 
         onChange={event => change(event.currentTarget.value)}
         onKeyDown={event => {
           menu.onKeyDown(event)
-          if (!event.defaultPrevented && event.key === 'ArrowUp' && !draft && onRecall) {
-            const recalled = onRecall()
-            if (recalled !== undefined) { event.preventDefault(); change(recalled); return }
-          }
           if (event.defaultPrevented || event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey
             || event.metaKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
           event.preventDefault()
