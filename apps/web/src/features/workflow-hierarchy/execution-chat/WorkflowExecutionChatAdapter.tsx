@@ -75,17 +75,18 @@ export function WorkflowExecutionChatAdapter({selection:raw,views}:{
   useEffect(()=>{
     if(selection.runId&&resolved&&!pinned) onSelectTarget(resolved.target,resolved.workflowVersionId)
   },[selection.runId,resolved,pinned,onSelectTarget])
-  // A Run opens each Agent's newest execution chat; once one was pinned for that Agent, "Other attempts" lists them all.
+  // A Run opens its latest attempt's chat; once an attempt was pinned in this Run, "Other attempts" lists them all.
   const openedRun=useRef<string | undefined>(undefined)
-  const openKey=selection.runId?`${selection.runId}:${nodeId}`:undefined
-  if(openKey&&(selection.executionId||selection.waitingActivationId)) openedRun.current=openKey
+  if(selection.runId&&(selection.executionId||selection.waitingActivationId)) openedRun.current=selection.runId
   useEffect(()=>{
-    // The server lists a Run node's executions newest first.
-    const latest=first?.kind==='selection_required'?first.items[0]:undefined
-    if(!openKey||!latest||openedRun.current===openKey) return
-    openedRun.current=openKey
+    if(!selection.runId||first?.kind!=='selection_required'||openedRun.current===selection.runId) return
+    const latest=first.items.reduce<typeof first.items[number]|undefined>((best,item)=>!best
+      ||(item.target.kind==='workflow_execution'&&(best.target.kind!=='workflow_execution'
+        ||item.target.execution.attempt>best.target.execution.attempt))?item:best,undefined)
+    if(!latest) return
+    openedRun.current=selection.runId
     onSelectTarget(latest.target,latest.workflowVersionId)
-  },[openKey,first,onSelectTarget])
+  },[selection.runId,first,onSelectTarget])
   const client=useMemo(()=>resolved?boundClient(cache,resolved):undefined,[cache,resolved])
   // A draft-only Agent (never saved) has no configuration to chat with yet: save only that Agent, never the
   // workflow graph, so chat opens even while an unrelated part of the workflow can't be saved.
