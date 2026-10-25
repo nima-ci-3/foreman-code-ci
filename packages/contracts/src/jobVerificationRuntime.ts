@@ -1,3 +1,4 @@
+import { PNPM_VERSION, RELEASE_AGE_MINUTES } from './packagePolicy.mjs'
 import { INSTALLATION_NAMES } from './installationNames.mjs'
 import { z } from 'zod'
 import { DeviceDigestSchema, DeviceSafeIntegerSchema, DeviceExecutionAdmissionFields } from './deviceResources.js'
@@ -39,11 +40,11 @@ export const JobVerificationPrivateGitSchema = z.object({
 
 export const JobVerificationPreseedFactsSchema = z.object({
   lockfileSha256: DeviceDigestSchema,
-  pnpmVersion: z.literal('11.27.0'),
+  pnpmVersion: z.literal(PNPM_VERSION),
   platform: z.literal('linux'),
   architecture: z.literal('x64'),
   provenanceDigest: DeviceDigestSchema,
-  minimumReleaseAgeMinutes: z.literal(2880),
+  minimumReleaseAgeMinutes: z.literal(RELEASE_AGE_MINUTES),
   releaseAgeVerified: z.literal(true),
 }).strict()
 export const JobVerificationRepositoryContextSchema = z.object({

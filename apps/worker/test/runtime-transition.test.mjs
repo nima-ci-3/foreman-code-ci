@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';

@@ -21,9 +21,6 @@ function repository(t) {
     'apps/api/src/value.test.ts': "import './value.js'",
     'apps/api/test/value.integration.test.ts': "import '../src/value.js'",
     'apps/api/test/other.integration.test.ts': 'export {}',
-    'apps/web/src/value.test.tsx': "import '../../api/src/value.js'",
-    'apps/web/src/value.integration.test.tsx': "import '../../api/src/value.js'",
-    'apps/web/heavy-tests.json': JSON.stringify({ files: ['src/*.integration.test.tsx'] }),
     'packages/contracts/src/other.test.ts': 'export {}',
   }
   for (const [file, text] of Object.entries(files)) write(file, text)
@@ -34,12 +31,9 @@ function repository(t) {
   return { cwd, git, write, files: Object.keys(files) }
 }
 
-test('filters the same affected selection into API, fast web, heavy web and other parts', t => {
+test('filters the same affected selection into API and other parts', t => {
   const f = repository(t)
   assert.deepEqual(executionFiles(f.files, 'unit-api', f.cwd), f.files.filter(file => file.startsWith('apps/api/')))
-  assert.deepEqual(executionFiles(f.files, 'unit-web', f.cwd),
-    ['apps/web/src/value.test.tsx', 'apps/web/heavy-tests.json'])
-  assert.deepEqual(executionFiles(f.files, 'unit-web-heavy', f.cwd), ['apps/web/src/value.integration.test.tsx'])
   assert.deepEqual(executionFiles(f.files, 'unit-other', f.cwd), ['packages/contracts/src/other.test.ts'])
 })
 

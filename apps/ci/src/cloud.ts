@@ -1606,7 +1606,7 @@ export class CloudCi {
           }
           if (run.suite === 'integration' || run.suite === 'unit') {
             const durations = CiDurationsSchema.safeParse(artifacts.durations)
-            if (durations.success && (run.suite === 'integration' || run.part === 'unit-api' || run.part === 'unit-web')) {
+            if (durations.success && (run.suite === 'integration' || run.part === 'unit-api')) {
               run = { ...run, durations: durations.data }
             }
             const tests = CiTestResultsSchema.safeParse(artifacts.testResults)

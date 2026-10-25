@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, type ReactNode } from 'react'
+import { isComposerSendKey, useAutosizeTextarea } from '../../shared/ui/composerInput'
 import { parseSessionCommand, type SessionMode } from '@foreman-code/contracts'
 import { Icon, IconButton } from '../../shared/ui/nocturne'
 import { useComposerDraft, useSessionCommandSubmit } from '../conversations'
@@ -7,11 +8,13 @@ import { ChatPrimaryActions, type ComposerSessionControls } from '../chat-core'
 import '../conversations/chatAttachments.css'
 
 export function OperatorComposer({ conversationId, context, attachmentControl, deliveryControl, fileDropProps, hasAttachments = false,
-  sendDisabled = false, isSending = false, onSubmit, onNewChat, onCancel, sessionControls }: {
+  sendDisabled = false, isSending = false, onSubmit, onNewChat, onCancel, onRecall, sessionControls }: {
   conversationId: string; context?: ReactNode; attachmentControl?: ReactNode; deliveryControl?: ReactNode; hasAttachments?: boolean;
   sendDisabled?: boolean; isSending?: boolean; sessionControls?: ComposerSessionControls;
   fileDropProps?: ReturnType<typeof useFileDrop>['dropTargetProps'];
   onSubmit(content: string, mode?: SessionMode): void; onNewChat(): void; onCancel?: () => void;
+  /** ↑ in the empty composer: takes the newest queued message back for editing; returns its text. */
+  onRecall?(): string | undefined
 }) {
   const input = useRef<HTMLTextAreaElement>(null)
   const id = useId()
@@ -23,11 +26,7 @@ export function OperatorComposer({ conversationId, context, attachmentControl, d
   const isNew = command.kind === 'new'
   const pending = commandOnly ? sessionControls?.mutation.isPending : isSending
   const cannotSend = (!isNew && (pending || (!commandOnly && sendDisabled))) || (!value.trim() && !hasAttachments)
-  useLayoutEffect(() => {
-    if (!input.current) return
-    input.current.style.height = '0px'
-    input.current.style.height = `${Math.min(144, Math.max(36, input.current.scrollHeight))}px`
-  }, [value])
+  useAutosizeTextarea(input, value, { minHeight: 36, maxHeight: 144 })
   useLayoutEffect(() => { input.current?.focus() }, [conversationId])
   async function send(content = value.trim()) {
     const parsed = parseSessionCommand(content)
@@ -49,9 +48,11 @@ export function OperatorComposer({ conversationId, context, attachmentControl, d
         onChange={event => change(event.target.value)}
         onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || menu.onKeyDown(event)) return
-          if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
-            event.preventDefault(); void send()
+          if (event.key === 'ArrowUp' && !value && onRecall) {
+            const recalled = onRecall()
+            if (recalled !== undefined) { event.preventDefault(); change(recalled); return }
           }
+          if (isComposerSendKey(event)) { event.preventDefault(); void send() }
         }} />
       <div className="operator-composer-actions">
         <ChatPrimaryActions appearance="icon" stopLabel="Stop response" {...(onCancel ? { onStop: onCancel } : {})}>

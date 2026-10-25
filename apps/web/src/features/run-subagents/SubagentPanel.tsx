@@ -6,14 +6,17 @@ import { createStore, useStore } from 'zustand'
 import { SUBAGENT_LIMITS,
   type RunSubagentMessage, type RunSubagentTool, type RunSubagentCommandReceipt } from '@foreman-code/contracts/subagents'
 import { Button, CodeBlock, EmptyState, ErrorState, MessageBubble, Spinner, StatusBadge, Tabs, Textarea, ToolCallCard } from '../../shared/ui/nocturne'
+import { formatFileSize } from '../../shared/ui/formatters'
 import { SubagentPopover } from './SubagentPopover'
 import { ApiError } from '../../shared/api/client'
 import { useBlockingReadError } from '../../shared/api/readFailure'
 import { subagentsApi } from './client'
-import { formatBytes, formatClock, providerNames, subagentName, subagentStatus, subagentTiming, toolStatus } from './presentation'
+import { formatClock, providerNames, subagentName, subagentStatus, subagentTiming, toolStatus } from './presentation'
 import { subagentsKey, useSubagentDetail, useSubagentMessages, useSubagentTools, type SubagentsScope } from './query'
 import type { InteractionResponseValue } from '@foreman-code/contracts'
 import { NativeInteractionResponse } from '../../shared/ui/NativeInteractionResponse'
+import { ChatMessageBody } from '../conversations'
+import { InteractionOptionButton } from '../../shared/ui/InteractionOptionButton'
 
 type CommandVariables = { operation: 'input' | 'interrupt' | 'respond'; commandId: string; expectedRevision: string;
   text: string; nativeRequestId?: string; optionId?: string; response?: InteractionResponseValue }
@@ -146,11 +149,11 @@ export function SubagentPanel({ scope, subagentId, anchor, onClose, visible = tr
               onSelect={(optionId, response) => command.mutate({ operation: 'respond', commandId: crypto.randomUUID(),
                 expectedRevision: child.revision, text: '', nativeRequestId: record.pendingInteraction!.turn.nativeRequestId!,
                 optionId, ...(response !== undefined ? { response } : {}) })} />
-            : record.pendingInteraction.responseOptions.map(option => <Button key={option.optionId}
+            : record.pendingInteraction.responseOptions.map(option => <InteractionOptionButton key={option.optionId} option={option}
               disabled={detail.isError || !record.availableActions.respond || pending || unsettled}
-              onClick={() => command.mutate({ operation: 'respond', commandId: crypto.randomUUID(),
+              onSelect={optionId => command.mutate({ operation: 'respond', commandId: crypto.randomUUID(),
                 expectedRevision: child.revision, text: '', nativeRequestId: record.pendingInteraction!.turn.nativeRequestId!,
-                optionId: option.optionId })}>{option.label}</Button>)}
+                optionId })} />)}
         </section> : null}
         <Tabs label="Subagent activity" value={tab} onValueChange={setTab} items={[
           { value: 'messages', label: 'Messages', ...(messageItems.length ? { badge: `${messageItems.length}${messages.hasNextPage ? '+' : ''}` } : {}), content: <div className="run-subagent-feed">
@@ -183,8 +186,8 @@ export function SubagentPanel({ scope, subagentId, anchor, onClose, visible = tr
 function Message({ item, name }: { item: RunSubagentMessage; name: string }) {
   return <MessageBubble author={item.role === 'assistant' ? name : 'Parent agent'} role={item.role}
     time={formatClock(item.occurredAt)} dateTime={item.occurredAt} status={!item.final ? <span className="run-subagent-note">writing…</span> : undefined}>
-    <p className="run-subagent-text">{item.text}</p>
-    {item.truncation.truncated && <p className="run-subagent-note">Shortened — the full message was {formatBytes(item.truncation.originalBytes)}.</p>}
+    <ChatMessageBody content={item.text} role={item.role} />
+    {item.truncation.truncated && <p className="run-subagent-note">Shortened — the full message was {formatFileSize(item.truncation.originalBytes)}.</p>}
   </MessageBubble>
 }
 
@@ -196,6 +199,6 @@ function Tool({ item }: { item: RunSubagentTool }) {
     {item.input !== undefined && <CodeBlock label="Input" code={json(item.input)} language="json" />}
     {item.output !== undefined && <CodeBlock label="Result" code={json(item.output)} />}
     {item.error !== undefined && <CodeBlock label="Error" code={json(item.error)} />}
-    {item.truncation.truncated && <p className="run-subagent-note">Shortened — the full record was {formatBytes(item.truncation.originalBytes)}.</p>}
+    {item.truncation.truncated && <p className="run-subagent-note">Shortened — the full record was {formatFileSize(item.truncation.originalBytes)}.</p>}
   </ToolCallCard>
 }

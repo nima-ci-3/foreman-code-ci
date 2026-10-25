@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker runtime/browser scripts/build-worker-artifact.mjs scripts/worker-snapshot-policy.mjs scripts/check-worker-imports.mjs
 import { nativeWorkerTarget } from './fixtures/browserTarget.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

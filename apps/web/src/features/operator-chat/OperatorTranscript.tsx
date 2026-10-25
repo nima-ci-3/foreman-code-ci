@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ComponentProps, type ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import type { Message, OperatorActivity } from '@foreman-code/contracts'
 import { Button } from '../../shared/ui/nocturne'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
@@ -7,7 +7,8 @@ import { getOperatorActivity, mergeOperatorActivity } from '../../shared/api/ope
 import { useNativeHarnessOptions } from '../../shared/api/harnessSettings'
 import { OperatorMessages } from './OperatorMessages'
 import { OperatorHistory } from './OperatorHistory'
-import { HistoryWindowNotice, useChatTurnCompleted, useRememberedChatScroll } from '../chat-core'
+import { HistoryWindowNotice, useChatTurnCompleted } from '../chat-core'
+import { ConversationViewport } from '../conversations'
 import type { OperatorTextProjection } from './operatorTextProjection'
 
 function AcceptedModelMessages(props: ComponentProps<typeof OperatorMessages>) {
@@ -38,11 +39,6 @@ export function OperatorTranscript({ messages, partialText, thinkingText = '', h
     enabled: false,
   })
   const entries = mergeOperatorActivity(...(earlierActivity.data?.pages.map((page) => page.activities) ?? []), activities)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const followLatest = useRef(true)
-  useRememberedChatScroll(conversationId ? `operator:${conversationId}` : undefined, scrollRef, followLatest)
-  const onBrowse = () => { followLatest.current = false }
   // Polling can create new arrays/elements with identical contents. Loading old
   // pages is browsing, not new output, so only the recent stream participates.
   const contentRevision = JSON.stringify([
@@ -50,43 +46,21 @@ export function OperatorTranscript({ messages, partialText, thinkingText = '', h
     activities.map((entry) => [entry.id, entry.revision]), partialText, thinkingText, timeline?.timeline,
     approvalRevision ?? Boolean(approval),
   ])
-  useLayoutEffect(() => {
-    const scroll = scrollRef.current
-    if (!scroll) return
-    if (followLatest.current) scroll.scrollTop = scroll.scrollHeight
-  }, [contentRevision])
-  useLayoutEffect(() => {
-    if (typeof ResizeObserver === 'undefined' || !contentRef.current) return
-    const observer = new ResizeObserver(() => {
-      const scroll = scrollRef.current
-      if (scroll && followLatest.current) scroll.scrollTop = scroll.scrollHeight
-    })
-    observer.observe(contentRef.current)
-    if (scrollRef.current) observer.observe(scrollRef.current)
-    return () => observer.disconnect()
-  }, [])
-  const renderMessages = (older: Message[]) => <AcceptedModelMessages messages={[...older, ...messages]} activities={entries}
-    activeRequestId={activeRequestId} parts={parts} timeline={timeline} working={working && !turnCompleted} partialText={partialText}
-    thinkingText={thinkingText} onBrowse={onBrowse} />
-  return <div className="operator-chat-transcript">
-    <div ref={scrollRef} className="operator-chat-transcript-scroll" role="region" aria-label="Operator transcript" tabIndex={0}
-      onScroll={(event) => {
-        const scroll = event.currentTarget
-        followLatest.current = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop < 48
-      }}>
-      <div ref={contentRef}>
-        {earlierActivity.data && earlierActivity.data.pageParams[0] !== (activityNextCursor ?? undefined)
-          ? <HistoryWindowNotice pending={earlierActivity.isFetching && !earlierActivity.isRefetching} onReload={() => {
-            onBrowse()
-            void client.resetQueries({ queryKey: activityKey, exact: true }).then(() => earlierActivity.fetchNextPage())
-          }} /> : null}
-        {(activityNextCursor && !earlierActivity.data) || earlierActivity.hasNextPage ? <Button size="sm" variant="ghost" disabled={earlierActivity.isFetching && !earlierActivity.isRefetching}
-          onClick={() => { onBrowse(); void earlierActivity.fetchNextPage() }}>Load earlier activity</Button> : null}
-        {earlierActivity.isError ? <p role="alert">Earlier activity could not be loaded. <Button size="sm" onClick={() => { onBrowse(); void earlierActivity.fetchNextPage() }}>Retry activity</Button></p> : null}
-        {hasEarlierMessages ? <OperatorHistory conversationId={conversationId} recentMessages={messages} onBrowse={onBrowse}
-          renderMessages={renderMessages} /> : renderMessages([])}
-        {typeof approval === 'function' ? approval(onBrowse) : approval}
-      </div>
-    </div>
-  </div>
+  const renderMessages = (older: Message[], onBrowse: () => void) => <AcceptedModelMessages messages={[...older, ...messages]}
+    activities={entries} activeRequestId={activeRequestId} parts={parts} timeline={timeline} working={working && !turnCompleted}
+    partialText={partialText} thinkingText={thinkingText} onBrowse={onBrowse} />
+  return <ConversationViewport classPrefix="operator-chat-transcript" label="Operator transcript" revision={contentRevision}
+    storageKey={conversationId ? `operator:${conversationId}` : undefined}>{(onBrowse) => <>
+    {earlierActivity.data && earlierActivity.data.pageParams[0] !== (activityNextCursor ?? undefined)
+      ? <HistoryWindowNotice pending={earlierActivity.isFetching && !earlierActivity.isRefetching} onReload={() => {
+        onBrowse()
+        void client.resetQueries({ queryKey: activityKey, exact: true }).then(() => earlierActivity.fetchNextPage())
+      }} /> : null}
+    {(activityNextCursor && !earlierActivity.data) || earlierActivity.hasNextPage ? <Button size="sm" variant="ghost" disabled={earlierActivity.isFetching && !earlierActivity.isRefetching}
+      onClick={() => { onBrowse(); void earlierActivity.fetchNextPage() }}>Load earlier activity</Button> : null}
+    {earlierActivity.isError ? <p role="alert">Earlier activity could not be loaded. <Button size="sm" onClick={() => { onBrowse(); void earlierActivity.fetchNextPage() }}>Retry activity</Button></p> : null}
+    {hasEarlierMessages ? <OperatorHistory conversationId={conversationId} recentMessages={messages} onBrowse={onBrowse}
+      renderMessages={(older) => renderMessages(older, onBrowse)} /> : renderMessages([], onBrowse)}
+    {typeof approval === 'function' ? approval(onBrowse) : approval}
+  </>}</ConversationViewport>
 }

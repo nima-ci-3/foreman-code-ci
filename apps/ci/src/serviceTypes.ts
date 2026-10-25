@@ -41,6 +41,9 @@ export interface CiCommits {
     coverage?: CiCoverageSelection; signal: AbortSignal }): Promise<CiSelection>
   /** The commit's files and their blobs, for result cache keys; without it every selected file runs. */
   testTree?(repository: string, commit: string, signal?: AbortSignal): Promise<CiTestTree>
+  /** Result cache keys for files of a commit, computed off the API's event loop; without it keys come from testTree. */
+  resultKeys?: ((repository: string, commit: string, files: { file: string; suite: string; part: string }[],
+    signal: AbortSignal) => Promise<Record<string, { key: string | null; reason?: string }>>) | undefined
   resolve(repository: string, defaultBranch: string, commit: string | undefined,
     snapshot: { baseCommit: string; commit: string; bundle: Buffer | null } | null): Promise<string>
 }

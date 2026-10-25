@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker runtime/browser scripts/build-worker-artifact.mjs scripts/worker-snapshot-policy.mjs
 import { nativeWorkerTarget } from './fixtures/browserTarget.mjs';
 import test, { before, after } from 'node:test';
 import { execFileSync } from 'node:child_process';

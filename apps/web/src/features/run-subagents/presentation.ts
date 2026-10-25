@@ -56,6 +56,3 @@ export function subagentTiming(subagent: RunSubagent, now = Date.now()) {
   return parts.join(' · ')
 }
 
-export function formatBytes(bytes: number) {
-  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`
-}

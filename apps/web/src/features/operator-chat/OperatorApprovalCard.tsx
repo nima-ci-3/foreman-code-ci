@@ -1,10 +1,10 @@
 import { asRecord } from '../../shared/records'
 import type { PendingNativeInteraction, InteractionResponseValue } from '@foreman-code/contracts'
 import { NativeInteractionResponse } from '../../shared/ui/NativeInteractionResponse'
-import { Fragment, useId } from 'react'
+import { Fragment } from 'react'
 import { summarizeApprovalRequest } from '../approvals'
-import { approvalOptionScope } from '../../shared/ui/approvalOptionScope'
-import { Button, Icon } from '../../shared/ui/nocturne'
+import { InteractionOptionButton } from '../../shared/ui/InteractionOptionButton'
+import { Icon } from '../../shared/ui/nocturne'
 import './operatorApprovalCard.css'
 
 const string = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value : undefined
@@ -16,7 +16,6 @@ export function OperatorApprovalCard({ interaction, disabled, onSelect, onBrowse
   onSelect: (optionId: string, response?: InteractionResponseValue) => void
   onBrowse?: () => void
 }) {
-  const scopeId = useId()
   const request = asRecord(interaction.request)
   const meta = asRecord(request._meta)
   const params = asRecord(meta.tool_params)
@@ -32,19 +31,9 @@ export function OperatorApprovalCard({ interaction, disabled, onSelect, onBrowse
   const persistent = options.filter((option) => option.semantic === 'persistent_policy_change')
   const other = options.filter((option) => !once.includes(option) && !persistent.includes(option) && option.semantic !== 'reject')
   const decline = options.filter((option) => option.semantic === 'reject')
-  const renderOption = (option: typeof options[number]) => {
-    const descriptionId = `${scopeId}-${encodeURIComponent(option.optionId)}`
-    const scope = approvalOptionScope(option)
-    return <div key={option.optionId} className="operator-approval-choice">
-      <Button size="sm"
-        variant={option.semantic === 'approve_once' || option.semantic === 'allow_turn' ? 'primary' : option.semantic === 'reject' ? 'ghost' : 'secondary'}
-        disabled={disabled} onClick={() => onSelect(option.optionId)} aria-describedby={descriptionId}
-        title={scope}>{mcp && option.semantic === 'approve_once' ? 'Allow once' : option.label}</Button>
-      <p id={descriptionId} className="operator-approval-scope">
-        {string(option.scopeSummary) ? <span>{option.scopeSummary} </span> : null}{scope}
-      </p>
-    </div>
-  }
+  const renderOption = (option: typeof options[number]) => <InteractionOptionButton key={option.optionId} option={option}
+    variant={option.semantic === 'approve_once' || option.semantic === 'allow_turn' ? 'primary' : option.semantic === 'reject' ? 'ghost' : 'secondary'}
+    disabled={disabled} onSelect={onSelect} label={mcp && option.semantic === 'approve_once' ? 'Allow once' : option.label} />
   return <section className="operator-approval-card" aria-label={`${actor} approval request`}>
     <div className="operator-approval-heading"><span className="operator-approval-mark"><Icon name="lock" size={15} /></span><div>
       <h3>{mcp && tool ? `${tool}?` : summary.operation}</h3>

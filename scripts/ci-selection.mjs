@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { dirname, join, matchesGlob, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import { affectedSnapshot } from './ci-affected.mjs'
@@ -10,16 +10,9 @@ import { integrationFileList } from './ci-files.mjs'
 import { expandIntegrationCoverage } from '../packages/contracts/src/ciCoverage.mjs'
 
 export function executionFiles(files, executionSuite, cwd) {
-  const [suite, part] = executionSuite.split('-')
+  const part = executionSuite.split('-')[1]
   if (!part) return files
-  const heavyPath = join(cwd, 'apps/web/heavy-tests.json')
-  const heavy = existsSync(heavyPath) ? JSON.parse(readFileSync(heavyPath, 'utf8')).files : []
-  return files.filter(file => {
-    if (part === 'api') return file.startsWith('apps/api/')
-    if (part === 'other') return !file.startsWith('apps/api/') && (suite !== 'unit' || !file.startsWith('apps/web/'))
-    const isHeavy = heavy.some(pattern => matchesGlob(file.slice('apps/web/'.length), pattern))
-    return file.startsWith('apps/web/') && (executionSuite === 'unit-web-heavy' ? isHeavy : !isHeavy)
-  })
+  return files.filter(file => (part === 'api') === file.startsWith('apps/api/'))
 }
 
 /** Learned timings travel with the immutable cloud snapshot, outside provider parameter limits. */

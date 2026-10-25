@@ -8,7 +8,7 @@ it('persists measured unit gate parts through MCP and dispatches the same learne
   const durations = Object.fromEntries(files.map(file => [file, 90_000]))
   const integrationFiles = Array.from({ length: 48 }, (_, index) =>
     `apps/api/test/feature-${index}.integration.test.ts`)
-  const f = await fixture({ unitInventory: { files, durations: {}, heavy: [] },
+  const f = await fixture({ unitInventory: { files, durations: {}},
     integrationInventory: { files: integrationFiles,
       durations: Object.fromEntries(integrationFiles.map(file => [file, 120_000])) },
     cloud: { github: 24, circleci: 0 } })

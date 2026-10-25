@@ -76,7 +76,7 @@ it('persists completed unit result reports for read-only MCP callers', async () 
 it('sizes persisted unit parts from committed timings and then from learned unit timings', async () => {
   const files = Array.from({ length: 6 }, (_, index) => `apps/api/test/unit-${index}.test.ts`)
   const durations = Object.fromEntries(files.map(file => [file, 150_000]))
-  const f = await fixture({ unitInventory: { files, durations, heavy: [] }, cloud: { github: 6, circleci: 0 } })
+  const f = await fixture({ unitInventory: { files, durations}, cloud: { github: 6, circleci: 0 } })
   try {
     const reader = await f.connect(CI_GET_ACTIONS)
     const input = { suite: 'unit', scope: 'full', commandId: 'timed-parts' }

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { CiGetOutputSchema, CiRunOutputSchema, type CiHostRequest, type CiHostRun, type CiTestResults } from '@foreman-code/contracts'
 import { decodeMcpToolResult } from '@foreman-code/contracts/operator-mcp'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { buildApp } from '../src/app.js'
 import type { OperatorServices } from '../src/mcp/operator/types.js'
 import { PostgresAccessService } from '../src/modules/access/postgres.js'
@@ -15,6 +15,10 @@ import { mainCiContext } from '../src/modules/ci/context.js'
 let database: Awaited<ReturnType<typeof migratedDatabase>>
 beforeAll(async () => { database = await migratedDatabase() }, 60_000)
 afterAll(async () => { await database?.close() }, 60_000)
+// The queue and gate reservations span workspaces; each case owns a fresh fleet.
+beforeEach(async () => {
+  await database.pool.query('truncate ci_runs, ci_file_durations, management_command_receipts, management_audit')
+})
 
 const LABEL = 'apps/api/test/label.integration.test.ts'
 const PLAIN = 'apps/api/test/plain.integration.test.ts'
@@ -33,7 +37,8 @@ const BASE: Record<string, string> = {
   [LABEL]: "import { expect, it } from 'vitest'\nimport { label } from '../src/lib/label.js'\n"
     + "it('labels', () => { expect(label(' a ')).toBe('[a]') })\n",
   [PLAIN]: "import { expect, it } from 'vitest'\nit('adds', () => { expect(1 + 1).toBe(2) })\n",
-  [DYNAMIC]: "import { expect, it } from 'vitest'\nconst name = '../src/lib/format.js'\n"
+  // A module named at run time: no key can prove what it loads.
+  [DYNAMIC]: "import { expect, it } from 'vitest'\nconst name = process.env.FIXTURE_MODULE ?? '../src/lib/format.js'\n"
     + "it('loads', async () => { expect(await import(name)).toBeTruthy() })\n",
 }
 const commit = (digit: string) => digit.repeat(40)
@@ -86,15 +91,18 @@ async function fixture() {
   const integrationFiles = [DYNAMIC, LABEL, PLAIN]
   /** What the repository selector picks at each commit; a missing commit makes it fail. */
   const selections = new Map<string, string[]>()
+  /** Commits where the selector picks every file. */
+  const fullSelection = new Set<string>()
   const commits: CiCommits & { testTree: (repository: string, sha: string) => Promise<ReturnType<typeof tree>> } = {
     resolve: async (_repository, _branch, sha) => sha!,
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
     integrationInventory: async () => ({ files: integrationFiles,
       durations: Object.fromEntries(integrationFiles.map(file => [file, 1000])) }),
-    unitInventory: async () => ({ files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }),
+    unitInventory: async () => ({ files: ['apps/api/src/site.test.ts'], durations: {}}),
     testTree: async (_repository, sha) => tree(sha),
     // The repository's affected selector, as Main runs it for a caller that names no files.
     affectedSelection: async (_repository, input) => {
+      if (fullSelection.has(input.commit)) return { scope: 'full', files: [], reason: 'Shared CI infrastructure changed.' }
       const files = selections.get(input.commit)
       if (!files) throw new Error('The selector failed')
       return { scope: 'affected', files, reason: 'Selected by the repository selector.' }
@@ -168,7 +176,7 @@ async function fixture() {
   }
   const cachedRows = async () => (await pool.query<{ file: string; ticket_id: string }>(
     'select file,ticket_id from ci_test_result_cache where workspace_id=$1 order by file', [workspaceId])).rows
-  return { workspaceId, connect, call, request, requestSelected, selections, read, complete, sent, starts, outcomes, cachedRows, close: async () => {
+  return { workspaceId, connect, call, request, requestSelected, selections, fullSelection, read, complete, sent, starts, outcomes, cachedRows, close: async () => {
     await Promise.all(clients.map(client => client.close()))
     await ci.close()
     await app.close()
@@ -226,23 +234,28 @@ it('runs a file again when a transitive import, the lockfile or the runner scrip
   } finally { await f.close() }
 })
 
-it('never caches failed, skipped, unreported or uncertain results', async () => {
+it('caches a file that passed in a failed ticket, but never failed, skipped, unreported or uncertain results', async () => {
   const f = await fixture()
   try {
+    // Only each file's own result matters: LABEL passed although PLAIN failed the ticket.
     f.outcomes.set(PLAIN, 'failed')
     const failed = await f.request('1', [LABEL, PLAIN])
     await f.complete(failed.ticketId, 'failed')
-    expect(await f.cachedRows()).toEqual([])
+    expect(await f.cachedRows()).toEqual([{ file: LABEL, ticket_id: failed.ticketId }])
+    const retry = await f.request('2', [LABEL, PLAIN])
+    expect(retry.cachedFiles?.map(item => item.file)).toEqual([LABEL])
+    expect(await f.sent(retry.ticketId)).toEqual([PLAIN])
 
+    // Commit 4 changes the lockfile, so no earlier proof applies.
     f.outcomes.set(PLAIN, 'skipped')
     f.outcomes.set(LABEL, 'missing')
-    const partial = await f.request('1', [LABEL, PLAIN, DYNAMIC])
+    const partial = await f.request('4', [LABEL, PLAIN, DYNAMIC])
     expect(partial.cachedFiles).toBeUndefined()
     await f.complete(partial.ticketId)
     // Only the dynamic file passed, and its import cannot be resolved statically, so it has no usable key.
-    expect(await f.cachedRows()).toEqual([])
+    expect((await f.cachedRows()).filter(row => row.ticket_id === partial.ticketId)).toEqual([])
 
-    const again = await f.request('2', [LABEL, PLAIN, DYNAMIC])
+    const again = await f.request('4', [LABEL, PLAIN, DYNAMIC])
     expect(again.cachedFiles).toBeUndefined()
     expect(await f.sent(again.ticketId)).toEqual([DYNAMIC, LABEL, PLAIN])
   } finally { await f.close() }
@@ -288,7 +301,7 @@ it('skips files that already passed in a run whose files the selector chose, and
     f.selections.set(commit('1'), [LABEL, PLAIN])
     const first = await f.requestSelected('1')
     expect((await f.read(first.ticketId)).run).toMatchObject({ selectedOnMain: true, files: [LABEL, PLAIN] })
-    expect(await f.sent(first.ticketId)).toEqual([LABEL, PLAIN])
+    expect(await f.sent(first.ticketId), JSON.stringify(await f.read(first.ticketId))).toEqual([LABEL, PLAIN])
     await f.complete(first.ticketId)
     expect(await f.cachedRows()).toEqual([
       { file: LABEL, ticket_id: first.ticketId }, { file: PLAIN, ticket_id: first.ticketId }])
@@ -323,10 +336,35 @@ it('starts no job for a check whose selector finds nothing affected', async () =
   try {
     f.selections.set(commit('2'), [])
     const startsBefore = f.starts.length
+    // Measured against a commit this check passed on; without one every package is checked (next case).
     const started = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'typecheck', commit: commit('2'), scope: 'affected',
-      commandId: randomUUID() }))
+      baseCommit: commit('1'), commandId: randomUUID() }))
     expect((await f.read(started.ticketId)).run).toMatchObject({ state: 'passed', selectedOnMain: true, files: [] })
     expect(await f.sent(started.ticketId)).toBeNull()
     expect(f.starts).toHaveLength(startsBefore)
+  } finally { await f.close() }
+})
+
+it('checks every package when typecheck has no commit it passed on, since a diff proves nothing about the rest', async () => {
+  // A docs-only change on a branch whose default-branch base failed typecheck passed at once without checking anything.
+  const f = await fixture()
+  try {
+    f.selections.set(commit('2'), [])
+    const started = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'typecheck', commit: commit('2'), scope: 'affected',
+      commandId: randomUUID() }))
+    expect((await f.read(started.ticketId)).run).toMatchObject({ state: 'queued', scope: 'full' })
+  } finally { await f.close() }
+})
+
+it('skips proven files even when the selector picks every file', async () => {
+  const f = await fixture()
+  try {
+    // A CI or lockfile change makes the selector choose the whole suite; files already proven still are not rerun.
+    const first = await f.request('1', [LABEL, PLAIN])
+    await f.complete(first.ticketId)
+    f.fullSelection.add(commit('2'))
+    const started = await f.requestSelected('2')
+    expect(started.cachedFiles?.map(item => item.file)).toEqual([LABEL, PLAIN])
+    expect(await f.sent(started.ticketId)).toEqual([DYNAMIC])
   } finally { await f.close() }
 })

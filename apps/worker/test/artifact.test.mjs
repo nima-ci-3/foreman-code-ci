@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker runtime/browser scripts/build-worker-artifact.mjs scripts/worker-snapshot-policy.mjs
 import { persistentFixtureRoot } from './fixtureStorage.mjs';
 import { readProductEnvironment } from '../../../packages/contracts/src/productEnvironment.mjs';
 import test from 'node:test';

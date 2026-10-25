@@ -56,7 +56,8 @@ export class MainBrowserRuntime {
       if (!receipt.staged?.manifestSha256 || descriptor.manifestSha256 !== receipt.staged.manifestSha256) {
         throw new Error('The installed browser runtime does not match this release.')
       }
-      const native = await import(pathToFileURL(descriptor.nativeHostModule).href) as { createBrowserHost: typeof createBrowserHost }
+      // The installed native host is the release's bundle of hostFactory.ts.
+      const native = await import(/* ci-key: apps/api/src/modules/browser-runtime/hostFactory.ts */ pathToFileURL(descriptor.nativeHostModule).href) as { createBrowserHost: typeof createBrowserHost }
       await this.options.assertHostOwnership()
       if (this.closed) return
       this.host = await native.createBrowserHost({ ...this.options, runtime: descriptor })

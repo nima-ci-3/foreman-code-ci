@@ -2,13 +2,12 @@ import type { OperatorActivity } from '@foreman-code/contracts'
 import { useState } from 'react'
 import { ChevronRight, Terminal } from 'lucide-react'
 import { Button, CodeBlock } from '../../../shared/ui/nocturne'
+import './agentChat.css'
+import { activityStatusLabels } from './activityStatusLabels'
 
 const verbs: Record<OperatorActivity['kind'], string> = {
   thinking: '', tool: 'Ran', mcp: 'Called', web_search: 'Searched',
   file_read: 'Read', file_write: 'Wrote', subagent: 'Agent',
-}
-const statuses: Record<OperatorActivity['status'], string> = {
-  pending: 'Waiting', running: 'Running', completed: '', failed: 'Failed', canceled: 'Stopped', unknown: 'Unconfirmed',
 }
 
 export function AgentChatActivity({ entry, onBrowse, onExpand, expandState }: {
@@ -30,7 +29,7 @@ export function AgentChatActivity({ entry, onBrowse, onExpand, expandState }: {
     }}>
       <Terminal size={13} aria-hidden="true" />
       <span title={title}>{title}</span>
-      {statuses[entry.status] ? <small>{statuses[entry.status]}</small> : null}
+      {activityStatusLabels[entry.status] ? <small>{activityStatusLabels[entry.status]}</small> : null}
       <ChevronRight size={13} className="agent-chat-tool-chevron" aria-hidden="true" />
     </summary>
     {expanded ? <div className="agent-chat-tool-content">

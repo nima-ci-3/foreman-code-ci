@@ -1,4 +1,4 @@
-import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
+import { INSTALLATION_NAMES, PACKAGE_RELEASE_POLICY } from '@foreman-code/contracts/installation-names'
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { access, mkdir, readFile, readlink, rmdir, statfs, writeFile, unlink } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
@@ -148,7 +148,7 @@ export async function observeVerificationRuntime({ ownerSentinelPaths, tools = [
     shmType: shm.type, shmCapacityBytes: shm.blocks * shm.bsize,
     controlTempType: tmp.type, controlTempCapacityBytes: tmp.blocks * tmp.bsize,
     mountInfo: await readFile('/proc/self/mountinfo', 'utf8'), ownerSentinels,
-    packagePolicy: { minimumReleaseAge: 2880, minimumReleaseAgeStrict: true, minimumReleaseAgeIgnoreMissingTime: false },
+    packagePolicy: { ...PACKAGE_RELEASE_POLICY },
   };
 }
 

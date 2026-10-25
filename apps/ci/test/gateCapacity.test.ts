@@ -17,9 +17,9 @@ function fleet(builder = true): HostCiEndpoint {
   }
 }
 
-const unitFiles = ['apps/api/src', 'apps/web/src'].flatMap((directory, index) =>
-  Array.from({ length: index === 0 ? 24 : 8 }, (_, file) => `${directory}/feature-${file}.test.ts`))
-const unit = { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000])), heavy: [] }
+// Enough measured unit work to give every cloud slot a check before integration starts.
+const unitFiles = Array.from({ length: 32 }, (_, file) => `apps/api/src/feature-${file}.test.ts`)
+const unit = { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000]))}
 
 it.each([0, 2])('balances a second integration wave after checks with %i reserved slots', async reserved => {
   const files = Array.from({ length: 901 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
@@ -55,7 +55,8 @@ it('keeps a small host-only plan that finishes before cloud checks can release a
 })
 
 it('keeps two concurrent builder files when a second cloud boot would lengthen the gate from 270 to 420 seconds', async () => {
-  const computers = (await fleet().computers()).slice(0, 10)
+  // The builder and one cloud slot per check (typecheck, lint and unit for the API and the rest).
+  const computers = (await fleet().computers()).slice(0, 7)
   const endpoint: HostCiEndpoint = { computers: async () => computers,
     request: async () => ({ operation: 'status', ready: true, reasons: [], runs: [],
       cpuCount: 4, memoryBytes: 16 * 2 ** 30, slotsUsed: 0, slotsTotal: 1 }),
@@ -63,10 +64,10 @@ it('keeps two concurrent builder files when a second cloud boot would lengthen t
   const files = ['apps/api/test/first.integration.test.ts', 'apps/api/test/second.integration.test.ts']
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files, durations: Object.fromEntries(files.map(file => [file, 180_000])) },
-    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}, heavy: [] }, {}, endpoint)
+    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}}, {}, endpoint)
   const checks = parts.filter(part => part.suite !== 'integration')
-  expect(checks).toHaveLength(9)
-  expect(new Set(checks.map(part => part.plannedHostKey)).size).toBe(9)
+  expect(checks).toHaveLength(6)
+  expect(new Set(checks.map(part => part.plannedHostKey)).size).toBe(6)
   const ends = computers.map(computer => parts.filter(part => part.plannedHostKey === computer.key)
     .reduce((sum, part) => sum + part.expectedDurationMs, 0))
   expect(Math.max(...ends)).toBe(270_000)
@@ -82,7 +83,8 @@ it('revisits an earlier builder after a later builder stops determining the crit
       hostRef: { kind: 'main', mainId: 'fixture' } },
     { key: 'builder-second', label: 'Second builder', priority: 10,
       hostRef: { kind: 'device', mainId: 'fixture', deviceId: 'paired-fixture' } },
-    ...(await fleet().computers()).slice(1, 10),
+    // One cloud slot per check, so integration files must go to the builders.
+    ...(await fleet().computers()).slice(1, 7),
   ]
   const endpoint: HostCiEndpoint = { computers: async () => computers,
     request: async computer => ({ operation: 'status', ready: true, reasons: [], runs: [],
@@ -97,7 +99,7 @@ it('revisits an earlier builder after a later builder stops determining the crit
   ])
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files, durations: Object.fromEntries(files.map(file => [file, 60_000])) },
-    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}, heavy: [] },
+    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}},
     {}, endpoint, speeds)
   const ends = computers.map(computer => parts.filter(part => part.plannedHostKey === computer.key)
     .reduce((sum, part) => sum + part.expectedDurationMs, 0))
