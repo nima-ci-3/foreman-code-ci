@@ -53,6 +53,9 @@ const PAGE_METHODS = new Set(['Page.navigate', 'Page.handleJavaScriptDialog', 'P
   'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.imeSetComposition',
   'Input.cancelDragging', 'Runtime.evaluate', 'DOM.getDocument', 'DOM.querySelector', 'DOM.setFileInputFiles'])
 
+/** About 30 frames per second, matching what the viewer shows. */
+const SCREENCAST_FRAME_INTERVAL_MS = 33
+
 export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
   private readonly profiles = new Map<string, NativeProfile>()
   private readonly reconnecting = new Map<string, Promise<{ generation: number } | null>>()
@@ -61,7 +64,7 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
   private readonly popups = new Set<Parameters<BrowserNativeDriver['onPopup']>[0]>()
   private readonly tabClosed = new Set<Parameters<BrowserNativeDriver['onTabClosed']>[0]>()
   private readonly downloads = new Map<string, BrowserNativeDownload>()
-  private readonly captures = new Map<string, Promise<{ connection: BrowserCdpConnection; listeners: Set<(frame: BrowserHostFrame) => void>; stop: () => Promise<void> }>>()
+  private readonly captures = new Map<string, Promise<{ connection: BrowserCdpConnection; listeners: Set<(frame: BrowserHostFrame) => void>; readonly latest?: BrowserHostFrame; stop: () => Promise<void> }>>()
   private readonly retiringCaptures = new Map<string, Promise<void>>()
   private readonly browser: HostAdministration['browser']
   constructor(readonly options: BrowserNativeDriverOptions) { this.browser = createBrowserAdministration(options.actionDirectory) }
@@ -418,7 +421,7 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
   async input(input: BrowserPageInput, dispatch: BrowserNativeDispatch): Promise<void> {
     if (input.kind === 'pointer') {
       await dispatch('Input.dispatchMouseEvent', { type: input.phase === 'down' ? 'mousePressed' : input.phase === 'up' ? 'mouseReleased' : 'mouseMoved',
-        x: input.x, y: input.y, button: ['left', 'middle', 'right'][input.button] ?? 'none', buttons: input.buttons, clickCount: 1 })
+        x: input.x, y: input.y, button: ['left', 'middle', 'right'][input.button] ?? 'none', buttons: input.buttons, clickCount: input.clickCount ?? 1, modifiers: input.modifiers ?? 0 })
     } else if (input.kind === 'wheel') {
       await dispatch('Input.dispatchMouseEvent', { type: 'mouseWheel', x: input.x, y: input.y, deltaX: input.deltaX, deltaY: input.deltaY })
     } else if (input.kind === 'key') {
@@ -459,6 +462,8 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
     }
     const capture = await pending
     capture.listeners.add(receive)
+    // A viewer joining a running screencast gets its latest frame; a static page repaints nothing new.
+    if (capture.latest) receive(capture.latest)
     let closed = false, stopping: Promise<void> | undefined
     return async () => {
       if (closed) return
@@ -479,6 +484,7 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
 
   private async startCapture(profileId: string, profile: NativeProfile, tab: AttachedTab) {
     const listeners = new Set<(frame: BrowserHostFrame) => void>()
+    const state: { latest?: BrowserHostFrame; ackedAt: number } = { ackedAt: 0 }
     const unsubscribe = profile.connection.onEvent(event => {
       if (event.method !== 'Page.screencastFrame' || event.sessionId !== tab.sessionId) return
       const metadata = object(event.params.metadata), encoded = text(event.params.data)
@@ -486,15 +492,21 @@ export class ManagedBrowserNativeDriver implements BrowserNativeDriver {
         const frame: BrowserHostFrame = { data: Buffer.from(encoded, 'base64'), mimeType: 'image/jpeg',
           width: Number(metadata.deviceWidth) || 1280, height: Number(metadata.deviceHeight) || 800,
           viewportOffsetTop: Number(metadata.offsetTop) || 0, capturedAt: new Date().toISOString() }
+        state.latest = frame
         for (const listener of listeners) listener(frame)
       }
-      void profile.connection.send('Page.screencastFrameAck', { sessionId: event.params.sessionId }, tab.sessionId)
+      // Chromium sends the next frame only after this ack: pacing it keeps encoding at the rate viewers are shown.
+      const ack = () => void profile.connection.send('Page.screencastFrameAck', { sessionId: event.params.sessionId }, tab.sessionId)
         .catch(() => this.options.onDisconnected(profileId, profile.generation))
+      const wait = SCREENCAST_FRAME_INTERVAL_MS - (performance.now() - state.ackedAt)
+      state.ackedAt = performance.now() + Math.max(0, wait)
+      if (wait > 0) setTimeout(ack, wait).unref?.()
+      else ack()
     })
     try {
       await profile.connection.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 }, tab.sessionId)
     } catch (error) { unsubscribe(); throw error }
-    return { connection: profile.connection, listeners, stop: async () => {
+    return { connection: profile.connection, listeners, get latest() { return state.latest }, stop: async () => {
       if (!browserProcessAlive(profile.identity.pid, profile.identity.birthId)) { unsubscribe(); return }
       if (this.profiles.get(profileId) !== profile) await this.reconnectProfile(profileId)
       const current = this.profiles.get(profileId)

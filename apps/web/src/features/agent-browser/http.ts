@@ -20,8 +20,13 @@ export interface BrowserHttpOptions {
 export function createBrowserHttp(options: BrowserHttpOptions) {
   return async function call<Arguments extends readonly unknown[], Result>(method: string, path: string,
     codec: BrowserWireCodec<Arguments, Result>, args: Arguments, signal?: AbortSignal): Promise<Result> {
+    let encoded: ReturnType<typeof codec.encode>
+    // Input the shared contract refuses (such as a malformed address) is never sent, so the outcome is certain.
+    try { encoded = codec.encode(...args) } catch (error) {
+      throw new ApiError({ code: 'INVALID_REQUEST', message: 'Check what you entered, then try again.',
+        details: { outcome: 'rejected' } }, 0, { cause: error })
+    }
     const operation = beginFencedOperation({ signal })
-    const encoded = codec.encode(...args)
     const url = new URL(path, options.origin ?? globalThis.location?.origin ?? 'http://localhost')
     if (encoded.query) url.search = encoded.query.toString()
     const headers = installationHeaders(encoded.headers)
