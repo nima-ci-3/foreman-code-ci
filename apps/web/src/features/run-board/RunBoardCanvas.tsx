@@ -1,7 +1,7 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, type EdgeProps, type NodeProps } from '@xyflow/react'
+import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, type EdgeProps, type NodeChange, type NodeProps } from '@xyflow/react'
 import { AgentNodeView } from '../../shared/ui/nocturne/Canvas'
 import { useReducedMotion, type AgentPanel } from '../../shared/ui/nocturne'
 import type { ActivitySnapshotV1, ExecutionQueueEntry, Agent, WorkflowHierarchyReadResult } from '@foreman-code/contracts'
@@ -10,7 +10,7 @@ import {
   useGraphDraftStore, SignalEdgeShape, RESPONSIVE_FIT_OPTIONS, RESPONSIVE_MIN_ZOOM, useResponsiveGraphViewport,
   boardViewportKey,
 } from '../graph'
-import { nextDraftKey, editorAgents, useFloatingCurve, useWorkflowBoard } from '../board-core'
+import { nextDraftKey, editorAgents, useFloatingCurve, useWorkflowBoard, withTeamPositionChanges } from '../board-core'
 import {
   CiServerNode, CiTransferEdge, type CiServerFlowNode, type CiTransferFlowEdge, CI_SERVER_NODE_ID,
   ciJobRefreshing, ciNodeActivities, runCiApi, useCiTransfers, runInspectionQueryKey, useBoardCiServer,
@@ -127,6 +127,7 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
   const teamNodeId = board?.teamNodeId
   // Same rule as the draft Board: an agent the draft has can be dragged, and the drop is the draft's own layout change.
   const move = board?.moveDraftNodes
+  const teamGraph = draft ?? definition
   const movable = useMemo(() => new Set(move ? (draft?.nodes ?? definition?.nodes ?? []).map(node => node.id) : []), [move, draft, definition])
   const [dragged, setDragged] = useState<Readonly<Record<string, { x: number; y: number }>>>({})
   useEffect(() => setDragged(previous => {
@@ -221,13 +222,23 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
       <ReactFlow<SavedBoardNode | CiServerFlowNode | KanbanFlowNode, SavedBoardEdge | CiTransferFlowEdge | KanbanActivityFlowEdge> nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         {...READ_ONLY_FLOW_PROPS} onNodesChange={(changes) => {
           kanban.applyChanges(changes); ci.place.applyChanges(changes)
-          const moves = changes.flatMap(change => change.type === 'position' && change.position && movable.has(change.id) ? [[change.id, change.position] as const] : [])
-          if (moves.length) setDragged(previous => ({ ...previous, ...Object.fromEntries(moves) }))
+          const moves = changes.filter((change): change is Extract<NodeChange<SavedBoardNode>, { type: 'position' }> =>
+            change.type === 'position' && movable.has(change.id))
+          if (moves.length) setDragged(previous => {
+            const positions = nodes.map(node => ({ id: node.id, position: previous[node.id] ?? node.position }))
+            const expanded = teamGraph ? withTeamPositionChanges<SavedBoardNode>(moves, teamGraph, agents, positions) : moves
+            return { ...previous, ...Object.fromEntries(expanded.flatMap(change => change.type === 'position' && change.position
+              ? [[change.id, change.position]] : [])) }
+          })
         }}
         onNodeDragStop={(_event, node) => {
           if (node.id === KANBAN_NODE_ID) kanban.moved(node.position)
           if (node.id === CI_SERVER_NODE_ID) ci.place.moved(node.position)
-          if (movable.has(node.id)) move?.([{ id: node.id, position: { x: node.position.x, y: node.position.y } }])
+          if (movable.has(node.id)) {
+            const moves: NodeChange<SavedBoardNode>[] = [{ type: 'position', id: node.id, position: node.position }]
+            const expanded = teamGraph ? withTeamPositionChanges(moves, teamGraph, agents, nodes) : moves
+            move?.(expanded.flatMap(change => change.type === 'position' && change.position ? [{ id: change.id, position: change.position }] : []))
+          }
         }} fitView={fitOnMount} defaultViewport={defaultViewport} fitViewOptions={fitViewOptions} minZoom={RESPONSIVE_MIN_ZOOM} maxZoom={1.6}
         onInit={onInit} onMove={onMove} onMoveEnd={onMoveEnd} onPaneClick={() => setPicked(undefined)}
         proOptions={proOptions} aria-label="Saved Run graph"

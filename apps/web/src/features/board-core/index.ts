@@ -3,6 +3,7 @@ export { BoardAuthoringContext, BoardHostsContext, BoardSelectionContext, Workfl
 export type { WorkflowAuthoringActions, WorkflowBoardAuthoring, WorkflowBoardSelection, WorkflowBoardValue } from './context'
 export { applyGraphGeometry, createGraphGeometryAdapter } from './geometry'
 export type { GraphGeometryChange } from './geometry'
+export { withTeamPositionChanges } from './teamGeometry'
 export { retainArray, sameFields } from './graphReferences'
 export { LAYOUT_GAP_Y, layoutHierarchy } from './hierarchyLayout'
 export { boardDraftContextKey, boardLiveRunSnapshotKey, boardRunListKey } from './keys'

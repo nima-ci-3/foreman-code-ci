@@ -44,6 +44,8 @@ export interface BrowserSessionRouterOptions<Principal> {
   computers(principal: Principal): Promise<readonly string[]>
   subjectComputer(principal: Principal, subject: AgentSubject): Promise<string>
   media(binding: BrowserInstallationBinding): BrowserMediaSource<Principal>
+  /** Successful interactive calls count as use; background session-list/read polling does not. */
+  onActivity?(principal: Principal, sessionId: string): void
 }
 
 /** Main's concrete selected-computer routing; D provides its existing authority and paired transport only. */
@@ -82,7 +84,9 @@ export function createBrowserSessionRouter<Principal>(options: BrowserSessionRou
   const sessionCall = async <Name extends Method>(name: Name, principal: Principal, sessionId: string, mutate: boolean,
     args: Tail<Parameters<BrowserSessionPort<Principal>[Name]>>): Promise<Awaited<ReturnType<BrowserSessionPort<Principal>[Name]>>> => {
     const found = await locate(principal, sessionId, mutate)
-    return call(found.session.computerId, name, principal, args, found.installationId)
+    const result = await call(found.session.computerId, name, principal, args, found.installationId)
+    if (mutate && name !== 'close') options.onActivity?.(principal, sessionId)
+    return result
   }
   const viewLocation = async (principal: Principal, viewId: string) => {
     const id = await options.locations.view(viewId)
