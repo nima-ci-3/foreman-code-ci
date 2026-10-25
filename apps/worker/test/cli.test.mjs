@@ -37,3 +37,21 @@ test('both CLIs provide static model-free help before argument, filesystem and r
   }
   assert.deepEqual(await readdir(directory), before);
 });
+
+test('a Worker that fails to start reports the cause beside its failure code', async (t) => {
+  const parent = process.env.FOREMAN_CODE_TEST_ROOT ?? join(homedir(), '.cache', 'foreman-tmp');
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(join(parent, 'worker-start-failure-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = join(directory, 'src'); await mkdir(source);
+  // The update supervisor is absent from this copy, so startup fails with an ordinary error.
+  for (const name of ['cli.mjs', 'diagnostics.mjs', 'runtime.mjs', 'installation.mjs', 'browserRuntimeInstall.mjs']) {
+    await writeFile(join(source, name), standaloneInstallationSource(
+      await readFile(new URL(`../src/${name}`, import.meta.url), 'utf8')));
+  }
+  const state = join(directory, 'state'); await mkdir(state, { mode: 0o700 });
+  const result = spawnSync(process.execPath, [join(source, 'cli.mjs'), 'run', '--state', state], { encoding: 'utf8', timeout: 5000,
+    env: { PATH: '', HOME: '/missing/home' } });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^worker_start_failed: .*updateSupervisor\.mjs/m);
+});
