@@ -4,9 +4,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { buildBrowserRuntimeRecipe } from '../../../../scripts/browser-runtime-install.mjs';
+import { assembleBrowserRuntime } from '../../../../scripts/browser-runtime-install.mjs';
 import { activateBrowserRuntime, offlineBrowserRuntimeLifecycle, stageBrowserRuntime,
-  readInstalledBrowserRuntime } from '../../src/browserRuntimeInstall.mjs';
+  readInstalledBrowserRuntime, copyBuiltBrowserRuntime } from '../../src/browserRuntimeInstall.mjs';
 import { browserHostTarget } from './browserTarget.mjs';
 import { configureBrowserSandbox } from './browserSandbox.mjs';
 
@@ -25,12 +25,13 @@ export async function installedBrowserFixture() {
     const artifact = join(directory, 'artifact');
     const started = performance.now();
     const progress = phase => process.stdout.write(`[browser-build] ${phase}: ${Math.round(performance.now() - started)} ms\n`);
-    process.stdout.write(`Installing locked browser recipe for ${JSON.stringify(target)}\n`);
-    process.env.FOREMAN_BROWSER_ARTIFACT_CACHE ??= join(parent, 'browser-artifact-cache');
-    const packed = await buildBrowserRuntimeRecipe({ repository, commit: stdout.trim(), target,
-      foremanVersion: product.version, output: artifact });
+    process.stdout.write(`Assembling native browser runtime for ${JSON.stringify(target)}\n`);
+    const packed = await assembleBrowserRuntime({ repository, commit: stdout.trim(), target,
+      foremanVersion: product.version, output: artifact, onProgress: progress });
+    const consumed = join(directory, 'consumed');
+    await copyBuiltBrowserRuntime({ directory: artifact, output: consumed, target, commit: stdout.trim() });
     const runtimeRoot = join(directory, 'installed');
-    const staged = await stageBrowserRuntime({ runtimeRoot, artifact,
+    const staged = await stageBrowserRuntime({ runtimeRoot, artifact: consumed,
       expectedSha256: packed.descriptorSha256, target, activate: false });
     progress('runtime-staged-and-verified');
     const lifecycle = await offlineBrowserRuntimeLifecycle({ nativeHostModule: staged.nativeHostModule,

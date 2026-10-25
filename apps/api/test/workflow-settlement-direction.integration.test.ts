@@ -12,8 +12,6 @@ import {
   useSettlementFixtures, timeout, handoffs, seedDirectionWait, directionApi,
 } from './helpers/workflowSettlementTestSupport.js'
 import { postgresEnabled } from './helpers/database.js'
-import { readAffectedGraphRuns } from '../src/modules/graph-drafts/saveAdmission.js'
-import { withTransaction } from '../src/infrastructure/transaction.js'
 
 // Native terminals and physical closure are explicit test inputs. Authenticated
 // Save/MCP reads, canonical publication, SQL transactions and settlement execute.
@@ -131,27 +129,5 @@ describe.skipIf(!postgresEnabled)('workflow settlement direction', () => {
       }, 'single')
     }, timeout,
   )
-
-  it('settles a stopped direction wait for Save in a workflow whose approvals are native', async () => {
-    await withFixture((graph) => ({ ...handoffs(1)(graph), approval: { handler: 'native' },
-      executionPolicy: { maxParallelism: 1, maxNodeExecutions: 1 },
-    }), async (f) => {
-      await seedDirectionWait(f, { outcome: 'succeeded', output: { routing: { kind: 'finish' },
-        data: { latestDeliverable: { revision: 1 }, remainingFindings: ['Review is incomplete'] } } })
-      const api = await directionApi(f)
-      try {
-        const interaction = await api.repository.get(workDirectionInteractionId(f.run.id))
-        assert.ok(interaction)
-        const stopped = await api.call('interaction_respond', { interactionId: interaction.id, optionId: 'stop',
-          expectedRevision: interaction.revision })
-        expect(stopped?.isError, JSON.stringify(stopped)).not.toBe(true)
-        await f.restart()
-        await f.lifecycle.settleRun(true, false)
-        const scope = { workspaceId: f.scope.workspaceId, workflowId: f.scope.workflowId, stagedAgentIds: [] }
-        expect(await withTransaction(f.db.pool, (sql) => readAffectedGraphRuns(sql, scope)))
-          .toEqual([expect.objectContaining({ terminal: true, interactionPending: false })])
-      } finally { await api.app.close() }
-    }, 'single', { approvalPolicy: 'never' })
-  }, timeout)
 
 })

@@ -15,7 +15,7 @@ import { rejectCallbackWaiters } from './sessionCallbacks.js'
 import { observed, pump } from './sessionPump.js'
 import { inspectSettings, applyPreferences } from './sessionSettings.js'
 import { assertConsultationSession, assertConsultationRebind } from '../consultationSession.js'
-import { runtimeFor, newSessionOptions } from './sessionState.js'
+import { runtimeFor } from './sessionState.js'
 
 export async function prepareRuntime(ctx: ClaudeManagerContext, start: NativeSessionStart, signal?: AbortSignal): Promise<Runtime> {
   signal?.throwIfAborted()
@@ -33,7 +33,7 @@ export async function prepareRuntime(ctx: ClaudeManagerContext, start: NativeSes
   const opening = (async () => {
     try {
       runtime.sdk = await ctx.options.runner.open({ scope: ctx.options.scope,
-        options: nativeOptions, ...newSessionOptions(ctx),
+        options: nativeOptions,
         ...(startup.signal ? { signal: startup.signal } : {}), onObservation: (observation) => observed(ctx, runtime, observation),
         ...(ctx.options.cancelPendingRequests ? { cancelPendingRequests: () => { if (!runtime.replacingForResume) ctx.options.cancelPendingRequests!() } } : {}) })
       runtime.appliedPreferences = SessionPreferencesSchema.parse({})
@@ -111,7 +111,7 @@ export async function open(ctx: ClaudeManagerContext, start: NativeSessionStart,
   let offerStarted = false
   try {
     if (!runtime.sdk) runtime.sdk = await ctx.options.runner.open({
-      scope: ctx.options.scope, options: nativeOptions, ...(resume ? {} : newSessionOptions(ctx)),
+      scope: ctx.options.scope, options: nativeOptions,
       ...(startup.signal ? { signal: startup.signal } : {}),
       ...(resume ? { resume: { ...ctx.options.scope, nativeSessionId: resume.nativeSessionId } } : {}),
       onObservation: (observation) => observed(ctx, runtime, observation),

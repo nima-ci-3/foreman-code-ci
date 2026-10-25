@@ -18,6 +18,6 @@
   "nativeHostEntrypoint": "apps/api/src/modules/browser-runtime/hostFactory.ts",
   "bridgeSource": "apps/api/src/modules/browser-runtime/bridge.py",
   "skillSource": "apps/api/src/modules/browser-runtime/skill/browser-use.md",
-  "assembly": "Release assembly bundles source glue and the committed per-target resolved lock into an approved recipe. Workers install pinned third-party inputs once per lock and target.",
-  "install": "Explicit Worker staging downloads checksum-pinned archives and installs locked wheels offline, then records the installed inventory and verifies readiness. Ordinary bootstrap never resolves or downloads dependencies."
+  "assembly": "Release assembly emits a resolved dependency lock, executable/license inventory and immutable runtime unit. This source recipe is not an installed or publishable artifact.",
+  "install": "Only the verified unit is installed. Python dependency resolution and Chromium downloads never occur during application startup."
 }

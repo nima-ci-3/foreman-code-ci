@@ -6,11 +6,8 @@ import type { BrowserAuthority } from './browserAuthority.js'
 import type { BrowserLifecyclePort } from './ports.js'
 import { CHAT_BROWSER_IDLE_MS, ChatBrowserSessions } from './chatBrowser.js'
 import { DomainError } from '../errors.js'
-import { createBrowserSessionRouter } from '../browser-runtime/sessionRouter.js'
-import type { BrowserSessionService } from '../browser-runtime/service.js'
 
-const agent = { workspaceId: 'workspace', workflowId: 'workflow', workflowNodeId: 'node', agentId: 'agent',
-  productRole: 'coder' as const, displayName: 'Worker', configurationVersionId: 'configuration' }
+const agent = { workspaceId: 'workspace', workflowId: 'workflow', workflowNodeId: 'node', agentId: 'agent' }
 const chatSubject = { kind: 'conversation', agent, conversationId: 'chat-1' } as Extract<AgentSubject, { kind: 'conversation' }>
 const runSubject = { kind: 'execution', agent, execution: { runId: 'run', executionId: 'execution' } } as unknown as AgentSubject
 const principal = { id: 'chat-principal', audience: 'worker' } as ManagementPrincipal
@@ -81,72 +78,6 @@ it('closes the chat browser after ten idle minutes and when the chat is archived
   f.archive()
   await f.chats.sweep()
   expect(f.open.size).toBe(0)
-})
-
-it.each(['main', 'worker'])('keeps a chat browser used by its viewer on %s and expires it after real inactivity', async computerId => {
-  const f = fixture(computerId)
-  const sessionId = (await f.chats.sessionFor(principal))!
-  const session = f.open.get(sessionId)!
-  const input = vi.fn(async () => ({ accepted: true }))
-  const service = { input, get: async () => ({ session }) } as unknown as BrowserSessionService<ManagementPrincipal>
-  const router = createBrowserSessionRouter({ localComputerId: 'main', local: service,
-    locations: { session: async () => ({ session, installationId: 'installation' }), save: async () => undefined,
-      view: async () => undefined, saveView: async () => undefined },
-    pairing: { current: async id => ({ computerId: id, installationId: 'installation', connectionId: 'connection' }),
-      assertCurrent: async () => undefined, assertInstallation: async () => undefined,
-      wrappingKey: async () => { throw new Error('Unexpected key operation') } },
-    authority: { callerId: p => p.id, actor: async () => 'viewer', subject: async () => undefined,
-      session: async () => undefined, setup: async () => undefined },
-    runtimeStatus: async id => ({ computerId: id, ready: true, phase: 'ready', reason: null }),
-    computers: async () => [computerId], subjectComputer: async () => computerId,
-    transport: { invoke: async (_binding, method, p, args) => Reflect.apply(service[method], service, [p, ...args]) },
-    media: () => { throw new Error('Unexpected media') },
-    onActivity: (p, id) => f.chats.viewerActivity(p, id),
-  })
-  const viewer = { id: 'operator', audience: 'operator' } as ManagementPrincipal
-  const gesture = { sessionId, tabId: 'tab', firstSequence: 1,
-    actor: { kind: 'viewer' as const, browserGeneration: 1, epoch: 1, viewerId: 'viewer' },
-    gestures: [{ kind: 'wheel' as const, x: 10, y: 10, deltaX: 0, deltaY: 100 }] }
-  f.tick(CHAT_BROWSER_IDLE_MS - 60_000)
-  await router.input(viewer, gesture)
-  f.tick(120_000)
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(true)
-
-  // Sidebar reads poll every session; they must not keep an unused browser alive.
-  f.tick(CHAT_BROWSER_IDLE_MS - 120_000)
-  await router.get(viewer, sessionId)
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(false)
-})
-
-it('keeps a watched chat browser open until its last viewer leaves, then starts its idle window', async () => {
-  const f = fixture(), sessionId = (await f.chats.sessionFor(principal))!
-  const viewer = { id: 'operator', audience: 'operator' } as ManagementPrincipal
-  const first = f.chats.watchBrowser(viewer, sessionId), last = f.chats.watchBrowser(viewer, sessionId)
-  f.tick(CHAT_BROWSER_IDLE_MS)
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(true)
-  first(); first()
-  f.tick(CHAT_BROWSER_IDLE_MS)
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(true)
-  last()
-  f.tick(CHAT_BROWSER_IDLE_MS - 1)
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(true)
-  f.tick(1)
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(false)
-})
-
-it('still closes an archived chat browser while its viewer is attached', async () => {
-  const f = fixture(), sessionId = (await f.chats.sessionFor(principal))!
-  const stopWatching = f.chats.watchBrowser({ id: 'operator', audience: 'operator' } as ManagementPrincipal, sessionId)
-  f.archive()
-  await f.chats.sweep()
-  expect(f.open.has(sessionId)).toBe(false)
-  stopWatching()
 })
 
 it('continues the idle sweep after a Worker release fails and retries that browser on the next sweep', async () => {

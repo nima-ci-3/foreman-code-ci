@@ -581,18 +581,6 @@ describe('original published-artifact terminal physical companion',()=>{
       expect(f.request).toHaveBeenCalledOnce()
     }finally{await f.sqlConnection.close()}
   })
-  it('verifies a just-started turn whose ID Main has not acknowledged yet, but not another acknowledged turn',async()=>{
-    for(const acknowledged of [null,'other-turn']){
-      const f=await physicalFixture()
-      try {
-        f.lane.provider_id=acknowledged as never;f.lifetime.lane!.providerId=null
-        const original=await f.bind()
-        const verified=f.sqlConnection.transaction(sql=>f.producer.assertOriginal(sql,f.owner,original))
-        if(acknowledged===null)await verified
-        else await expect(verified).rejects.toThrow('writer_lane_receipt_turn')
-      }finally{await f.sqlConnection.close()}
-    }
-  })
   it('retains running and unaccepted SQL proof without requiring an adopted mapping or result acceptance',async()=>{
     const f=await terminalFixture()
     try {

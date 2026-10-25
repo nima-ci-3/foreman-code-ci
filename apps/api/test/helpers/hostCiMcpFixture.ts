@@ -139,8 +139,6 @@ export async function fixture(options: { repository?: boolean; github?: Record<s
   beforeStatus?: (computer: HostCiComputer) => Promise<void>
   databasePool?: (databaseUrl: string) => pg.Pool
   supersession?: { branch(commit: string): string | null; isAncestor(ancestor: string, commit: string): boolean }
-  /** Each commit's ancestors, newest first. */
-  ancestors?: Record<string, string[]>
   repositoryRunner?: { commits: CiCommits; endpoint: HostCiEndpoint } } = {}) {
   const saved = options.agent ? makeCurrentWorkflowFixture(randomUUID()) : undefined
   if (saved) {
@@ -176,8 +174,6 @@ export async function fixture(options: { repository?: boolean; github?: Record<s
       isAncestor: async (_repository: string, ancestor: string, commit: string) =>
         options.supersession!.isAncestor(ancestor, commit),
     } : {}),
-    ...(options.ancestors ? { coverageAncestors: async (_repository: string, commit: string, candidates: string[]) =>
-      (options.ancestors![commit] ?? []).filter(ancestor => candidates.includes(ancestor)) } : {}),
     resolve: async (_repository: string, _branch: string, commit: string | undefined) => {
     const resolved = commit ?? 'a'.repeat(40)
     published.push(resolved)

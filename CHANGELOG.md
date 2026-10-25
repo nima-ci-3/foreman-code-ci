@@ -7,14 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [0.0.119] - 2026-10-25
-
-- Claude workflow Agents run on paired Worker computers (pre-assigned native session, Main callback authority, Worker MCP).
-- Corrective result-repair turns survive Main verification and Stop; whole-session history reconciliation for Claude on Workers.
-- Save no longer waits forever on a stopped owner work direction in workflows with native approvals.
-- Plain-folder executions persist their native placement.
-- The browser runtime loads without built contracts; the Worker artifact ships updateRecord.mjs.
-
 ## [0.0.118] - 2026-10-24
 
 - One Board with states: a Run paints its live states on the workflow's own nodes, editing locks while it runs, Stop sits in Run's place.

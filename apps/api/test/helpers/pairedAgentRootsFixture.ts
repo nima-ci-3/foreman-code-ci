@@ -10,7 +10,6 @@ import { type ManagementAction } from '@foreman-code/contracts/management'
 import { buildApp } from '../../src/app.js'
 import { withTransaction } from '../../src/infrastructure/transaction.js'
 import { HarnessInstanceSettingsRepository } from '../../src/modules/harnesses/instanceSettings/repository.js'
-import type { HostHarnessOverrideService } from '../../src/modules/harnesses/instanceSettings/service.js'
 import { ProductionCiEnrollmentInventory } from '../../src/modules/ci/enrollmentInventory.js'
 import { ProductionPlacementChoiceDiscovery } from '../../src/modules/placement/choiceDiscovery.js'
 import { NodePlacementChoicesService } from '../../src/modules/placement/choicesService.js'
@@ -25,8 +24,7 @@ import { mixedComputerPlacement } from './mixedComputerPlacement.js'
 import { privateFixtureDirectory } from './privateFixtureDirectory.js'
 import { removeFixtureDirectory } from './testResources.js'
 
-export async function pairedAgentRootsFixture(options: { managedBase?: boolean; unboundMainSource?: boolean
-  harnessInstances?: Pick<HostHarnessOverrideService, 'prepareWorkerConfiguration'> } = {}) {
+export async function pairedAgentRootsFixture(options: { managedBase?: boolean; unboundMainSource?: boolean } = {}) {
   const base = await currentOperatorIntegration({ fixture: makeCurrentWorkflowFixture(randomUUID(), 'sequential') })
   const directory = await privateFixtureDirectory('paired-agent-roots-')
   const clients: Client[] = []
@@ -83,7 +81,6 @@ export async function pairedAgentRootsFixture(options: { managedBase?: boolean; 
         return HostHarnessProfileEvidenceSchema.parse(row.record)
       } },
       provisionRoot: inventory.root.bind(inventory),
-      ...(options.harnessInstances ? { harnessInstances: options.harnessInstances } : {}),
     }
     const discovery = new ProductionPlacementChoiceDiscovery(pool, () => discoveryServices)
     const saveInput = await base.create()

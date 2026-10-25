@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest'
+import { expect, it } from 'vitest'
 import type { NativeSessionLane, NativeSessionReference } from '@foreman-code/contracts'
 import type { NativeHarnessSessionManager } from '../harnesses/port.js'
 import type { PostgresInteractionCoordinationRepository } from './coordination.js'
@@ -46,35 +46,8 @@ function fixture(close: () => Promise<void>) {
     startTurn: () => { throw new Error('Unexpected native turn during closure') } }
   const writer = new SingleWriterSessionManager(native,
     coordination as unknown as PostgresInteractionCoordinationRepository, 'workflow-agent')
-  return { writer, native, coordination, lane: () => structuredClone(lane) }
+  return { writer, lane: () => structuredClone(lane) }
 }
-
-it('waits for the previous database lane release before canceling the native session', async () => {
-  const f = fixture(async () => {})
-  let entered!: () => void, finish!: () => void
-  const releasing = new Promise<void>(resolve => { entered = resolve })
-  const completion = new Promise<void>(resolve => { finish = resolve })
-  const release = f.coordination.releaseLane
-  vi.spyOn(f.coordination, 'releaseLane').mockImplementationOnce(async (...args) => {
-    entered()
-    await completion
-    return release(...args)
-  })
-  const cancel = vi.spyOn(f.native, 'cancel').mockResolvedValue(true)
-  vi.spyOn(f.native, 'reconcile').mockResolvedValue({ events: [], pendingInteractions: [] })
-  const previous = f.writer.withLane(session, 'previous-control', undefined, async () => undefined)
-  await releasing
-  const canceled = f.writer.cancel(session).catch((error: unknown) => error)
-  try {
-    // Let cancellation reach its lane claim while the previous release is held.
-    await new Promise(resolve => setImmediate(resolve))
-    expect(cancel).not.toHaveBeenCalled()
-  } finally { finish() }
-  await previous
-  expect(await canceled).toBe(true)
-  expect(cancel).toHaveBeenCalledOnce()
-  expect(f.lane().leaseToken).toBeUndefined()
-})
 
 it('clears the completed identity only after its native process confirms closure', async () => {
   let finish!: () => void

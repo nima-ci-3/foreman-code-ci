@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { WorkerUpdater } from '../src/update.mjs';
 import { WorkerError } from '../src/diagnostics.mjs';
@@ -128,22 +128,4 @@ test('an uncertain helper probe stays unresolved for a later check', async t => 
   }), failure);
   assert.equal(launches, 0);
   assert.equal((await readUpdateRecord(f.stateDirectory)).status.state, 'restarting');
-});
-
-test('the update helper runs with the Worker Node runtime on its PATH, so Node-launched tools like corepack work', async t => {
-  const f = await fixture(t);
-  let launched;
-  const run = async (file, args) => {
-    if (file !== '/usr/bin/systemd-run') return { stdout: '' };
-    launched = args;
-    const record = await readUpdateRecord(f.stateDirectory);
-    record.supervisorStarted = record.restart.requestId;
-    await writeUpdateRecord(f.stateDirectory, record);
-    return { stdout: '' };
-  };
-  await launchUpdateSupervisor(f.stateDirectory, { run });
-  // A transient user unit starts with systemd's default PATH, which has no Worker Node runtime.
-  const path = launched.find(arg => arg.startsWith('--setenv=PATH='))?.slice('--setenv=PATH='.length);
-  assert.ok(path, 'The helper unit must receive a PATH.');
-  assert.equal(path.split(':')[0], dirname(process.execPath));
 });
