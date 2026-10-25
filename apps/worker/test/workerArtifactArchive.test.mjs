@@ -11,7 +11,7 @@ import { downloadWorkerArtifact, fetchGitHubAsset } from '../src/update.mjs';
 const fixtureRoot = join(homedir(), '.cache', 'foreman-tmp');
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
+const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
   rootPersistent: true, homePersistent: true, storagePersistent: true };
 
 function tarEntry(path, bytes, type = '0', declaredSize = bytes.length) {

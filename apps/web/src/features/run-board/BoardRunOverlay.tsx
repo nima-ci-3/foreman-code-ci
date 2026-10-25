@@ -1,5 +1,6 @@
 import { useEffect, useMemo, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Button } from '../../shared/ui/nocturne'
 import type { CiActivity } from '@foreman-code/contracts'
 import type { RunBoardEdgeSnapshot } from '@foreman-code/contracts/run-snapshots'
 import { RunLiveNodes, RunLivePulses, RunLiveCi, RunDisplayedSnapshot, type RunLivePulse } from '../board-core'
@@ -45,6 +46,8 @@ export function BoardRunOverlay({ run, read, visible, onPainted, children }: {
     [snapshot, activityCis, jobs])
   const live = useRunLiveNodes(scope, names, cis, visible && !!snapshot, snapshot?.edges ?? noEdges, read.executionQueue)
   return <RunDisplayedSnapshot.Provider value={snapshot}><RunLiveNodes.Provider value={snapshot ? live.nodes : undefined}>
-    <RunLivePulses.Provider value={snapshot ? live.pulses : noPulses}><RunLiveCi.Provider value={ci}>{children}</RunLiveCi.Provider></RunLivePulses.Provider>
+    <RunLivePulses.Provider value={snapshot ? live.pulses : noPulses}><RunLiveCi.Provider value={ci}>
+      {visible && live.error ? <p role="alert">Run state could not be refreshed. <Button size="sm" onClick={live.refresh}>Retry Run state</Button></p> : null}
+      {children}</RunLiveCi.Provider></RunLivePulses.Provider>
   </RunLiveNodes.Provider></RunDisplayedSnapshot.Provider>
 }

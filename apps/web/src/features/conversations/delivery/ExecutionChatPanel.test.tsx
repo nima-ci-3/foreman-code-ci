@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { ChatSendRequestSchema, ChatStopRequestSchema, type ChatDeliveryReceipt, type ChatSendRequest,
@@ -185,7 +185,11 @@ describe('exact Execution chat public surface', () => {
     expect(screen.getAllByText('The exact page title is Google.')).toHaveLength(1)
     expect(screen.getByText('I will hand this over.')).toBeInTheDocument()
     expect(screen.getByText('The Worker should now open it.')).toBeInTheDocument()
-    for (const json of screen.getAllByText(/latestDeliverable/)) expect(json.closest('details')).not.toBeNull()
+    expect(screen.queryByText(/latestDeliverable/)).not.toBeInTheDocument()
+    const details = screen.getByText('Result details', { selector: 'summary' }).closest('details')!
+    expect(details).not.toHaveAttribute('open')
+    fireEvent.click(within(details).getByText('Result details'))
+    expect(await within(details).findByText(/latestDeliverable/)).toBeVisible()
   })
 
   it('gives the messages the panel height instead of an empty name band above them', async () => {
@@ -224,7 +228,8 @@ describe('exact Execution chat public surface', () => {
     const input = await screen.findByRole('textbox', { name: 'Message' })
     fireEvent.change(input, { target: { value: '  change direction  ' } })
     await screen.findByRole('button', { name: 'Steer now' })
-    fireEvent.change(screen.getByLabelText('Delivery action'), { target: { value: 'interrupt_and_send' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Delivery action:/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Interrupt and send' }))
     expect(state.commands).toHaveLength(0)
     fireEvent.click(screen.getByRole('button', { name: 'Interrupt and send' }))
     await waitFor(() => expect(state.commands).toHaveLength(1))
@@ -232,6 +237,33 @@ describe('exact Execution chat public surface', () => {
     expect(source.subscriptions.every(subscription => subscription.target.kind === 'workflow_execution'
       && subscription.target.execution.executionId === 'execution-a')).toBe(true)
     expect(screen.queryByRole('button', { name: 'Open continuation' })).not.toBeInTheDocument()
+  })
+
+  it('recalls the newest queued retained input with ArrowUp and cancels that exact receipt', async () => {
+    const receipt: ChatDeliveryReceipt = { id: 'queued-receipt', commandId: 'queued-command', target,
+      requestedIntent: 'next_turn', appliedIntent: 'next_turn', state: 'queued', createdAt: date, updatedAt: date }
+    const state = endpoints({ ...structuredClone(initial), receipts: [receipt] })
+    state.inputs = [{ commandId: receipt.commandId, receiptId: receipt.id, target, origin: 'direct',
+      content: '  Edit this queued direction\nwith its spacing  ', truncated: false, bodyCursor: null,
+      attachments: [], intent: 'next_turn', createdAt: date }]
+    const canceled: unknown[] = []
+    server.use(http.post(`${root}/cancel`, async ({ request }) => {
+      const input = await request.json() as { commandId: string }
+      canceled.push(input)
+      state.value = { ...state.value, receipts: [{ ...receipt, state: 'canceled' }] }
+      return HttpResponse.json({ commandId: input.commandId, target, operation: 'cancel_queued',
+        state: 'completed', affectedReceiptIds: [receipt.id], replayed: false })
+    }))
+    mount(new NativeSource())
+    const input = await screen.findByRole('textbox', { name: 'Message' })
+    expect(input).toHaveValue('')
+    expect(await screen.findByRole('button', { name: 'Cancel queued message' })).toBeEnabled()
+    expect(screen.getByText('Queued', { selector: 'strong' }).parentElement).toHaveTextContent('Queued · sends after the current turn')
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input).toHaveValue('  Edit this queued direction\nwith its spacing  ')
+    await waitFor(() => expect(canceled).toEqual([expect.objectContaining({ target,
+      commandId: expect.any(String), selection: { kind: 'one', receiptId: receipt.id } })]))
+    expect(state.commands).toEqual([])
   })
 
   it('never treats a historical native turn as current and keeps unsupported session commands as draft text', async () => {

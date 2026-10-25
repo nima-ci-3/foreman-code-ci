@@ -17,7 +17,7 @@ import { startWorker, readWorkerStatus, acquireWorkerLock } from '../src/runtime
 import { renderUserService } from '../src/service.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2', rootPersistent: true, homePersistent: true };
+const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0', rootPersistent: true, homePersistent: true };
 const expected = { protocolVersion: 1, identityFormat: 1 };
 async function fixture(t, version = '1.0.0') {
   const dir = await mkdtemp(join(tmpdir(), 'worker-unit-'));
@@ -90,7 +90,7 @@ test('rollback requires the retained target runtime and leaves the current link 
   const f = await fixture(t);
   await installVersion(f);
   const first = await readlink(join(f.root, 'current'));
-  const nextFacts = { ...facts, node: 'v22.23.3' };
+  const nextFacts = { ...facts, node: 'v24.22.1' };
   f.manifest.version = '1.1.0';
   f.manifest.target = nextFacts;
   f.approvedManifestSha256 = await f.save();

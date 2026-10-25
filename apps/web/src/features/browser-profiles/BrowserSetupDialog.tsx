@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Dialog, Select, TextField } from '../../shared/ui/nocturne'
 import {
-  BrowserSessionPanel, browserAccessDenied, browserErrorMessage, browserRequestUncertain, type BrowserFilesPort,
+  BrowserEmptySession, BrowserSessionPanel, browserAccessDenied, browserErrorMessage, browserRequestUncertain, type BrowserFilesPort,
   validateBrowserRead, type BrowserSession, type BrowserUiPort,
 } from '../agent-browser'
 import type { BrowserProfilesPort } from './types'
@@ -35,12 +35,14 @@ function SetupBrowser(props: BrowserSetupDialogProps) {
     queryFn: async ({ signal }) => {
       const result = validateBrowserRead(await props.port.readSession(props.session.id, signal))
       if (result.session.id !== props.session.id || result.session.setupForProfileId !== props.session.setupForProfileId
-        || result.session.subject || result.session.browserGeneration !== props.session.browserGeneration) {
+        || result.session.subject) {
         throw new Error('The setup browser changed. Reopen this profile to continue.')
       }
       return result
     }, refetchInterval: query => query.state.data && !['closed', 'failed'].includes(query.state.data.session.state) ? 1500 : false,
     refetchIntervalInBackground: false })
+  const generation = useRef<number | undefined>(undefined)
+  generation.current = read.data?.session.browserGeneration
   useEffect(() => {
     if (browserAccessDenied(read.error)) {
       setDenied(true); queryClient.removeQueries({ queryKey: ['browser-setup', props.authBoundary, props.session.id] })
@@ -48,8 +50,7 @@ function SetupBrowser(props: BrowserSetupDialogProps) {
   }, [read.error, queryClient, props.authBoundary, props.session.id])
   const recovery = useMutation({ mutationFn: async (commandId: string) => {
     const result = validateBrowserRead(await props.port.reconnect(props.session, commandId))
-    if (result.session.id !== props.session.id || result.session.browserGeneration !== props.session.browserGeneration
-      || result.session.setupForProfileId !== props.session.setupForProfileId || result.session.subject) {
+    if (result.session.id !== props.session.id || result.session.setupForProfileId !== props.session.setupForProfileId || result.session.subject) {
       throw new Error('The setup browser changed. Reopen the selected profile.')
     }
     return result
@@ -99,13 +100,18 @@ function SetupBrowser(props: BrowserSetupDialogProps) {
     {accessDenied ? <p role="alert" className="browser-profile-note">The browser is unavailable right now.</p>
       : read.isPending ? <p role="status" className="browser-profile-note">Opening the browser…</p>
         : read.error ? <p role="alert">{browserErrorMessage(read.error)}</p>
-          : read.data && tab ? <BrowserSessionPanel key={tab.tabId} connectionVisit={connection} port={props.port} files={props.files} initial={read.data}
+          : read.data && tab ? <BrowserSessionPanel key={`${read.data.session.browserGeneration}:${tab.tabId}`} connectionVisit={connection} port={props.port} files={props.files} initial={read.data}
             tab={tab} viewerId={viewerId} readOnly={false} computerName={props.computerName} setup
             onRead={result => queryClient.setQueryData(key, result)} onSelectTab={setTabId} keepControlOnTabChange={() => true}
+            currentGeneration={() => generation.current}
             onRefresh={() => { if (mounted.current) void read.refetch() }}
             onCleanupError={message => { if (active.current) props.onCleanupError(message) }}
             onDenied={() => { setDenied(true); queryClient.removeQueries({ queryKey: key }) }}
-            onReconnect={reconnect} reconnectAttempts={reconnectAttempts} /> : <p className="browser-profile-note">No browser tab is open.</p>}
+            onReconnect={reconnect} reconnectAttempts={reconnectAttempts} /> : read.data && !['closed', 'failed'].includes(read.data.session.state)
+              ? <BrowserEmptySession port={props.port} initial={read.data} readOnly={false}
+                onRead={result => queryClient.setQueryData(key, result)} onSelectTab={setTabId}
+                onDenied={() => { setDenied(true); queryClient.removeQueries({ queryKey: key }) }}
+                onCleanupError={props.onCleanupError} /> : <p className="browser-profile-note">No browser tab is open.</p>}
     {read.data && !accessDenied ? <OriginConfirmation profileId={props.session.profileId} computerId={props.session.computerId}
       profiles={props.profiles} /> : null}
     {cleanupError || close.error ? <p role="alert">{cleanupError ?? browserErrorMessage(close.error)}</p> : null}

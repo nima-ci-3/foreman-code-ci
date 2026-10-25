@@ -4,7 +4,7 @@ import { assertGraphTransaction } from '../run-graph/index.js'
 import type { SqlTransaction } from '../../infrastructure/transaction.js'
 import type { MemoryBoardAuthority } from './types.js'
 import { nodeKey, same, workKey } from './identity.js'
-import { agentCard, bindingsFor, cardByTitle, ensureBoard, lockIdentity, saveBinding, saveCard } from './repository.js'
+import { agentCard, bindingsFor, cardBlockerSource, cardByTitle, ensureBoard, lockIdentity, saveBinding, saveCard } from './repository.js'
 import { checkCapacity } from './mutations.js'
 import { validateCardState } from './work.js'
 
@@ -23,15 +23,18 @@ export async function ensureAgentCard(tx: SqlTransaction, authority: MemoryBoard
     const suffix = ` (${agent.workflowNodeId.slice(-8)})`
     title = input.title.slice(0, 240 - suffix.length) + suffix
   }
-  const next = MemoryCardSchema.parse(before ? { ...before, status: 'doing', completionKind: null,
+  const manualBlocker = before?.status === 'waiting_for_user'
+    || before?.status === 'blocked' && await cardBlockerSource(tx, before.id) === 'manual'
+  const next = MemoryCardSchema.parse(before ? manualBlocker ? before : { ...before, status: 'doing', completionKind: null,
     reason: before.status === 'doing' ? before.reason : 'Working again' } : {
     id: randomUUID(), boardId: row.board.id, title, body: '', status: 'doing', completionKind: null,
     reason: null, assignee: { workspaceId: agent.workspaceId, workflowId: agent.workflowId,
       workflowNodeId: agent.workflowNodeId, agentId: agent.agentId }, linkedNodes: [], revision: 0, createdAt: now, updatedAt: now,
   })
   validateCardState(next, before)
-  if (!before || before.status !== 'doing') await saveCard(tx, row, before, next, {
+  await saveCard(tx, row, before, next, {
     actor: { kind: 'engine', id: agent.agentId, displayName: agent.displayName }, now,
+    preserveBlocker: manualBlocker,
     sourceEventKey: `agent-card:${execution.executionId}:launch`, provenance: { work: input.work, execution },
   })
   const bindings = before ? await bindingsFor(tx, before.id) : []

@@ -988,9 +988,14 @@ export function createWorkerRuntimeDrain(ports: {
           waitingOn: ports.waitingOn?.() ?? [] }, 'Worker runtime update is still draining')
       }, 30_000)
       diagnostics.unref()
-      const deadline = setTimeout(() => controller.abort(new DomainError('WORKER_UPDATE_DRAIN_DEADLINE_EXCEEDED',
-        `Worker update drain exceeded ${WORKER_UPDATE_DRAIN_TIMEOUT_MS} ms while waiting for ${stage}.`, 503)),
-      WORKER_UPDATE_DRAIN_TIMEOUT_MS)
+      // Owner decision: an update is never blocked. Work still running at the deadline is stopped by the update's
+      // restart and recovered from its journals, as a manual Worker restart would.
+      let deadlineReached = false
+      const deadline = setTimeout(() => {
+        deadlineReached = true
+        controller.abort(new DomainError('WORKER_UPDATE_DRAIN_DEADLINE_EXCEEDED',
+          `Worker update drain exceeded ${WORKER_UPDATE_DRAIN_TIMEOUT_MS} ms while waiting for ${stage}.`, 503))
+      }, WORKER_UPDATE_DRAIN_TIMEOUT_MS)
       let abort!: () => void
       const aborted = new Promise<never>((_resolve, reject) => {
         abort = () => reject(signal.reason)
@@ -1021,6 +1026,13 @@ export function createWorkerRuntimeDrain(ports: {
         }
         signal.throwIfAborted()
       } catch (error) {
+        if (deadlineReached && !ports.signal.aborted && !requestSignal?.aborted) {
+          // New work stays refused; the update proceeds and its restart stops what is left.
+          componentLogger('devices').warn({ stage, elapsedMs: Date.now() - startedAt, waitingOn: ports.waitingOn?.() ?? [] },
+            'Worker update drain reached its deadline; the update proceeds and stops the remaining work')
+          cleanupPaused = true
+          return
+        }
         draining = false
         cleanupPaused = false
         throw error

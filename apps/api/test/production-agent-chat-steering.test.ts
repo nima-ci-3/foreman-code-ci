@@ -19,7 +19,7 @@ vi.mock('../src/modules/conversations/agentChat.js', async original => {
 })
 afterEach(() => { composition.factories.splice(0) })
 
-it('offers live steering to production Codex Agent chats and not to Claude chats', async () => {
+it('offers live steering to production Codex and Claude Agent chats', async () => {
   const config = loadConfig({ DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/agent_chat_steering' })
   const database = createDatabase(config.database)
   const checkpoints = createCheckpointStore(config.database.connectionString, 'agent_chat_steering', config.database)
@@ -35,7 +35,7 @@ it('offers live steering to production Codex Agent chats and not to Claude chats
     // Qualification reads the accepted owner configuration; the live row/runtime checks stay in the service.
     const row = { harness: 'codex' } as AgentConversationRow
     expect(await factory.qualifiedSteer?.(row, configuration('codex'))).toBe(true)
-    expect(await factory.qualifiedSteer?.({ ...row, harness: 'claude' }, configuration('claude'))).toBe(false)
+    expect(await factory.qualifiedSteer?.({ ...row, harness: 'claude' }, configuration('claude'))).toBe(true)
   } finally {
     await production.app.close()
     await production.engine.shutdown()

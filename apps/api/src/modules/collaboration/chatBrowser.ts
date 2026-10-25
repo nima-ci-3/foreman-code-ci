@@ -19,6 +19,7 @@ export class ChatBrowserSessions {
   private readonly opening = new Map<string, { details: Promise<BrowserSubjectDetails>; result: Promise<string> }>()
   /** Run and consultation browsers this process prepared, by session ID. */
   private readonly runs = new Map<string, { profileId: string; computerId: string }>()
+  private readonly viewers = new Map<string, number>()
   private timer: NodeJS.Timeout | undefined
 
   constructor(private readonly options: {
@@ -35,6 +36,28 @@ export class ChatBrowserSessions {
   }) {}
 
   private now() { return this.options.now?.() ?? Date.now() }
+
+  /** A person using the browser keeps the chat's session alive, on Main or a paired Worker. */
+  viewerActivity(principal: ManagementPrincipal, sessionId: string): void {
+    if (principal.audience !== 'operator') return
+    for (const chat of this.chats.values()) if (chat.sessionId === sessionId) chat.usedAt = this.now()
+  }
+
+  /** An attached human viewer is using the page even while reading without typing or clicking. */
+  watchBrowser(principal: ManagementPrincipal, sessionId: string): () => void {
+    if (principal.audience !== 'operator') return () => undefined
+    this.viewers.set(sessionId, (this.viewers.get(sessionId) ?? 0) + 1)
+    this.viewerActivity(principal, sessionId)
+    let attached = true
+    return () => {
+      if (!attached) return
+      attached = false
+      const remaining = (this.viewers.get(sessionId) ?? 1) - 1
+      if (remaining) this.viewers.set(sessionId, remaining)
+      else this.viewers.delete(sessionId)
+      this.viewerActivity(principal, sessionId)
+    }
+  }
 
   private async subjectOf(principal: ManagementPrincipal) {
     if (principal.audience !== 'worker') return undefined
@@ -133,7 +156,7 @@ export class ChatBrowserSessions {
     await this.adopt()
     for (const [conversationId, chat] of [...this.chats]) {
       if (this.opening.has(conversationId)) continue
-      let ended = this.now() - chat.usedAt >= CHAT_BROWSER_IDLE_MS
+      let ended = !this.viewers.has(chat.sessionId) && this.now() - chat.usedAt >= CHAT_BROWSER_IDLE_MS
       if (!ended) {
         try { ended = !(await this.options.authority.details(chat.subject)).active } catch (error) {
           if (!(error instanceof DomainError) || error.status !== 404) throw error

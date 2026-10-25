@@ -90,8 +90,8 @@ The readiness probe's eventual lease is discarded without querying. Both pools a
 `DATABASE_QUERY_TIMEOUT_MS` (default 1000) as a client query timeout and a server
 statement timeout. Configure these bounds for the intended workload.
 
-CI builds/checks with Node 22.16.0 and runs the compiled production command on
-both Node 22.16.0 and the declared Node 22.0.0 runtime baseline. It also runs
+CI builds/checks with Node 24.22.1 and runs the compiled production command on
+both Node 24.22.1 and the declared Node 24.0.0 runtime baseline. It also runs
 `node scripts/production-smoke.mjs --restart-postgres` to stop and restart the
 repository's Compose PostgreSQL service while the same API process is alive.
 This disruptive restart test is opt-in; the normal production smoke command
