@@ -138,7 +138,7 @@ it('opens the latest attempt of a finished Run and keeps history switching avail
       : { kind: 'selection_required', items, revision: 1, nextCursor: null, hasMore: false })
   }))
   mount({ runId: 'run' })
-  expect(await screen.findByText('Working on the task.')).toBeInTheDocument()
+  expect(await screen.findByRole('region', { name: 'Execution conversation' })).toHaveTextContent('check')
   expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"check"')
   fireEvent.click(screen.getByRole('button', { name: 'Other attempts' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 1' }))
