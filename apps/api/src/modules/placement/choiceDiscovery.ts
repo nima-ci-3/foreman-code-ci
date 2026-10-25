@@ -194,7 +194,8 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
     configuration: AgentConfigurationVersion, source: 'http' | 'mcp', policies?: WorkspaceRootPolicy[]) {
     const results = new Map<string, ComputerAvailability>()
     const harnessInstances = services.harnessInstances
-    if (!harnessInstances || configuration.harness.harness !== 'codex' || configuration.harnessProfileSelection
+    const driver = configuration.harness.harness
+    if (!harnessInstances || (driver !== 'codex' && driver !== 'claude') || configuration.harnessProfileSelection
       || !isAuthorized(principal, 'harnesses:update')) return results
     const roots = policies ? policies.map(policy => ({ selection: { hostRef: policy.hostRef },
       binding: { workerInstallationId: policy.registration?.workerInstallationId ?? null } }))
@@ -204,7 +205,7 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
       const key = commandInputHash(host)
       if (host.kind !== 'device' || results.has(key) || services.computerOnline && !services.computerOnline(host)) continue
       const installation = services.registry.installations.list().find(value => value.installed
-        && value.driverId === 'codex' && value.installationFingerprint && sameWorkflowValue(value.hostRef, host))
+        && value.driverId === driver && value.installationFingerprint && sameWorkflowValue(value.hostRef, host))
       const applicationInstallationId = root.binding.workerInstallationId
       const installationFingerprint = installation?.installationFingerprint
       if (!installation || !installationFingerprint || !applicationInstallationId) continue
@@ -248,7 +249,6 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
       let reason = preparation.get(commandInputHash(hostRef))?.reason
         ?? `${name} has no ${harness} setup that matches this agent’s model and settings yet.`
       if (services.computerOnline && !services.computerOnline(hostRef)) reason = `${name} is offline.`
-      else if (driver !== 'codex') reason = `${harness} agents run only on Main for now, not on ${name}.`
       else if (!installed) reason = `${harness} isn’t installed on ${name}.`
       else if (!roots.some(root => sameWorkflowValue(root.selection.hostRef, hostRef))) {
         reason = `This workspace’s project isn’t set up on ${name} yet.`
@@ -291,7 +291,7 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
   }
 
   private supportedProfile(profile: HostHarnessOverride): boolean {
-    return profile.driverId === 'codex' || profile.driverId === 'claude' && profile.target.hostRef.kind === 'main'
+    return profile.driverId === 'codex' || profile.driverId === 'claude'
   }
 
   private async probeReadiness(services: DiscoveryServices, profiles: HostHarnessOverride[],

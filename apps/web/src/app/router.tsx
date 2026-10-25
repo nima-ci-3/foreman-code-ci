@@ -51,10 +51,13 @@ const workspacesRoute = createRoute({
   component: WorkspacesRouteEntry,
 })
 
+// A mistyped or outdated query key in a shared link is dropped instead of failing the whole workspace page.
+const workspaceSearchKeys = new Set(Object.keys(RunsSelectorSearchSchema.shape))
 const workspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/workspaces/$workspaceId',
-  validateSearch: RunsSelectorSearchSchema,
+  validateSearch: (search: Record<string, unknown>) => RunsSelectorSearchSchema.parse(
+    Object.fromEntries(Object.entries(search).filter(([key]) => workspaceSearchKeys.has(key)))),
   component: WorkspaceRouteEntry,
 })
 
