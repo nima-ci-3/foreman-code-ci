@@ -270,19 +270,16 @@ it('keeps the draft selected and reads its overlay when a Run starts later', asy
   server.use(http.get(summariesRoute, () => runSummaries([liveSummary])))
   await act(async () => { await client.invalidateQueries() })
   await waitFor(() => expect(screen.getByLabelText('Active Runs')).toHaveTextContent('1'))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow running · Show run' })).toBeInTheDocument())
   expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
   await waitFor(() => expect(snapshotReads).toHaveBeenCalled())
   expect(selectRun).not.toHaveBeenCalled()
 })
 
-it('keeps the draft selected when the Board opens while a Run is running', async () => {
+it('shows the live Run when the Board opens while it runs from a draft of another saved version', async () => {
   installSelectedHandlers()
   server.use(http.get(summariesRoute, () => runSummaries([liveSummary])))
   const selectRun = vi.fn()
   await mountWithSummaries(selectRun)
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument())
-  expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
-  expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
-  expect(selectRun).not.toHaveBeenCalled()
+  await waitFor(() => expect(selectRun).toHaveBeenCalled())
 })
