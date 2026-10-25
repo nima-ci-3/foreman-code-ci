@@ -128,9 +128,8 @@ it.each([
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
     .toEqual([...files].sort())
   const host = parts.find(part => part.plannedHostKey === builder.key)!
-  // A cloud host finishes after its checks and its integration part.
-  const cloudEnd = Math.max(...[...new Set(parts.map(part => part.plannedHostKey))].filter(key => key !== builder.key)
-    .map(key => parts.filter(part => part.plannedHostKey === key).reduce((sum, part) => sum + part.expectedDurationMs, 0)))
+  const cloudEnd = Math.max(...parts.filter(part => part.plannedHostKey !== builder.key)
+    .map(part => part.expectedDurationMs))
   const measuredEnd = host.files.length * 20_000 / (148 * 20_000 / 800_000)
   expect(measuredEnd).toBeLessThanOrEqual(cloudEnd)
   expect(host.expectedDurationMs).toBeGreaterThanOrEqual(measuredEnd)

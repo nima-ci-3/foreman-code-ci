@@ -15,7 +15,7 @@ import { formatClock, providerNames, subagentName, subagentStatus, subagentTimin
 import { subagentsKey, useSubagentDetail, useSubagentMessages, useSubagentTools, type SubagentsScope } from './query'
 import type { InteractionResponseValue } from '@foreman-code/contracts'
 import { NativeInteractionResponse } from '../../shared/ui/NativeInteractionResponse'
-import { ChatMessageBody } from '../conversations'
+import { ChatMessageBody } from '../conversations/ChatMessageBody'
 import { InteractionOptionButton } from '../../shared/ui/InteractionOptionButton'
 
 type CommandVariables = { operation: 'input' | 'interrupt' | 'respond'; commandId: string; expectedRevision: string;

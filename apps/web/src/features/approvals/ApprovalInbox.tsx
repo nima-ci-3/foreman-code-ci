@@ -4,7 +4,6 @@ import { useInfiniteInteractionsQuery, useWorkspaceDetailsQuery } from '../../sh
 import { useUserInteractionResponse } from '../../shared/api/userApprovals'
 import { approvalOptionScope } from '../../shared/ui/approvalOptionScope'
 import { NativeInteractionResponse } from '../../shared/ui/NativeInteractionResponse'
-import { InteractionOptionButton } from '../../shared/ui/InteractionOptionButton'
 import { Alert, Avatar, Button, ErrorState, Icon, IconButton, LoadingState } from '../../shared/ui/nocturne'
 import { usePresence } from '../../shared/ui/usePresence'
 import { raiseFloating, useFloatingZ } from '../../shared/ui/floatingStack'
@@ -31,10 +30,10 @@ function QuickApprovalActions({ interaction, onChanged }: { interaction: Durable
     ?? interaction.responseOptions.find((option) => option.semantic === 'cancel')
   const send = (optionId: string) => response.mutate({ interactionId: interaction.id, optionId, expectedRevision: interaction.revision }, { onSuccess: onChanged })
   return <div className="approval-row-actions" aria-label={`Respond to ${summarizeApprovalRequest(interaction.request, interaction.nativeRequestType).operation}`}>
-    {approve ? <InteractionOptionButton compact option={approve} label="Accept" disabled={response.isPending}
-      loading={response.isPending && response.variables?.optionId === approve.optionId} onSelect={send} /> : null}
-    {reject ? <InteractionOptionButton compact option={reject} label="Reject" variant="ghost" disabled={response.isPending}
-      loading={response.isPending && response.variables?.optionId === reject.optionId} onSelect={send} /> : null}
+    {approve ? <Button size="sm" disabled={response.isPending} loading={response.isPending && response.variables?.optionId === approve.optionId}
+      title={approvalOptionScope(approve)} onClick={() => send(approve.optionId)}>Accept</Button> : null}
+    {reject ? <Button size="sm" variant="ghost" disabled={response.isPending} loading={response.isPending && response.variables?.optionId === reject.optionId}
+      title={`${reject.scopeSummary ? `${reject.scopeSummary}. ` : ''}${approvalOptionScope(reject)}`} onClick={() => send(reject.optionId)}>Reject</Button> : null}
     {response.isError ? <span role="alert" className="approval-row-error">{response.error.message}</span> : null}
   </div>
 }

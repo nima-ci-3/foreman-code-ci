@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { isApiAccessError } from '../../../shared/api/accessError'
 import { Alert, Button, LoadingState } from '../../../shared/ui/nocturne'
-import { useChatReconnect } from '../../chat-core'
+import { useChatReconnect } from '../../chat-core/useChatReconnect'
 import { ConversationViewport } from '../ConversationViewport'
 
 /** An unreadable permission endpoint cannot authorize history, but local drafts remain editable. */

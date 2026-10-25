@@ -4,7 +4,6 @@ import { Icon, type IconName } from './Icon'
 import { Button } from './Button'
 import { useFloatingSurface } from './useFloatingSurface'
 import { useOutsidePress } from '../useOutsidePress'
-import { menuKeyTarget, tabOutOfMenu, type MenuTypeahead } from './menuKeys'
 
 export interface TabItem { value: string; label: string; content: ReactNode; disabled?: boolean; badge?: string | number }
 export function Tabs({ label, value, onValueChange, items, className, keepMounted = true }:
@@ -79,7 +78,7 @@ export function DropdownMenu({ label, items, icon = 'more', trigger: triggerText
   useFloatingSurface(open, trigger, surface, 260, 'end')
   const refs = useRef<(HTMLButtonElement | null)[]>([])
   const initialIndex = useRef(0)
-  const typeahead = useRef<MenuTypeahead>({ text: '', at: 0 })
+  const typeahead = useRef({ value: '', time: 0 })
   const id = useId()
   useEffect(() => {
     if (!open) return
@@ -100,12 +99,24 @@ export function DropdownMenu({ label, items, icon = 'more', trigger: triggerText
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); show(event.key === 'ArrowUp') }
       }}>{triggerText ? <><span>{triggerText}</span><Icon name="down" size={12} /></> : <Icon name={icon} />}</button>
     {open && <div ref={surface} popover="manual" id={id} role="menu" aria-label={label} className="n-menu-list" onKeyDown={(event) => {
+      const index = refs.current.indexOf(document.activeElement as HTMLButtonElement)
+      const disabled = items.map((item) => Boolean(item.disabled))
+      let next = -1
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
-      if (event.key === 'Tab') { tabOutOfMenu(event, trigger, () => close()); return }
-      // Disabled items cannot take focus here, so navigation and typeahead skip them.
-      const next = menuKeyTarget(event, { labels: items.map(item => item.label),
-        focusable: items.flatMap((item, index) => item.disabled ? [] : [index]),
-        current: refs.current.indexOf(document.activeElement as HTMLButtonElement), typeahead: typeahead.current })
+      if (event.key === 'ArrowDown') next = nextEnabledIndex(index, 1, disabled)
+      if (event.key === 'ArrowUp') next = nextEnabledIndex(index, -1, disabled)
+      if (event.key === 'Home') next = nextEnabledIndex(-1, 1, disabled)
+      if (event.key === 'End') next = nextEnabledIndex(0, -1, disabled)
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && event.key !== ' ') {
+        const now = Date.now()
+        const previous = now - typeahead.current.time < 600 ? typeahead.current.value : ''
+        const search = previous === event.key.toLowerCase() ? previous : previous + event.key.toLowerCase()
+        typeahead.current = { value: search, time: now }
+        for (let offset = 1; offset <= items.length; offset += 1) {
+          const candidate = (index + offset) % items.length
+          if (!items[candidate].disabled && items[candidate].label.toLowerCase().startsWith(search)) { next = candidate; break }
+        }
+      }
       if (next >= 0) { event.preventDefault(); refs.current[next]?.focus() }
     }}>
       {items.map((item, index) => <button key={item.id} type="button" role={checkedId === undefined ? 'menuitem' : 'menuitemradio'}

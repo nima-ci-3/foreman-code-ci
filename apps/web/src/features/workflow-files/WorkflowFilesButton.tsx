@@ -4,7 +4,7 @@ import { useStore } from 'zustand'
 import { Download, Files } from 'lucide-react'
 import type { FileWithRevision, PermanentFileScope } from '@foreman-code/contracts/files'
 import { Button, IconButton } from '../../shared/ui/nocturne/Button'
-import { Tooltip } from '../../shared/ui/nocturne/Overlays'
+import { ConfirmDialog, Tooltip } from '../../shared/ui/nocturne/Overlays'
 import { Icon } from '../../shared/ui/nocturne/Icon'
 import { TextField } from '../../shared/ui/nocturne/Fields'
 import { TrashIconButton } from '../../shared/ui/ResourceCard'
@@ -13,7 +13,6 @@ import { useOutsidePress } from '../../shared/ui/useOutsidePress'
 import { useFileDrop } from '../../shared/ui/useFileDrop'
 import { sessionGeneration } from '../../shared/api/sessionBoundary'
 import { ATTACHMENT_ACCEPT, inspectAttachment } from '../attachments'
-import { FileRemovalDialog } from '../file-cards'
 import { createWorkflowFilesHttpClient, type WorkflowFilesClient } from './workflowFilesClient'
 import { formatFileSize } from '../../shared/ui/formatters'
 import { referenceScopeKey, visibleReferenceRows, type WorkflowFilesIdentity } from './workflowFilesModel'
@@ -52,7 +51,7 @@ function ScopedWorkflowFilesButton({ workspaceId, workflowId, readOnly = false, 
   function close() { setOpen(false); trigger.current?.focus() }
   function askRemove(row: FileWithRevision) {
     files.remove.reset()
-    setRemoval({ row })
+    setRemoval({ row, commandId: crypto.randomUUID() })
   }
   function selectFile(file: File | undefined) {
     if (!file || readOnly || files.upload.isPending) return
@@ -111,12 +110,16 @@ function ScopedWorkflowFilesButton({ workspaceId, workflowId, readOnly = false, 
         </section>}
       {files.download.isError && <p className="workflow-files-error" role="alert" title={errorDetail(files.download.error)}>Download failed</p>}
     </div>}
-    {removal && <FileRemovalDialog filename={removal.row.revision.filename} description="It’s removed from this workflow’s files."
-      blockedReason={readOnly ? 'Files can’t be changed while you view a run.' : undefined}
-      remove={(commandId) => files.remove.mutateAsync({ commandId,
-        ref: { fileId: removal.row.file.fileId, revisionId: removal.row.revision.revisionId } })}
-      // The removed row's button disappears with it; focus returns to the files popover.
-      onRemoved={() => surface.current?.focus()} onClose={() => setRemoval(null)} />}
+    {removal && <ConfirmDialog open onOpenChange={(next) => { if (!next) setRemoval(null) }}
+      title={`Remove ${removal.row.revision.filename}?`} description="It’s removed from this workflow’s files."
+      pending={files.remove.isPending} confirmLabel="Remove"
+      error={readOnly ? 'Files can’t be changed while you view a run.' : files.remove.isError ? 'Couldn’t remove the file.' : undefined}
+      onConfirm={() => {
+        if (readOnly) return
+        files.remove.mutate({ commandId: removal.commandId,
+          ref: { fileId: removal.row.file.fileId, revisionId: removal.row.revision.revisionId } },
+        { onSuccess: () => setRemoval(null) })
+      }} />}
   </div>
 }
 
@@ -133,7 +136,7 @@ function FileGroup({ query, scope, files, label, emptyLabel = 'No files', onRemo
     {query.isPending && <p className="workflow-files-status" role="status">Loading…</p>}
     {query.isError && <div className="workflow-files-status"><p role="alert">Couldn’t load</p>
       <IconButton size="sm" variant="ghost" label={`Retry ${label} files`} disabled={query.isFetching && !query.isRefetching}
-        onClick={() => { void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch()) }}><Icon name="refresh" size={16} /></IconButton>
+        onClick={() => { void query.refetch() }}><Icon name="refresh" size={16} /></IconButton>
     </div>}
     {!query.isPending && !query.isError && rows.length === 0 && !files.upload.isPending && <p className="workflow-files-status workflow-files-empty">{emptyLabel}</p>}
     <ul className="workflow-files-list">

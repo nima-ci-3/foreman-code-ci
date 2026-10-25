@@ -141,10 +141,8 @@ function computedCalls(text: string, code: Uint8Array): Analysis['computed'] {
     // pins, or the repository file a bundle is built from. The named input joins the key like a literal.
     const declared = [...argument.matchAll(/\/\*\s*ci-key:\s*(\S+)\s*\*\//g)].map(found => found[1]!)
     // A path held in a variable is traced one step to the expression that defines it in this file.
-    // A definition the environment or arguments can override (`process.env.X ?? './a.js'`) proves nothing.
     const defined = [...new Set(argument.match(/(?<![.\w$'"`])[A-Za-z_$][\w$]*/g) ?? [])].flatMap(name =>
       [...text.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, '\\$')}\\s*=\\s*([^;\\n]+)`, 'g'))].map(found => found[1]!))
-      .filter(definition => !/\bprocess\.|\?\?|\|\|/.test(definition))
     calls.push({ kind: match[1] ? 'import' : 'require', literals: [...declared,
       ...[argument, ...defined].flatMap(value => [...value.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!))] })
   }
@@ -195,8 +193,7 @@ function analyze(path: string, text: string): Analysis {
     relatives: data ? [] : [...new Set([...text.matchAll(relativeLiteral)].map(match => match[1]!))],
     computed: data ? [] : computedCalls(text, code),
     processes: data || !TEST_DOUBTS[1]![0].test(text) ? [] : processCalls(text, code),
-    // Only a comment line declares inputs; the same words inside a string (a test fixture) do not.
-    declaredInputs: data ? [] : [...text.matchAll(/^[ \t]*(?:\/\/|\/\*|\*)[ \t]*ci-key-inputs:[ \t]*([^\n*]+)/gm)]
+    declaredInputs: data ? [] : [...text.matchAll(/(?:\/\/|\/\*|\*)\s*ci-key-inputs:\s*([^\n*]+)/g)]
       .flatMap(match => match[1]!.trim().split(/\s+/)),
     anchoredDirectories: data ? [] : [...text.matchAll(/new\s+URL\(\s*['"](\.{1,2})\/?['"]\s*,\s*import\.meta\.url\s*\)/g)].map(match => match[1]!),
     doubt: css ? (/@import\b/.test(text) && cssImports.length < (text.match(/@import\b/g) ?? []).length ? 'imports CSS by a computed name' : null) : DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,

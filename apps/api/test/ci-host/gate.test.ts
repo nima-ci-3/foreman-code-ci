@@ -145,7 +145,7 @@ it.each([80_000, 120_000])('balances %i ms integration files against cloud check
   const checks = parts.filter(part => part.suite !== 'integration')
   // typecheck and lint (API and other) and one unit part each for the API and the rest.
   expect(checks).toHaveLength(6)
-  expect(integration).toHaveLength(20)
+  expect(integration).toHaveLength(17)
   for (const part of integration) {
     const cpuSlots = part.plannedHostKey.startsWith('builder-') ? 16 : 4
     expect(part.integrationShards).toBe(cpuSlots)

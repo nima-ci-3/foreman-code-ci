@@ -9,9 +9,3 @@ export const RELEASE_AGE_MINUTES = 2880
 export const PACKAGE_RELEASE_POLICY = Object.freeze({
   minimumReleaseAge: RELEASE_AGE_MINUTES, minimumReleaseAgeStrict: true, minimumReleaseAgeIgnoreMissingTime: false,
 })
-
-/** For standaloneInstallationSource: Worker files copied raw get these constants inlined. */
-export const STANDALONE_PACKAGE_POLICY = {
-  module: /(?:packagePolicy\.mjs|package-policy)/,
-  values: { PNPM_VERSION, PACKAGE_MANAGER, RELEASE_AGE_MINUTES, PACKAGE_RELEASE_POLICY },
-}

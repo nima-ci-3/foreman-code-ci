@@ -31,7 +31,7 @@ describe('Operator database read deadlines', () => {
   it('classifies a mutation deadline without replaying the mutation', async () => {
     const { request } = context()
     const work = vi.fn(async () => {
-      throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014', detail: 'private statement' })
+      throw Object.assign(new Error('private statement'), { code: '57014' })
     })
     const result = await invokeOperatorTool(request, 'run_start', work, operatorTool('run_start')!.requires[0][0])
     expect(result.content).toEqual([{ type: 'text', text: JSON.stringify({ error: {

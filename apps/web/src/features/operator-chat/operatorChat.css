@@ -195,8 +195,23 @@
 .operator-composer textarea:focus-visible { outline: none !important; }
 .operator-activity-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); min-width: 0; flex: 1; }
 .operator-tool-activity { min-width: 0; max-width: 100%; }
-.operator-thinking > button > svg { transition: transform 160ms ease; }
+.operator-activity-disclosure { min-width: 0; }
+.operator-activity-disclosure > summary { display: flex; align-items: baseline; gap: var(--space-2); min-height: 28px; padding: .25rem .5rem; color: var(--text-muted); font-size: 11px; cursor: pointer; list-style: none; }
+.operator-activity-disclosure > summary::-webkit-details-marker { display: none; }
+.operator-activity-disclosure > summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operator-activity-disclosure > summary > small { font-size: 11px; color: var(--text-muted); }
+.operator-activity-disclosure > summary > svg, .operator-thinking > button > svg { transition: transform 160ms ease; }
+.operator-activity-disclosure[open] > summary > svg { transform: rotate(90deg); }
+@supports (interpolate-size: allow-keywords) {
+  .operator-activity-disclosure { interpolate-size: allow-keywords; }
+  .operator-activity-disclosure::details-content { height: 0; opacity: 0; overflow: hidden; transition: height 160ms ease, opacity 160ms ease, content-visibility 160ms allow-discrete; }
+  .operator-activity-disclosure[open]::details-content { height: auto; opacity: 1; }
+}
+.operator-activity-disclosure > summary:hover { color: var(--text); }
 .operator-tool-activity:has(details[open]) { flex-basis: 100%; }
+.operator-activity-details { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--surface) 82%, black); padding: .55rem .65rem; font-size: 11px; }
+.operator-tool-activity pre { margin: .35rem 0 0; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; }
+.operator-activity-note { color: var(--text-muted); font-size: 11px; }
 .operator-mcp-activity { padding: .25rem .5rem; color: var(--text-muted); font-size: 11px; }
 
 .operator-messages { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); list-style: none; padding: 0; margin: 0; }

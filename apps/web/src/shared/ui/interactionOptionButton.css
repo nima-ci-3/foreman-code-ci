@@ -13,9 +13,3 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
-
-/* Dense rows keep the button's own width. */
-.operator-approval-choice--compact {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
