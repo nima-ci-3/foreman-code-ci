@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { withAdvancedDefaults, type NativeSessionReference } from '@foreman-code/contracts'
+import { withAdvancedDefaults, type ExecutionResult, type NativeSessionReference } from '@foreman-code/contracts'
 import { commandInputHash } from '@foreman-code/contracts/command-identity-node'
 import { DeviceSessionBindingSchema, type DeviceSessionBinding } from '@foreman-code/contracts/device-connection'
 import type { DispatchIntent, AcceptedNodePlacement } from '@foreman-code/contracts/node-placement'
@@ -261,12 +261,18 @@ export function allocateInstalledWorkflowClaude(input: {
   /** The reported session exists only as an ID until Claude initializes it with the first input. */
   const beforeInit = (native: NativeSessionReference) => same(native, session) && (!opened || initializing)
     && !manager.hasResidentSession(native)
+  // Claude answers with bare text; the Worker result contract, like Codex, carries it as { text }.
+  const textResult = (result: ExecutionResult): ExecutionResult => result.outcome === 'succeeded' && typeof result.output === 'string'
+    ? { ...result, output: { text: result.output } } : result
   // The remote protocol names a turn by the ID its submission was acknowledged with; for Claude that is the input message.
   const remoteHistory = async (native: NativeSessionReference, read: () => Promise<NativeHistory>): Promise<NativeHistory> => {
     if (beforeInit(native)) return { events: [], pendingInteractions: [], firstRetainedSequence: 0, nextSequence: 0 }
     const history = await read()
     const turnId = history.nativeTurnId ?? history.terminalTurn?.providerId ?? history.nativeSubmission?.nativeMessageId
-    return { ...history, ...(turnId ? { nativeTurnId: turnId } : {}), responseDeliveries: await bridge.deliveryEvidence(native) }
+    return { ...history, ...(turnId ? { nativeTurnId: turnId } : {}),
+      ...(history.terminalResult ? { terminalResult: textResult(history.terminalResult) } : {}),
+      ...(history.terminalTurn ? { terminalTurn: { ...history.terminalTurn, result: textResult(history.terminalTurn.result) } } : {}),
+      responseDeliveries: await bridge.deliveryEvidence(native) }
   }
   const readHistory = manager.history.bind(manager)
   manager.history = (native, signal) => remoteHistory(native, () => readHistory(native, signal))
