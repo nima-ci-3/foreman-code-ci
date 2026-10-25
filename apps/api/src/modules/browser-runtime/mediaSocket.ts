@@ -68,8 +68,7 @@ async function streamViewer<Principal>(socket: WebSocket, principal: Principal, 
     pumping = true
     try {
       while (dirty && !closed) {
-        // Authorization is checked when the viewer connects and on every heartbeat, not once per frame.
-        dirty = false
+        dirty = false; await assertCurrent()
         const value = await subscription.read(after), identity = JSON.stringify(value.control)
         if (identity !== controlIdentity) {
           await boundedSend(socket, codec.control({ kind: 'control', control: value.control })); controlIdentity = identity
@@ -80,6 +79,7 @@ async function streamViewer<Principal>(socket: WebSocket, principal: Principal, 
         const frame: BrowserMediaFrame = { ...metadata, sessionId: value.view.sessionId, tabId: value.view.tabId,
           browserGeneration: value.view.browserGeneration, byteLength: data.byteLength }
         for (let offset = 0; offset < data.byteLength && !closed; offset += 196_608) {
+          await assertCurrent()
           await boundedSend(socket, codec.frame({ kind: 'frame', frame, offset, bytes: data.subarray(offset, offset + 196_608) }))
         }
         after = frame.sequence

@@ -641,8 +641,7 @@ export class DeviceApplicationChannel {
         if (pending) {
           if (assembly.kind === 'error') {
             const failure = deviceApplicationFailure(payload)
-            pending.reject(new DeviceApplicationError(failure.code, failure.details, { class: failure.class,
-              ...(failure.rejection ? { rejection: failure.rejection } : {}) }))
+            pending.reject(new DeviceApplicationError(failure.code, failure.details, { class: failure.class }))
           }
           else pending.resolve({ payload, ...(bytes ? { bytes } : {}) })
         }
