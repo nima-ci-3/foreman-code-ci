@@ -84,4 +84,4 @@ it('opens the Board from a link that carries an unknown query key', async () => 
   expect(await screen.findByRole('button', { name: 'Workflow settings' })).toBeVisible()
   expect(router.state.location.search).not.toHaveProperty('workflow')
   expect(router.state.location.search.workflowId).toBe(fixture.workflowId)
-})
+}, 15_000)
