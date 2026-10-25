@@ -4,6 +4,7 @@ import type { ClaudeSdkClient, ClaudeSdkUserMessage } from './claudeSdk/port.js'
 import { ClaudeBoundedQueue } from './claudeSdk/queue.js'
 import { workflowRequest } from './claudeSdk/__tests__/sessionManager.js'
 import { allocateInstalledWorkflowClaude, type InstalledClaudeWorkflowCapture } from './installedWorkflowClaude.js'
+import { assertOriginalWorkflowTerminal } from '../interactions/workflowTerminalSource.js'
 
 const provider = vi.hoisted(() => ({ client: undefined as ClaudeSdkClient | undefined }))
 vi.mock('./claudeSdk/configuration.js', () => ({
@@ -155,6 +156,17 @@ it('names the completed turn by the acknowledged input message', async () => {
   const history = await claude.manager.reconcile(session, 'execution:execution')
   expect(history.terminalTurn?.providerId).toBe(message.uuid)
   expect(history.nativeTurnId).toBe(message.uuid)
+  await claude.manager.dispose?.()
+})
+
+it('reports a finished turn that Main accepts as the original terminal', async () => {
+  const fake = sdk()
+  provider.client = fake.client
+  const { claude, start } = allocate()
+  const session = await claude.manager.createSession(start)
+  await completeFirstTurn(fake, claude, session)
+  const history = await claude.manager.reconcile(session, 'execution:execution')
+  expect(() => assertOriginalWorkflowTerminal({ id: 'execution', agentId: 'agent' }, session, history)).not.toThrow()
   await claude.manager.dispose?.()
 })
 
