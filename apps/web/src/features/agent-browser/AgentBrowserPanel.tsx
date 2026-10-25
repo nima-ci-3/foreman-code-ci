@@ -282,7 +282,7 @@ export function BrowserSessionPanel(props: BrowserSessionPanelProps) {
       event.preventDefault()
       const target = addressUrl(url)
       mutate((epoch, commandId) => props.port.navigate(props.initial.session, props.tab, props.viewerId, epoch, target, commandId))
-    }}><TextField label="Website address" placeholder="Search or type a URL" value={url} onChange={event => setUrl(event.currentTarget.value)} disabled={pending}
+    }}><TextField label="Website address" labelHidden placeholder="Search or type a URL" value={url} onChange={event => setUrl(event.currentTarget.value)} disabled={pending}
       onFocus={() => { typing.current = true }} onBlur={() => { typing.current = false }} />
       {props.setup ? <Button type="submit" disabled={busy || !url.trim()}>Go</Button> : null}</form> : null}
     {error || mutation.error || snapshot.error ? <p role="alert">{error ?? (mutation.error ? browserErrorMessage(mutation.error) : snapshot.error)}</p> : null}

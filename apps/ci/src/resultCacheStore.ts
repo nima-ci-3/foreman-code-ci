@@ -1,17 +1,25 @@
+import { createHash } from 'node:crypto'
 import type pg from 'pg'
 import { z } from 'zod'
 import { CI_LOG_MAX_BYTES, CI_TEST_RESULT_LIMITS, CiTestResultsSchema, type CiCachedFile, type CiRunRecord } from '@foreman-code/contracts'
 import type { CiContext } from './environment.js'
-import { CiResultKeys, type CiTestTree } from './resultCache.js'
+import { CiResultKeys, type CiResultKey, type CiTestTree } from './resultCache.js'
 
 /** Keys are computed while ci_run waits; past this the request runs every file instead. */
 const KEY_BUDGET_MS = 20_000
 const CacheKeysSchema = z.record(z.string(), z.string())
+/** Of the files proven only under another test runner, this share (at least one per part) reruns as a canary. */
+const RUNNER_CANARY_SHARE = 0.05
+
+/** A file's keys as admission stores them: the full key, then the runner-free key when there is one. */
+export function storedKeys(value: CiResultKey): string | null {
+  return value.key && (value.runnerFreeKey ? `${value.key} ${value.runnerFreeKey}` : value.key)
+}
 
 export interface CachedSelection {
   /** The selected files that still run. */
   files: string[]
-  /** Input keys of the files that run and have one; a passed run records them. */
+  /** Input keys of the files that run and have one (storedKeys); a passed run records them. */
   keys: Record<string, string>
   cached: CiCachedFile[]
   /** Keys could not be computed: nothing is proven and nothing is known to be unprovable. */
@@ -23,7 +31,7 @@ export interface CachedSelection {
 export async function planCachedSelection(context: CiContext, pool: pg.Pool, input: { workspaceId: string; repository: string; commit: string
   suite: string; files: readonly string[]; partOf(file: string): string
   /** Keys for the files (preferred, computed off the event loop), or the commit's tree to key them in process. */
-  keys?(files: { file: string; suite: string; part: string }[], signal: AbortSignal): Promise<Record<string, { key: string | null; reason?: string }>>
+  keys?(files: { file: string; suite: string; part: string }[], signal: AbortSignal): Promise<Record<string, CiResultKey>>
   tree?(signal: AbortSignal): Promise<CiTestTree> }): Promise<CachedSelection> {
   const files = [...new Set(input.files)].sort()
   const controller = new AbortController()
@@ -48,27 +56,46 @@ export async function planCachedSelection(context: CiContext, pool: pg.Pool, inp
         }, KEY_BUDGET_MS)
       }),
     ])
-    const keyed = new Map([...keys].flatMap(([file, value]) => value.key === null ? [] : [[file, value.key] as const]))
+    const keyed = new Map([...keys].flatMap(([file, value]) => value.key === null ? [] : [[file, value] as const]))
     // A failure newer than a file's pass voids that proof, whatever key the failure ran at.
     const rows = (await pool.query<{ cache_key: string; file: string; ticket_id: string; commit: string }>(
       `select c.cache_key,c.file,c.ticket_id,c.commit from ci_test_result_cache c
         where c.workspace_id=$1 and c.repository=$2 and c.cache_key=any($3::text[])
           and not exists (select 1 from ci_test_failures f where f.workspace_id=c.workspace_id and f.repository=c.repository
             and f.suite=$4 and f.file=c.file and f.failed_at >= c.passed_at)`,
-      [input.workspaceId, input.repository, [...keyed.values()], input.suite])).rows
+      [input.workspaceId, input.repository, [...keyed.values()].flatMap(value => [value.key!, ...value.runnerFreeKey ? [value.runnerFreeKey] : []]),
+        input.suite])).rows
     const proofs = new Map(rows.map(row => [row.cache_key, row]))
     const cached: CiCachedFile[] = []
     const remaining: string[] = []
+    // Proven by identical code under a different test runner: a sample of each part reruns to prove the new runner.
+    const otherRunner = new Map<string, { file: string; proof: typeof rows[number] }[]>()
     for (const file of files) {
-      const proof = proofs.get(keyed.get(file) ?? '')
+      const value = keyed.get(file)
+      const proof = proofs.get(value?.key ?? '')
+      const runnerFree = value?.runnerFreeKey ? proofs.get(value.runnerFreeKey) : undefined
       if (proof && proof.file === file) cached.push({ file, ticketId: proof.ticket_id, commit: proof.commit })
-      else remaining.push(file)
+      else if (runnerFree && runnerFree.file === file) {
+        const part = input.partOf(file)
+        otherRunner.set(part, [...otherRunner.get(part) ?? [], { file, proof: runnerFree }])
+      } else remaining.push(file)
     }
+    for (const candidates of otherRunner.values()) {
+      const order = candidates.map(candidate => ({ ...candidate,
+        rank: createHash('sha256').update(`${keyed.get(candidate.file)!.key}\0${candidate.file}`).digest('hex') }))
+        .sort((left, right) => left.rank.localeCompare(right.rank))
+      const canaries = Math.max(1, Math.ceil(order.length * RUNNER_CANARY_SHARE))
+      for (const [index, { file, proof }] of order.entries()) {
+        if (index < canaries) remaining.push(file)
+        else cached.push({ file, ticketId: proof.ticket_id, commit: proof.commit })
+      }
+    }
+    remaining.sort()
     const unkeyed = [...keys].flatMap(([file, value]) => value.key === null ? [{ file, reason: value.reason }] : [])
     context.log.info({ workspaceId: input.workspaceId, commit: input.commit, suite: input.suite, cached: cached.map(item => item.file),
       unkeyed: unkeyed.slice(0, 20) }, 'CI result cache applied to an affected selection')
     return { files: remaining, cached,
-      keys: Object.fromEntries(remaining.flatMap(file => keyed.has(file) ? [[file, keyed.get(file)!]] : [])) }
+      keys: Object.fromEntries(remaining.flatMap(file => keyed.has(file) ? [[file, storedKeys(keyed.get(file)!)!]] : [])) }
   } catch (error) {
     controller.abort(error)
     context.log.warn({ err: error, workspaceId: input.workspaceId, commit: input.commit }, 'CI result cache unavailable; running every selected file')
@@ -129,7 +156,9 @@ export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state
   const keys: Record<string, string> = { ...(admitted.success ? admitted.data : {}) }
   const missing = passedFiles.filter(file => !keys[file])
   if (missing.length && keysFor) Object.assign(keys, await keysFor(missing))
-  const proven = passedFiles.flatMap(file => keys[file] ? [[file, keys[file]!] as const] : [])
+  // A stored value carries the full key and, after a space, the runner-free key; the pass proves the file under both.
+  const proven = [...new Map(passedFiles.flatMap(file => (keys[file]?.split(' ') ?? []).map(key => [key, file] as const)))]
+    .map(([key, file]) => [file, key] as const)
   if (!proven.length) return
   await pool.query(`insert into ci_test_result_cache(workspace_id,repository,cache_key,file,ticket_id,commit,passed_at)
     select $1,$2,proven.cache_key,proven.file,$3,$4,$7 from unnest($5::text[],$6::text[]) as proven(file,cache_key)

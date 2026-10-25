@@ -771,7 +771,9 @@ test('the installed background publisher loads without build-only source modules
   }
   const contracts = join(f.repository, 'installed/packages/contracts/src')
   await mkdir(contracts, { recursive: true })
-  await copyFile(new URL('../packages/contracts/src/installationNames.mjs', import.meta.url), join(contracts, 'installationNames.mjs'))
+  for (const name of ['installationNames.mjs', 'workerPublication.mjs']) {
+    await copyFile(new URL(`../packages/contracts/src/${name}`, import.meta.url), join(contracts, name))
+  }
   const installed = await import(pathToFileURL(join(scripts, 'worker-release-artifacts.mjs')).href)
   const github = { repository: 'example/worker', tag: `worker-${f.commit}` }
   const published = await installed.publishInstalledWorkerArtifacts({ directory: f.directory,

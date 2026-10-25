@@ -1,3 +1,3 @@
-export { formatClock, formatDuration } from './presentation'
+export { formatClock } from './presentation'
 export { subagentsKey } from './query'
 export { RunSubagentsOverlay } from './RunSubagentsOverlay'

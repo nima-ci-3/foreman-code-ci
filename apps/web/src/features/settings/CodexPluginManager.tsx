@@ -3,6 +3,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Alert, Button, Icon, LoadingState, StatusBadge, TextField } from '../../shared/ui/nocturne'
 import { useChangeCodexPlugin, useCodexPlugin, useCodexPlugins } from '../../shared/api/harnessSettings'
 import { useAccessFailureLatch } from '../../shared/api/useAccessFailureLatch'
+import { useDebouncedValue } from '../../shared/ui/useDebounced'
 import './codexPlugins.css'
 
 export function CodexPluginManager({ accessUnavailable = false }: { accessUnavailable?: boolean }) {
@@ -13,11 +14,7 @@ export function CodexPluginManager({ accessUnavailable = false }: { accessUnavai
   const offset = search.pluginOffset ?? 0
   const selectedId = search.pluginId
   // The URL remains authoritative; only request admission is debounced.
-  const [settledQuery, setSettledQuery] = useState(query)
-  useEffect(() => {
-    const timer = setTimeout(() => setSettledQuery(query), 300)
-    return () => clearTimeout(timer)
-  }, [query])
+  const settledQuery = useDebouncedValue(query, 300)
   const list = useCodexPlugins({ view, query, offset, limit: 24 }, settledQuery === query && !accessUnavailable)
   const detail = useCodexPlugin(accessUnavailable ? undefined : selectedId)
   const change = useChangeCodexPlugin()

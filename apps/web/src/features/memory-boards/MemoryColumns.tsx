@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { MemoryCard as Card } from '@foreman-code/contracts'
 import { Button } from '../../shared/ui/nocturne/Button'
+import { useDebouncedCommit } from '../../shared/ui/useDebounced'
 import { SearchField, Select } from '../../shared/ui/nocturne/Fields'
 import { mergedMemoryItems, useMemoryCards } from './queries'
 import { MemoryCard } from './MemoryCard'
@@ -13,11 +14,7 @@ export function MemoryColumns({ client, board, nodes, filters, onFiltersChange, 
 }) {
   const [search, setSearch] = useState(filters.query)
   useEffect(() => { setSearch(filters.query) }, [filters.query])
-  useEffect(() => {
-    if (search === filters.query) return
-    const timer = setTimeout(() => onFiltersChange({ ...filters, query: search }), 250)
-    return () => clearTimeout(timer)
-  }, [search, filters, onFiltersChange])
+  useDebouncedCommit(search, filters.query, query => onFiltersChange({ ...filters, query }), 250)
   return <section aria-label="Cards" className="n-stack">
     <div className="memory-filter-row">
       <SearchField label="Find cards" placeholder="Title starts with…" maxLength={240} value={search} onChange={(event) => setSearch(event.currentTarget.value)} />

@@ -254,9 +254,9 @@ test('the verifier rejects a proven gate that neither ran nor proved every test 
   const main = await fakeMain(t)
   const { work, git, env } = repository(t)
   mkdirSync(join(work, 'apps/api/test'), { recursive: true })
-  mkdirSync(join(work, 'apps/web/src'), { recursive: true })
+  mkdirSync(join(work, 'packages/contracts/src'), { recursive: true })
   writeFileSync(join(work, 'apps/api/test/flow.integration.test.ts'), 'export {}\n')
-  writeFileSync(join(work, 'apps/web/src/view.test.ts'), 'export {}\n')
+  writeFileSync(join(work, 'packages/contracts/src/view.test.ts'), 'export {}\n')
   git('add', '.'); git('commit', '-qm', 'tests')
   const tested = git('rev-parse', 'HEAD')
   const response = await fetch(`${main.url}/mcp`, { method: 'POST', headers: { authorization: 'Bearer release-test-token' },
@@ -268,9 +268,9 @@ test('the verifier rejects a proven gate that neither ran nor proved every test 
   releaseCommit(git, work, [['gate', gate]])
   let result = await run(verifyScript, ['HEAD'], work, main, env)
   assert.equal(result.status, 1)
-  assert.match(result.output, /neither ran nor proved 1 unit test file\(s\): apps\/web\/src\/view\.test\.ts/)
+  assert.match(result.output, /neither ran nor proved 1 unit test file\(s\): packages\/contracts\/src\/view\.test\.ts/)
   // An earlier pass at identical inputs proves the file the gate skipped.
-  parts[0].cachedFiles = [{ file: 'apps/web/src/view.test.ts', ticketId: randomUUID(), commit: tested }]
+  parts[0].cachedFiles = [{ file: 'packages/contracts/src/view.test.ts', ticketId: randomUUID(), commit: tested }]
   result = await run(verifyScript, ['HEAD'], work, main, env)
   assert.equal(result.status, 0, result.output)
 })

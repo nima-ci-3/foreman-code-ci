@@ -323,10 +323,10 @@ test('an already cancelled request never starts its command', async () => {
   } finally { f.close() }
 })
 
-test('unit inventory includes all package runners and both web/root smoke commands', () => {
+test('unit inventory includes every package runner and the root smoke commands, and no web unit tests', () => {
   const portions = expectedPortions(new URL('..', import.meta.url).pathname, 'unit')
   assert.deepEqual(portions.map(({ key }) => key), ['root:install', 'root:worker-artifact', 'packages/contracts:test', 'packages/contracts-node:test', 'apps/api:test',
-    'apps/web:test:unit', 'apps/web:test:run-graph-smoke', 'apps/worker:test', 'root:test:scripts'])
+    'apps/worker:test', 'root:test:scripts'])
 })
 
 

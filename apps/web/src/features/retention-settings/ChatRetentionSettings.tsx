@@ -23,12 +23,12 @@ export function ChatRetentionSettings() {
       {(query.isError || journal.error) && <Button size="sm" onClick={() => void settings.refresh()}>Retry</Button>}
     </p> : <>
       <div className="chat-retention-controls">
-        <TextField label="Duration" className="chat-retention-field" type="number" inputMode="decimal" step="any"
+        <TextField label="Duration" labelHidden className="chat-retention-field" type="number" inputMode="decimal" step="any"
           min={MIN_FILE_RETENTION_SECONDS / secondsPerUnit[draft.unit]} max={MAX_FILE_RETENTION_SECONDS / secondsPerUnit[draft.unit]}
           value={draft.amount} disabled={busy || uncertain} aria-invalid={durationSeconds === undefined}
           aria-describedby={durationSeconds === undefined ? validationId : undefined}
           onChange={(event) => settings.edit({ ...draft, amount: event.currentTarget.value })} />
-        <Select label="Unit" className="chat-retention-field" options={[{ value: 'hours', label: 'hours' }, { value: 'days', label: 'days' }]}
+        <Select label="Unit" labelHidden className="chat-retention-field" options={[{ value: 'hours', label: 'hours' }, { value: 'days', label: 'days' }]}
           value={draft.unit} disabled={busy || uncertain}
           onChange={(event) => settings.edit({ ...draft, unit: event.currentTarget.value === 'hours' ? 'hours' : 'days' })} />
         <Button size="sm" variant="primary" disabled={settings.saveDisabled} loading={busy}

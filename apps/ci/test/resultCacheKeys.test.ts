@@ -194,3 +194,28 @@ it('gives each test its own key although two tests import each other', async () 
   expect(one).toMatch(/^[a-f0-9]{64}$/)
   expect((await keys.key('apps/api/test/two.test.ts', 'unit', 'unit-api')).key).not.toBe(one)
 })
+
+it('changes only the keys of tests that import a package whose locked tree changed', async () => {
+  // Production: any lockfile change reran every test.
+  const lock = (pgVersion: string, vitest = '4.0.0') => ['lockfileVersion: \'9.0\'', 'importers:', '  .: {}', '  apps/api:',
+    '    dependencies:', `      pg: { specifier: ^8.0.0, version: ${pgVersion} }`, '      zod: { specifier: ^4.0.0, version: 4.1.0 }',
+    '    devDependencies:', `      vitest: { specifier: ^4.0.0, version: ${vitest} }`,
+    'packages:', `  pg@${pgVersion}: { resolution: { integrity: sha512-${pgVersion} } }`, '  zod@4.1.0: { resolution: { integrity: sha512-z } }',
+    `  vitest@${vitest}: { resolution: { integrity: sha512-${vitest} } }`,
+    'snapshots:', `  pg@${pgVersion}: {}`, '  zod@4.1.0: {}', `  vitest@${vitest}: {}`, ''].join('\n')
+  const files = { ...base,
+    'apps/api/package.json': JSON.stringify({ name: 'api', dependencies: { pg: '^8.0.0', zod: '^4.0.0' }, devDependencies: { vitest: '^4.0.0' } }),
+    'apps/api/test/db.test.ts': "import pg from 'pg'\nexport const value = pg\n",
+    'apps/api/test/schema.test.ts': "import { z } from 'zod'\nexport const value = z\n" }
+  const keysOf = async (lockfile: string) => {
+    const keys = await CiResultKeys.create(tree({ ...files, 'pnpm-lock.yaml': lockfile }), AbortSignal.timeout(10_000))
+    return Promise.all(['apps/api/test/db.test.ts', 'apps/api/test/schema.test.ts'].map(async file => (await keys.key(file, 'unit', 'unit-api')).key))
+  }
+  const [db, schema] = await keysOf(lock('8.1.0'))
+  const [dbAfter, schemaAfter] = await keysOf(lock('8.2.0'))
+  expect(dbAfter).not.toBe(db)
+  expect(schemaAfter).toBe(schema)
+  // The project's test runner reaches every test of the project.
+  const [, schemaNewRunner] = await keysOf(lock('8.1.0', '4.1.0'))
+  expect(schemaNewRunner).not.toBe(schema)
+})

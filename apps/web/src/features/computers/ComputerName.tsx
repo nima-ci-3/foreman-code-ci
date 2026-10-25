@@ -25,7 +25,7 @@ export function ComputerName({ name, target }: { name: string; target: DevicePro
       {rename.isError ? <small role="alert">{rename.error.message}</small> : null}
     </>
   }
-  return <TextField className="computer-name-field" label="Computer name" autoFocus value={draft} maxLength={COMPUTER_NAME_MAX_LENGTH}
+  return <TextField className="computer-name-field" label="Computer name" labelHidden autoFocus value={draft} maxLength={COMPUTER_NAME_MAX_LENGTH}
     onChange={event => setDraft(event.target.value)} onFocus={event => event.target.select()} onBlur={() => finish(true)}
     onKeyDown={event => {
       if (event.key === 'Enter') finish(true)

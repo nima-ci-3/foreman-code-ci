@@ -14,13 +14,6 @@ export function formatBinaryBytes(bytes: number): string {
 
 export function formatPercent(value: number): string { return `${value.toFixed(1)}%` }
 
-export function formatDuration(ms: number): string {
-  const safe = Math.max(0, ms)
-  if (safe < 60_000) return `${(safe / 1000).toFixed(1)} s`
-  const minutes = Math.floor(safe / 60_000)
-  return `${minutes} min ${Math.floor((safe % 60_000) / 1000)} s`
-}
-
 export const reasonLabels: Record<TelemetryReason, string> = {
   'not-yet-sampled': 'Not sampled yet', unsupported: 'Unsupported on this computer', 'source-failure': 'Reading source failed',
   'counter-invalid': 'Counter invalid', 'permission-denied': 'Operating system denied the read', 'namespace-restricted': 'Namespace restricted',

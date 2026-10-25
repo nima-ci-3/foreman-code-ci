@@ -28,6 +28,5 @@
 .browser-sidebar .agent-browser-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .browser-sidebar .agent-browser-control > p { flex: 1 1 10rem; color: var(--text-muted); font: var(--type-caption); }
 .browser-sidebar .agent-browser-address { align-items: center; }
-.browser-sidebar .agent-browser-address label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .browser-sidebar .agent-browser-page { border-radius: var(--radius-md); }
 .browser-sidebar #browser-page-help { color: var(--text-faint); font: var(--type-caption); }
