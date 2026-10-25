@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readInstalledRelease } from './installation.mjs';
+import { readUpdateRecord } from './updateSupervisor.mjs';
 import { readInstalledBrowserRuntime, readBrowserRuntimeStatus, writeBrowserRuntimeStatus,
   stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime } from './browserRuntimeInstall.mjs';
 
@@ -102,6 +103,12 @@ export function createWorkerBrowserRuntime(options) {
     if (host) return status();
     await assertHostOwnership();
     const release = await readSelectedRelease({ root, facts, expected });
+    if (release.manifest.runtime && release.manifest.runtime.version !== release.manifest.target.node) {
+      const update = await readUpdateRecord(stateDirectory);
+      if (update?.status.state === 'restarting' && update.restart?.directory === release.directory) {
+        throw unavailable('The Worker runtime update must finish before repairing its browser runtime.');
+      }
+    }
     phase = 'installing'; lastFailure = null;
     try {
       const staged = await stageBundledBrowserRuntime({ root, artifact: release.directory, manifest: release.manifest,

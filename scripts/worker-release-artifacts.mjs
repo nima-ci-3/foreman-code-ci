@@ -114,7 +114,8 @@ async function verifyArtifact(directory, target, version, commit) {
   if (manifest.browserRuntime) {
     const { readBrowserRuntimeArtifact, matchesBrowserRuntimeTarget } = await import('../apps/worker/src/browserRuntimeInstall.mjs')
     const runtime = await readBrowserRuntimeArtifact(join(directory, 'artifacts/browser-runtime'), manifest.browserRuntime.descriptorSha256)
-    if (runtime.manifestSha256 !== manifest.browserRuntime.manifestSha256 || !matchesBrowserRuntimeTarget(runtime.target, target)) {
+    const executionTarget = { ...target, node: manifest.runtime?.version ?? target.node }
+    if (runtime.manifestSha256 !== manifest.browserRuntime.manifestSha256 || !matchesBrowserRuntimeTarget(runtime.target, executionTarget)) {
       throw new Error('Browser runtime differs from the Worker target or locked descriptor')
     }
   }
@@ -280,20 +281,28 @@ export async function buildWorkerReleaseArtifacts({
   const product = JSON.parse(productManifest)
   assertWorkerUpdateToolchain(product)
   const version = workerReleaseVersion(product)
-  const targets = readCommittedWorkerTargets(repository, commit)
+  const canonicalTargets = readCommittedWorkerTargets(repository, commit)
+  const runtimePath = 'apps/worker/artifacts/node-24.22.1-linux-x64.json'
+  const hasRuntime = execFileSync('git', ['ls-tree', '--name-only', commit, '--', runtimePath],
+    { cwd: repository, encoding: 'utf8' }).trim() === runtimePath
+  // Node 22 updaters require an exact incoming target. These carriers bootstrap Node 24 before loading the Worker.
+  const targets = canonicalTargets.flatMap(entry => [entry, ...((hasRuntime ? ['v22.23.2', 'v22.23.3'] : []).map(node => ({
+    ...entry, bootstrapNode: node, target: { ...entry.target, node },
+  })))])
   const previousArtifacts = await readPreviousArtifacts(previousDirectory)
   const blobs = previousArtifacts.length ? committedBlobIds(repository, commit) : undefined
   await mkdir(directory, { mode: 0o700 })
   try {
     // Targets build independently; all of them settle before a failure removes the shared storage.
-    const builds = await Promise.allSettled(targets.map(async ({ path, target }) => {
+    const builds = await Promise.allSettled(targets.map(async ({ path, target, bootstrapNode }) => {
       const staging = await mkdtemp(join(directory, '.build-'))
       // The builder requires a fresh directory that it creates itself.
       await rm(staging, { recursive: true })
       const reused = previousArtifacts.length && await reuseWorkerArtifact({ repository, previousDirectory, previousArtifacts,
         path, target, commit, blobs, staging })
       if (!reused) {
-        await run(process.execPath, ['scripts/build-worker-artifact.mjs', path, staging], {
+        await run(process.execPath, ['scripts/build-worker-artifact.mjs', path, staging,
+          'apps/worker/artifacts/node-24.22.1-linux-x64.json', ...(bootstrapNode ? [bootstrapNode] : [])], {
           cwd: repository,
           env: { ...process.env, [INSTALLATION_NAMES.environment.WORKER_BUILD_COMMIT]: commit },
         })

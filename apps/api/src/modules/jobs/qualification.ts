@@ -597,7 +597,7 @@ export function validateVerificationIsolationObservation(input: {
     throw new Error(`Measured verification isolation rejected (${reason}): ${JSON.stringify(details).slice(0, 400)}`)
   }
   const sentinels = observed.ownerSentinels
-  if (observed.schemaVersion !== 1 || observed.node !== 'v22.23.3'
+  if (observed.schemaVersion !== 1 || observed.node !== 'v24.22.1'
     || observed.verificationEnvironment !== 'isolated-job-v1'
     || observed.pidNamespace === input.hostPidNamespace || observed.networkNamespace === input.hostNetworkNamespace
     || typeof observed.pidNamespace !== 'string' || !/^pid:\[\d+\]$/.test(observed.pidNamespace)

@@ -16,7 +16,7 @@ async function fixture(t, options = {}) {
   await mkdir(state, { recursive: true, mode: 0o700 });
   const files = [{ path: 'src/cli.mjs', bytes: Buffer.from('console.log("reviewed-release")') }, { path: 'artifacts/graphql-worker.service.in', bytes: await readFile(new URL('../artifacts/foreman-worker.service.in', import.meta.url)) }];
   for (const file of files) { await mkdir(join(artifact, file.path, '..'), { recursive: true }); await writeFile(join(artifact, file.path), file.bytes); }
-  const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2', rootPersistent: true, homePersistent: true, storagePersistent: true };
+  const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0', rootPersistent: true, homePersistent: true, storagePersistent: true };
   const manifest = { format: 1, version: '1.0.0', protocolVersion: 1, identityFormat: 1, commit: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64), packageManager: 'pnpm@11.27.0', target: facts, files: files.map(({ path, bytes }) => ({ path, sha256: hash(bytes), size: bytes.length })) };
   const bytes = JSON.stringify(manifest); await writeFile(join(artifact, 'manifest.json'), bytes);
   const installation = { root, stateDirectory: state, artifact, facts, approvedManifestSha256: hash(bytes), expected: { protocolVersion: 1, identityFormat: 1 } };
@@ -91,7 +91,7 @@ test('activation serializes concurrent installation and starts the release in th
 
 test('rollback plan requires approval of the retained Node instead of selecting the current runtime', async (t) => {
   const f = await fixture(t);
-  const currentFacts = { ...f.installation.facts, node: 'v22.23.3' };
+  const currentFacts = { ...f.installation.facts, node: 'v24.22.1' };
   f.manifest.version = '1.1.0';
   f.manifest.target = currentFacts;
   const bytes = JSON.stringify(f.manifest);
@@ -104,7 +104,7 @@ test('rollback plan requires approval of the retained Node instead of selecting 
   assert.equal(plan.rollbackAvailable, true);
   assert.equal(plan.rollbackRuntimeApprovalRequired, true);
   assert.equal(plan.rollbackCommands[1][0], 'APPROVED_RETAINED_NODE');
-  assert.match(plan.rollbackPrerequisite, /v22\.23\.2/);
+  assert.match(plan.rollbackPrerequisite, /v24\.22\.0/);
   assert.ok(!plan.rollbackCommands.flat().includes('/approved/current-node'));
   assert.deepEqual(f.calls, []);
 });
