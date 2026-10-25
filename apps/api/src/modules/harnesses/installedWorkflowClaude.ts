@@ -274,6 +274,8 @@ export function allocateInstalledWorkflowClaude(input: {
   manager.reconcile = (native, correlationId, signal) => remoteHistory(native, () => reconcile(native, correlationId, signal))
   const reconcileResponse = manager.reconcileResponse!.bind(manager)
   manager.reconcileResponse = (native, response, signal) => remoteHistory(native, () => reconcileResponse(native, response, signal))
+  const contextSnapshot = manager.contextSnapshot?.bind(manager)
+  if (contextSnapshot) manager.contextSnapshot = native => beforeInit(native) ? null : contextSnapshot(native)
   const cancel = manager.cancel.bind(manager)
   manager.cancel = async (native, signal, nativeMessageId) => !opened && same(native, session)
     ? false : cancel(native, signal, nativeMessageId)
