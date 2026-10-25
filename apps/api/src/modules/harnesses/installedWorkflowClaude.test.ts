@@ -84,6 +84,8 @@ it('sends the first input on the prepared process and acknowledges it by its mes
   const events = (async () => { for await (const event of claude.manager.startTurn(session,
     { prompt: 'do the work', clientCorrelationId: 'execution:execution', onSubmitted: submitted })) void event })()
   const message = await fake.nextMessage()
+  // Main reads the context while Claude has the first input but has not initialized the session.
+  expect(claude.manager.contextSnapshot?.(session)).toBeNull()
   await fake.frames.offer({ type: 'system', subtype: 'init', session_id: session.nativeSessionId,
     claude_code_version: '2.1.284', cwd: '/work' })
   await fake.frames.offer({ type: 'assistant', session_id: session.nativeSessionId, uuid: 'reply', user_message_uuid: message.uuid })
@@ -138,6 +140,7 @@ it('reads, stops and closes the reported session before its first input', async 
   const session = await claude.manager.createSession(start)
   expect(await claude.manager.history(session)).toMatchObject({ events: [], pendingInteractions: [] })
   expect(await claude.manager.reconcile(session, 'execution:execution')).toMatchObject({ events: [] })
+  expect(claude.manager.contextSnapshot?.(session)).toBeNull()
   expect(await claude.manager.cancel(session)).toBe(false)
   await claude.manager.close(session)
   expect(fake.closed.count).toBe(1)
