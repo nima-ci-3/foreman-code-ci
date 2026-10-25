@@ -25,7 +25,7 @@ test('merges Vitest reports into repository files with per-test status, duration
       { title: 'b waits', status: 'pending' }, { fullName: 'b later', status: 'todo' },
     ] },
   ] }], root)
-  assert.deepEqual(results, { summary: { passed: 1, failed: 1, skipped: 2 }, proven: [], truncated: false, files: [
+  assert.deepEqual(results, { summary: { passed: 1, failed: 1, skipped: 2 }, truncated: false, files: [
     { file: 'apps/api/test/a.test.ts', status: 'failed', durationMs: 250, tests: [
       { name: 'a saves', status: 'passed', durationMs: 12 },
       { name: 'a rejects', status: 'failed', durationMs: 30, message: 'AssertionError: expected 1 to be 2\n  at a.test.ts:4' }] },
@@ -64,8 +64,6 @@ test('keeps failed tests first within the bounds and still counts every test', (
   assert.equal(results.truncated, true)
   assert.deepEqual(results.summary, { passed: passing.length * 3, failed: 1, skipped: 0 })
   assert.equal(results.files.length, CI_TEST_RESULT_LIMITS.files)
-  // The result cache needs every passed file, not only the ones the bounded list keeps.
-  assert.deepEqual(results.proven, passing.map(file => file.name))
   assert.equal(results.files[0].file, 'apps/web/src/z.test.tsx')
   assert.equal(kept.length, CI_TEST_RESULT_LIMITS.tests)
   assert.equal(kept[0].name, 'z breaks')
@@ -83,7 +81,7 @@ test('fails expected collection without publishing partial reports', t => {
   assert.throws(() => writeCiTestResults(output, [join(directory, 'missing.json'), join(directory, 'report.json')]), /missing.json/)
   assert.equal(existsSync(output), false)
   assert.equal(writeCiTestResults(output, [join(directory, 'report.json')]), true)
-  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), { summary: { passed: 0, failed: 0, skipped: 0 }, proven: [], truncated: false, files: [] })
+  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), { summary: { passed: 0, failed: 0, skipped: 0 }, truncated: false, files: [] })
 })
 
 test('a unit slice records its test results without handing the results path to the tests', t => {
@@ -103,11 +101,9 @@ writeFileSync(report, JSON.stringify({ testResults: [{ name: resolve(file), star
   assertionResults: [{ fullName: 'renders', status: 'failed', duration: 9, failureMessages: ['broken'] }] }] }))
 process.exit(3)
 `, { mode: 0o755 })
-  // The API slice joins a CI cgroup through sudo; the fixture has nothing to delegate.
-  writeFileSync(join(directory, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
   const result = spawnSync('bash', ['scripts/ci-suite.sh'], {
     cwd: root, encoding: 'utf8',
-    env: { ...process.env, SUITE: 'unit-api', SCOPE: 'full', SLICE: '1/3', CI_PREREQUISITES_UNTRACKED: '1',
+    env: { ...process.env, SUITE: 'unit-web', SCOPE: 'full', SLICE: '1/3',
       CI_PROGRESS_FILE: '', CI_WATCHDOG_ACTIVE: '', CI_EXPECTED_DURATION_MS: '', DURATIONS_INPUT: '',
       DURATIONS_OUTPUT: join(directory, 'reports', 'durations.json'), TEST_RESULTS_OUTPUT: output,
       CI_STATE: join(directory, 'state'), PATH: `${directory}${delimiter}${process.env.PATH}`,
@@ -118,7 +114,7 @@ process.exit(3)
   const results = JSON.parse(readFileSync(output, 'utf8'))
   assert.deepEqual(results.summary, { passed: 0, failed: 1, skipped: 0 })
   assert.equal(results.files.length, 1)
-  assert.ok(results.files[0].file.startsWith('apps/api/'))
+  assert.ok(results.files[0].file.startsWith('apps/web/src/'))
   assert.deepEqual(results.files[0].tests, [{ name: 'renders', status: 'failed', durationMs: 9, message: 'broken' }])
 })
 
@@ -213,11 +209,9 @@ test('missing reports fail a successful test command and preserve an existing te
 const args = process.argv.slice(2)
 process.exit(args.includes('build') ? 0 : Number(process.env.FIXTURE_EXIT))
 `, { mode: 0o755 })
-  writeFileSync(join(directory, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
   for (const code of [0, 7]) {
     const result = spawnSync('bash', ['scripts/ci-suite.sh'], { encoding: 'utf8',
-      env: { ...process.env, SUITE: 'unit-api', SCOPE: 'full', SLICE: '1/3', FIXTURE_EXIT: String(code),
-        CI_PREREQUISITES_UNTRACKED: '1',
+      env: { ...process.env, SUITE: 'unit-web', SCOPE: 'full', SLICE: '1/3', FIXTURE_EXIT: String(code),
         CI_PROGRESS_FILE: '', CI_WATCHDOG_ACTIVE: '', CI_EXPECTED_DURATION_MS: '', DURATIONS_INPUT: '',
         DURATIONS_OUTPUT: join(directory, `durations-${code}.json`),
         TEST_RESULTS_OUTPUT: join(directory, `results-${code}.json`), CI_STATE: join(directory, `state-${code}`),

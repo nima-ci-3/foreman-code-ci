@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 
 /** Grip edges of a movable, resizable non-modal window (Operator chat, approval inbox). */
 export const windowResizeEdges = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'] as const
@@ -41,14 +41,6 @@ export function useMovableWindow({ name, minWidth, minHeight, narrow }: {
     if (edge.includes('s')) bottom = Math.min(window.innerHeight - 8, Math.max(bottom + dy, top + minimumHeight))
     setBox({ left, top, width: right - left, height: bottom - top })
   }
-  // Stable, so an effect that places the window runs only when the window opens.
-  const placeAt = useCallback((left: number, top: number) => {
-    const rect = panelRef.current?.getBoundingClientRect()
-    if (!rect) return
-    setBox({ width: rect.width, height: rect.height,
-      left: Math.max(8, Math.min(left, window.innerWidth - rect.width - 8)),
-      top: Math.max(8, Math.min(top, window.innerHeight - rect.height - 8)) })
-  }, [])
   useEffect(() => {
     const clamp = () => setBox((current) => {
       if (!current) return current
@@ -61,8 +53,6 @@ export function useMovableWindow({ name, minWidth, minHeight, narrow }: {
   return {
     panelRef,
     style: box ? { position: 'fixed', ...box } as CSSProperties : undefined,
-    /** Places the window's top-left corner, kept inside the viewport. */
-    placeAt,
     /** Opens the window under a toolbar button, right edges aligned, so it never covers the toolbar. */
     placeBelow(anchor: DOMRect) {
       const start = readBox()

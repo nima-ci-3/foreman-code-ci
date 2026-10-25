@@ -1,4 +1,3 @@
-import { spawnProcess } from '../../shared/process.js'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -12,7 +11,6 @@ import { DeviceApplicationError } from '../devices/deviceApplicationError.js'
 import type { DeviceSessionBinding } from '@foreman-code/contracts/device-connection'
 import type { DeviceExtensionRegistration } from '../devices/index.js'
 import { DomainError } from '../errors.js'
-import { componentLogger } from '../diagnostics/index.js'
 import { sha256Hex } from '../../shared/hash.js'
 
 const sha256 = (bytes: Uint8Array) => sha256Hex(bytes)
@@ -72,26 +70,6 @@ async function artifactManifest(root: string, manifestSha256: string) {
   return { manifest }
 }
 
-const transitionUploads = new Set<string>()
-/** Starts the on-demand upload of one Node 22 transition carrier (scripts/worker-release-artifacts.mjs
- * publish-transition); the release scripts live beside its worker-artifacts directory. */
-function requestTransitionPublication(root: string, manifestSha256: string) {
-  if (transitionUploads.has(manifestSha256)) return
-  transitionUploads.add(manifestSha256)
-  const release = dirname(root)
-  const child = spawnProcess(process.execPath, [join(release, 'scripts', 'worker-release-artifacts.mjs'), 'publish-transition', release,
-    manifestSha256], { stdio: 'ignore' })
-  child.once('error', error => {
-    transitionUploads.delete(manifestSha256)
-    componentLogger('devices').warn({ err: error, manifestSha256 }, 'Worker transition bundle publication could not start')
-  })
-  child.once('exit', code => {
-    transitionUploads.delete(manifestSha256)
-    if (code) componentLogger('devices').warn({ code, manifestSha256 }, 'Worker transition bundle publication failed')
-  })
-}
-const TRANSITION_PREPARING = 'Preparing this computer\'s Node 24 update bundle on GitHub; the update can start in a minute.'
-
 async function publishedArtifactIndex(options: { directory: string; version: string }) {
   const result = await artifactIndex(options.directory, options.version)
   const { index } = result
@@ -128,10 +106,6 @@ export async function readWorkerBundleIdentity(options: { directory: string; ver
   if (!artifact) {
     throw new DomainError('WORKER_BUNDLE_UNPUBLISHED', 'No published Worker bundle matches this target.', 503,
       { publicationError: 'No published Worker bundle matches this target.' })
-  }
-  if (artifact.transition && !artifact.github) {
-    requestTransitionPublication(root, artifact.manifestSha256)
-    throw new DomainError('WORKER_BUNDLE_UNPUBLISHED', TRANSITION_PREPARING, 503, { publicationError: TRANSITION_PREPARING })
   }
   const { manifest } = await artifactManifest(root, artifact.manifestSha256)
   const contentSha256 = workerArtifactContentSha256(manifest)
@@ -186,11 +160,6 @@ export function createWorkerArtifactExtension(options: {
       if (!artifact) {
         if (request.operation === 'release') return { payload: { operation: 'release', release: null } }
         throw new DeviceApplicationError('extension-rejected')
-      }
-      // A Worker still on Node 22 asks for its transition carrier: publish it now; it retries the update.
-      if (artifact.transition && !artifact.github) {
-        requestTransitionPublication(root, artifact.manifestSha256)
-        throw new DeviceApplicationError('WORKER_RELEASE_ASSET_UNAVAILABLE')
       }
       const { manifest } = await artifactManifest(root, artifact.manifestSha256)
       if (!sameTarget(manifest.target, artifact.target)) throw new DeviceApplicationError('extension-rejected')

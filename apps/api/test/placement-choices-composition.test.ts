@@ -50,8 +50,6 @@ beforeEach(async () => {
       revoked_at: null, delegated_from: null }], rowCount: 1 }
     if (values.length === 0) return { rows: [{ id: mainId }], rowCount: 1 }
     if (values.length === 2 && values[0] === input.workspaceId && values[1] === input.workflowId) return { rows: [{ record: fixture.version }], rowCount: 1 }
-    // A configuration id the saved version does not pin is looked up as a workspace Agent configuration; none exists.
-    if (values.length === 2 && values[1] === input.workspaceId) return { rows: [], rowCount: 0 }
     throw new Error(`Unexpected placement composition query binding ${values.length} values`)
   })
   vi.spyOn(database.pool, 'connect').mockResolvedValue({ query, release: vi.fn() } as never)

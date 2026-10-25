@@ -1,4 +1,3 @@
-// ci-key-inputs: apps/worker scripts/worker-snapshot-policy.mjs
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';

@@ -1,4 +1,3 @@
-// ci-key-inputs: apps/api/src/modules/browser-runtime runtime/browser apps/worker/test/fixtures/installedBrowser.mjs
 import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'

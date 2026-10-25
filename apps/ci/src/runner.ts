@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { sanitizeCiText, serializeCiJson } from './text.js'
 import { availableParallelism, freemem, homedir, totalmem } from 'node:os'
-import { join } from 'node:path'
+import { join, matchesGlob } from 'node:path'
 import { gzipSync, gunzipSync } from 'node:zlib'
 import { ciWorkspacePackages } from '@foreman-code/contracts/ci-import-graph'
 import { compactIntegrationCoverage, expandIntegrationCoverage } from '@foreman-code/contracts/ci-coverage'
@@ -999,7 +999,16 @@ export class HostCiRunner {
   private async partFiles(meta: RunMeta, source: string, selected: string[]) {
     const part = meta.part
     if (!part) return selected
-    let files = selected.filter(file => part.endsWith('-api') === file.startsWith('apps/api/'))
+    const heavyPath = join(source, 'apps/web/heavy-tests.json')
+    const heavy = existsSync(heavyPath) ? (JSON.parse(await readFile(heavyPath, 'utf8')) as { files: string[] }).files : []
+    let files = selected.filter(file => {
+      if (part.endsWith('-api')) return file.startsWith('apps/api/')
+      if (part.endsWith('-other')) {
+        return !file.startsWith('apps/api/') && (meta.suite !== 'unit' || !file.startsWith('apps/web/'))
+      }
+      const isHeavy = heavy.some(pattern => matchesGlob(file.slice('apps/web/'.length), pattern))
+      return file.startsWith('apps/web/') && (part === 'unit-web-heavy' ? isHeavy : !isHeavy)
+    })
     if (meta.partition) {
       files = integrationPartition(files, meta.durations ?? {}, meta.partition)
     }

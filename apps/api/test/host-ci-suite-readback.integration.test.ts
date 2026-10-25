@@ -7,7 +7,7 @@ import { fixture } from './helpers/hostCiMcpFixture.js'
 import { ciRunReadback } from './helpers/ciRunReadback.js'
 
 it.each([
-  ['unit', 6], ['lint', 2], ['typecheck', 2], ['build', 2],
+  ['unit', 11], ['lint', 2], ['typecheck', 2], ['build', 2],
 ] as const)('persists and dispatches all %s parts through authenticated MCP', async (suite, count) => {
   const f = await fixture({ cloud: { github: suite === 'unit' ? 5 : 0, circleci: 0 } })
   try {
@@ -25,7 +25,7 @@ it.each([
     expect(read.partitions!.every(run => run.suite === suite && run.part?.startsWith(`${suite}-`)
       && run.groupId === read.run.groupId)).toBe(true)
     if (suite === 'unit') {
-      const expectedShards = { 'unit-api': 5, 'unit-other': 1 }
+      const expectedShards = { 'unit-api': 5, 'unit-web': 3, 'unit-web-heavy': 2, 'unit-other': 1 }
       for (const [part, shards] of Object.entries(expectedShards)) {
         const runs = read.partitions!.filter(run => run.part === part)
         expect(runs).toHaveLength(shards)

@@ -175,36 +175,7 @@ export const INSTALLATION_NAMES = /** @type {const} */ ({
 /** Embed the frozen names when shipping a standalone launcher or Worker script.
  * @param {string} source
  */
-/** The pinned package manager and the 48-hour package release-age policy (package.json `packageManager` and
- * pnpm-workspace.yaml). Defined here, the one module every installed copy already carries, so standalone Worker and
- * CI runtime files get them inlined; packagePolicy.mjs re-exports them for everything else. */
-export const PNPM_VERSION = '11.27.0'
-export const PACKAGE_MANAGER = 'pnpm@11.27.0'
-export const RELEASE_AGE_MINUTES = 2880
-/** The pnpm settings that enforce the release-age policy, as pnpm reports them. */
-export const PACKAGE_RELEASE_POLICY = Object.freeze({
-  minimumReleaseAge: RELEASE_AGE_MINUTES, minimumReleaseAgeStrict: true, minimumReleaseAgeIgnoreMissingTime: false,
-})
-
-/** Constants a standalone installed file may import from a dependency-free contracts module; the installer inlines
- * them, since installed copies have no node_modules. */
-export const STANDALONE_INSTALLATION_NAMES = { module: /(?:installationNames\.mjs|installation-names)/,
-  values: { INSTALLATION_NAMES, PNPM_VERSION, PACKAGE_MANAGER, RELEASE_AGE_MINUTES, PACKAGE_RELEASE_POLICY } }
-
-/**
- * @param {string} source
- * @param {readonly { module: RegExp; values: Record<string, unknown> }[]} [modules] Further constant modules to inline.
- */
-export function standaloneInstallationSource(source, modules = []) {
-  let result = source
-  for (const { module, values } of [STANDALONE_INSTALLATION_NAMES, ...modules]) {
-    result = result.replace(new RegExp(`^import \\{ ([\\w$, ]+) \\} from ['"][^'"\\n]*${module.source}['"];?\\r?\\n`, 'gm'),
-      (line, names) => {
-        const imported = names.split(',').map(name => name.trim()).filter(Boolean)
-        // Only constants inline; an import that also names a function stays as written.
-        if (!imported.every(name => Object.hasOwn(values, name))) return line
-        return imported.map(name => `const ${name} = ${JSON.stringify(values[name])}\n`).join('')
-      })
-  }
-  return result
+export function standaloneInstallationSource(source) {
+  return source.replace(/^import \{ INSTALLATION_NAMES \} from ['"][^'"\n]*(?:installationNames\.mjs|installation-names)['"]\r?\n/m,
+    `const INSTALLATION_NAMES = ${JSON.stringify(INSTALLATION_NAMES)}\n`)
 }

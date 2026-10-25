@@ -1,4 +1,3 @@
-import { PNPM_VERSION } from '@foreman-code/contracts/package-policy'
 import { captureVerificationInventory } from '../../shared/verificationRunner.js'
 import { isDeepStrictEqual } from 'node:util'
 import { JobVerificationOfflineSeedReceiptSchema, JobVerificationRepositoryContextSchema, JobVerificationQualificationCandidateSchema }
@@ -46,7 +45,7 @@ export function createVerificationSystemInput(input: {
       execution, measurement: result.measurement,
       requiredPortions: captureVerificationInventory(source.privateRepositoryRoot, execution.acceptedSpec.verification.suite,
         { partition: execution.acceptedSpec.verification.parameters.partition }), gitMounts: requireJobGitMounts(execution, source),
-      preseedFacts: { lockfileSha256: lockfile.sha256, pnpmVersion: PNPM_VERSION,
+      preseedFacts: { lockfileSha256: lockfile.sha256, pnpmVersion: '11.27.0',
         platform: seed.platform.os, architecture: seed.platform.arch,
         provenanceDigest: seed.provenanceDigest, minimumReleaseAgeMinutes: seed.minimumReleaseAge,
         releaseAgeVerified: true },

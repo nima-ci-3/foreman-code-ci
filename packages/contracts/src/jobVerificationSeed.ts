@@ -1,4 +1,3 @@
-import { PACKAGE_MANAGER, RELEASE_AGE_MINUTES } from './packagePolicy.mjs'
 import { z } from 'zod'
 import { DeviceDigestSchema, DeviceSafeIntegerSchema } from './deviceResources.js'
 import { IdSchema, TimestampSchema } from './schemaPrimitives.js'
@@ -10,9 +9,9 @@ const path = z.string().min(1).max(2048).refine(value => !value.startsWith('/')
 /** Protected installer input. Public profile saves do not accept seed trust or review metadata. */
 export const JobVerificationOfflineSeedReceiptSchema = z.object({
   schemaVersion: z.literal(1),
-  packageManager: z.literal(PACKAGE_MANAGER),
+  packageManager: z.literal('pnpm@11.27.0'),
   platform: z.object({ os: z.literal('linux'), arch: z.literal('x64'), libc: z.literal('glibc') }).strict(),
-  minimumReleaseAge: z.literal(RELEASE_AGE_MINUTES),
+  minimumReleaseAge: z.literal(2880),
   minimumReleaseAgeStrict: z.literal(true),
   minimumReleaseAgeIgnoreMissingTime: z.literal(false),
   capturedAt: TimestampSchema,
@@ -43,7 +42,7 @@ export const JobVerificationOfflineSeedReceiptSchema = z.object({
       receipt.files.some(file => file.path.startsWith(`${directory}/`)))
     || Date.parse(receipt.review.reviewedAt) < Date.parse(receipt.capturedAt)
     || receipt.packages.some(pkg => !pkg.metadataPath.startsWith('metadata/') || !files.has(pkg.metadataPath)
-      || Date.parse(receipt.capturedAt) - Date.parse(pkg.publishedAt) < RELEASE_AGE_MINUTES * 60_000)) {
+      || Date.parse(receipt.capturedAt) - Date.parse(pkg.publishedAt) < 2880 * 60_000)) {
     context.addIssue({ code: 'custom', message: 'Offline seed must retain reviewed inputs, bounded inventories and mature releases.' })
   }
 })

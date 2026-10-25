@@ -5,7 +5,6 @@ import { Avatar } from './Layout'
 import { Icon, type IconName } from './Icon'
 import { Badge } from './Feedback'
 import { cx, type Tone } from './utils'
-import { isComposerSendKey } from '../composerInput'
 
 export function MessageBubble({ author, role = 'assistant', children, time, dateTime, status, actions }:
   { author: string; role?: 'user' | 'assistant' | 'system'; children: ReactNode; time?: string; dateTime?: string; status?: ReactNode; actions?: ReactNode }) {
@@ -35,7 +34,7 @@ export function MessageComposer({ value, onValueChange, onSend, pending = false,
       onChange={(event) => onValueChange(event.currentTarget.value)} onKeyDown={(event) => {
         onInputKeyDown?.(event)
         if (event.defaultPrevented) return
-        if (!isComposerSendKey(event)) return
+        if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
         event.preventDefault(); send()
       }} />
     <footer><span><span id={`${id}-hint`} hidden>Enter to send · Shift + Enter for a new line</span>

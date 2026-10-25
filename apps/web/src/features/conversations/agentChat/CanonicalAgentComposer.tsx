@@ -1,16 +1,16 @@
-import { useEffect, type ReactNode, type RefObject } from 'react'
-import { parseSessionCommand, type ChatDeliveryReceipt, type DeliveryTarget, type SessionMode } from '@foreman-code/contracts'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { parseSessionCommand, type ChatDeliveryIntent, type ChatDeliveryReceipt, type DeliveryTarget, type SessionMode } from '@foreman-code/contracts'
 import type { AgentChatState } from '@foreman-code/contracts/agent-chat'
 import type { ConversationAttachments } from '../../attachments'
-import { Icon, IconButton, MessageBubble } from '../../../shared/ui/nocturne'
-import { type ComposerSessionControls, useConversationDraftStore } from '../../chat-core'
+import { Button, Icon, IconButton, MessageBubble } from '../../../shared/ui/nocturne'
+import { type ComposerSessionControls, useConversationDraftStore, prepareChatAttachments, type ChatAttachmentAttempt, deliveryAction } from '../../chat-core'
 import { ChatDeliveryActions } from '../delivery/ChatDeliveryActions'
 import { ChatDeliveryReceipts } from '../delivery/ChatDeliveryReceipts'
 import { RetainedDeliveryInputs, type DirectRecovery } from '../delivery/RetainedDeliveryInputs'
-import { useCanonicalDelivery } from '../delivery/useCanonicalDelivery'
-import { DeliveryNotices } from '../delivery/DeliveryNotices'
+import { useChatDelivery } from '../delivery/useChatDelivery'
 import { useRetainedInputs } from '../delivery/useRetainedInputs'
 import { dropCommand, newestQueuedInput, queueCommand, useQueuedCommands } from '../delivery/queuedRecall'
+import { useDeliveryDraftPin } from '../delivery/useDeliveryDraftPin'
 import { AgentChatComposer } from './AgentChatComposer'
 
 export function CanonicalAgentComposer({ state, name, draftKey, inputRef, attachments, sessionControls,
@@ -22,11 +22,24 @@ export function CanonicalAgentComposer({ state, name, draftKey, inputRef, attach
   target?: DeliveryTarget; onDenied(error: Error): void
   onRecover?(recovery: DirectRecovery): void
 }) {
-  const flow = useCanonicalDelivery({ draftKey, target, enabled: !writeReason,
-    turnKey: `${state.sessionState}:${state.activeTurn?.requestId ?? ''}`, attachments, sessionControls, refresh, onDenied })
-  const { draft, command, mode, intent, setIntent, delivery, pin, presentation, controlsReason, action, receipts } = flow
-  const reason = writeReason ?? (command.kind === 'invalid' ? command.message
-    : !target ? 'No available target. Refresh this conversation.' : flow.deliveryReason)
+  const draft = useConversationDraftStore(store => store.drafts[draftKey] ?? '')
+  const [intent, setIntent] = useState<ChatDeliveryIntent>('auto')
+  const attempted = useRef<{ content: string; version: number; files: ChatAttachmentAttempt } | undefined>(undefined)
+  const delivery = useChatDelivery(target, !writeReason, `${state.sessionState}:${state.activeTurn?.requestId ?? ''}`, (_receipt, request) => {
+    if (attempted.current?.content === request.content) {
+      useConversationDraftStore.getState().clearExactDraft(draftKey, request.content, attempted.current.version)
+      attempted.current.files.acknowledge?.()
+    }
+    refresh()
+  }, { onDenied })
+  const pin = useDeliveryDraftPin(draftKey, target, delivery.presentation.nativeTurnId, !!draft || attachments.hasAttachments, !!delivery.state)
+  const command = parseSessionCommand(draft)
+  const mode = command.kind === 'plan-task' ? 'plan' : sessionControls.state?.desiredMode
+  const presentation = { ...delivery.presentation, hasAttachments: attachments.hasAttachments,
+    changesMode: !!mode && sessionControls.state?.appliedMode !== mode }
+  const controlsReason = !delivery.online ? 'You are offline. Controls are unavailable.' : undefined
+  const reason = writeReason ?? (command.kind === 'invalid' ? command.message : delivery.pendingControl ? 'Confirm the original Stop or queue control before sending.' : pin.stale ? 'The selected target changed. Refresh the target to send this draft.' : !target ? 'No available target. Refresh this conversation.' : !delivery.online ? 'You are offline. Your draft is kept.' : undefined)
+  const action = deliveryAction(presentation, intent)
   const active = presentation.state === 'active'
   const commands = useQueuedCommands(store => store.items[draftKey]) ?? []
   const submit = (content = draft, selectedMode = mode) => {
@@ -36,8 +49,15 @@ export function CanonicalAgentComposer({ state, name, draftKey, inputRef, attach
       if (active) { queueCommand(draftKey, content, selectedMode); useConversationDraftStore.getState().setDraft(draftKey, ''); return }
       onSessionCommand(content, selectedMode); return
     }
-    flow.sendMessage(content, selectedMode, reason)
+    if (reason || action.reason || delivery.busy || delivery.pending) return
+    const files = prepareChatAttachments(attachments)
+    if (!files || !content.trim() && !files.attachments.length) return
+    attempted.current = { content, files, version: useConversationDraftStore.getState().versions[draftKey] ?? 0 }
+    delivery.submit({ content, intent, ...(selectedMode ? { sessionMode: selectedMode } : {}),
+      ...(intent !== 'next_turn' && pin.pin?.nativeTurnId ? { expectedNativeTurnId: pin.pin.nativeTurnId } : {}),
+      ...(files.attachments.length ? { attachments: [...files.attachments] } : {}) })
   }
+  const receipts = delivery.state?.receipts ?? []
   // The turn ended: queued commands run in the order they were typed, one per turn.
   const nextCommand = !active && !delivery.busy && !delivery.pending ? commands[0] : undefined
   useEffect(() => {
@@ -54,7 +74,12 @@ export function CanonicalAgentComposer({ state, name, draftKey, inputRef, attach
     return input.content
   }
   return <>
-    <DeliveryNotices flow={flow} />
+    {pin.stale ? <Button onClick={pin.refresh}>Refresh target</Button> : null}
+    {delivery.feedback ? <p role="alert">{delivery.feedback}</p> : null}
+    {delivery.pendingControl ? <p role="status">Control is not confirmed. <Button disabled={delivery.busy || !delivery.online}
+      onClick={delivery.retryControl}>Retry original control</Button></p> : null}
+    {delivery.pending ? <p role="status">Delivery is not confirmed. <Button onClick={() => void delivery.reconcile()}>Check status</Button>
+      <Button onClick={() => void delivery.reconcile(true)}>Retry original message</Button></p> : null}
     {/* Only unconfirmed deliveries show here; a queued message shows its state and Cancel in its own bubble. */}
     <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)} onRefresh={delivery.refresh} />
     {target && !delivery.denied ? <RetainedDeliveryInputs target={target} receipts={receipts} onDenied={delivery.revoke}

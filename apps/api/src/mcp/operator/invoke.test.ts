@@ -16,8 +16,7 @@ describe('Operator database read deadlines', () => {
     'returns a retryable error for %s without private database text', async name => {
       const { request } = context()
       const result = await invokeOperatorTool(request, name, async () => {
-        // Postgres reports a statement timeout this way; the reply carries none of the error's own text.
-        throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014', detail: 'private stored payload' })
+        throw Object.assign(new Error('private statement and stored payload'), { code: '57014' })
       }, operatorTool(name)!.requires[0][0])
       expect(result.isError).toBe(true)
       expect(result.structuredContent).toBeUndefined()
@@ -31,7 +30,7 @@ describe('Operator database read deadlines', () => {
   it('classifies a mutation deadline without replaying the mutation', async () => {
     const { request } = context()
     const work = vi.fn(async () => {
-      throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014', detail: 'private statement' })
+      throw Object.assign(new Error('private statement'), { code: '57014' })
     })
     const result = await invokeOperatorTool(request, 'run_start', work, operatorTool('run_start')!.requires[0][0])
     expect(result.content).toEqual([{ type: 'text', text: JSON.stringify({ error: {

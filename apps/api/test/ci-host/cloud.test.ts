@@ -57,7 +57,7 @@ it.each([false, true])('keeps a first-pass CircleCI file failure in Main when it
   expect(reopened).toMatchObject({ testResults: { files: [{ file, status: 'failed' }] } })
 })
 
-it.each(['integration', 'unit-api'] as const)(
+it.each(['integration', 'unit-api', 'unit-web'] as const)(
   'persists CircleCI %s test failures in Main without a durations artifact', async part => {
     const f = await fixture({}, { provider: 'circleci' })
     const runId = randomUUID()
@@ -66,7 +66,8 @@ it.each(['integration', 'unit-api'] as const)(
     const reply = await f.cloud.handle({ operation: 'start', workspaceId: 'ci-workspace', runId,
       repository: 'octo/site', commit: f.commit, scope: 'full', ...selection })
     if (reply.operation !== 'start') throw new Error('Expected a start reply')
-    const files = { integration: 'apps/api/test/a.integration.test.ts', 'unit-api': 'apps/api/src/value.test.ts' }
+    const files = { integration: 'apps/api/test/a.integration.test.ts',
+      'unit-api': 'apps/api/src/value.test.ts', 'unit-web': 'apps/web/src/value.test.tsx' }
     const file = files[part]
     const failed = { file, status: 'failed', durationMs: 90,
       tests: [{ name: 'rejects an invalid record', status: 'failed', durationMs: 20,
@@ -787,9 +788,9 @@ describe('GitHub Actions CI on a public mirror', () => {
   it.each(['github'] as const)('dispatches unit part names and one-based shards through %s', async provider => {
     const f = await fixture({}, { provider })
     await f.cloud.handle({ operation: 'start', workspaceId: 'ci-workspace', runId: randomUUID(), repository: 'octo/site', commit: f.commit,
-      suite: 'unit', scope: 'full', part: 'unit-api', partition: { index: 1, count: 3 } })
+      suite: 'unit', scope: 'full', part: 'unit-web', partition: { index: 1, count: 3 } })
     const command = provider === 'github' ? f.dispatched[0]! : f.circle.triggered[0]!
-    expect(command).toContain('suite=unit-api')
+    expect(command).toContain('suite=unit-web')
     expect(command).toContain('slice=2/3')
   })
 

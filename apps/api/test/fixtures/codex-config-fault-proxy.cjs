@@ -1,4 +1,3 @@
-// ci-key-inputs: @openai/codex
 /* global require, process, setImmediate */
 const { spawn } = require('node:child_process')
 const { appendFileSync, readFileSync, writeFileSync } = require('node:fs')

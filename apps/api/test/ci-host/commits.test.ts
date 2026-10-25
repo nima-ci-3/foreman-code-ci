@@ -145,7 +145,7 @@ it('discovers CI test inventories without loading committed duration snapshots',
   const commits = new GitCiCommits(mainCiContext, { ...systemGitWorktreePorts(environment), cloneDirectory: () => directory })
   const commit = git('rev-parse', 'HEAD')
   expect(await commits.unitInventory('example/project', commit)).toEqual({
-    files: ['apps/api/test/workflow.test.ts'], durations: {},
+    files: ['apps/api/test/workflow.test.ts'], durations: {}, heavy: [],
   })
   expect(await commits.integrationInventory('example/project', commit)).toEqual({
     files: ['apps/api/test/workflow.integration.test.ts'], durations: {},

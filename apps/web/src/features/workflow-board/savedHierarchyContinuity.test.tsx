@@ -1,0 +1,296 @@
+// @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router'
+import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { http, HttpResponse, type JsonBodyType } from 'msw'
+import { WorkflowExecutionChatTargetSchema, WorkflowHierarchyReadResultSchema } from '@foreman-code/contracts'
+import { LocalHumanAccessSchema } from '@foreman-code/contracts/management'
+import { CURRENT_WORKFLOW_CAPABILITIES, CurrentWorkflowCapabilitiesSchema } from '@foreman-code/contracts/current'
+import { subagentCapabilities } from '@foreman-code/contracts/subagents'
+import { server } from '../../mocks/server'
+import { deferred } from '../../test/deferred'
+import { installFlowLayout } from '../run-board/testFlowLayout'
+import { pinnedRunHandlers, reply, runA, runsUrl, scope, versionReply } from '../run-board/testFixtures'
+import { base, child, message, receipt } from '../run-subagents/testFixtures'
+import { subagentsKey } from '../run-subagents'
+import { RunsSelectorSearchSchema } from '../runs-selector'
+import { getConversationDraft, executionChatDraftKey, useConversationDraftStore } from '../conversations'
+import { WorkflowBoard } from './WorkflowBoard'
+import type { WorkflowCollaborationSlots } from './WorkflowSidePanel'
+import { acceptFindingsDirection } from './actions/directionWaitModel'
+import { useSidePanelPresentation } from './sidePanelPresentation'
+import { clearBoardStopStorage } from './stopOutbox'
+
+configure({ asyncUtilTimeout: 5000 })
+const clients: QueryClient[] = []
+const hierarchyPath = '*/api/management/workspaces/:workspaceId/workflows/:workflowId/hierarchy'
+class ReportSource extends EventTarget {
+  static instances: ReportSource[] = []
+  closed = false
+  close() { this.closed = true }
+  /** Only the Master report stream is tracked; other Board streams are not under test here. */
+  constructor(url: string) { super(); if (url.includes('/hierarchy/events')) ReportSource.instances.push(this) }
+}
+beforeEach(() => {
+  installFlowLayout()
+  ReportSource.instances = []
+  vi.stubGlobal('EventSource', ReportSource)
+  useSidePanelPresentation.setState({ scroll: {} })
+  clearBoardStopStorage()
+  localStorage.clear()
+  useConversationDraftStore.getState().clearAllDrafts()
+  const commands = new Map<string, Promise<unknown>>()
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (key: string, work: () => unknown) => {
+    const next = (commands.get(key) ?? Promise.resolve()).then(work)
+    commands.set(key, next.catch(() => { /* ignore: callers receive failure; later commands still need the lock. */ }))
+    return next
+  } } })
+})
+afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+
+function install() {
+  const requests: string[] = []
+  const capabilities = subagentCapabilities('codex-collab')
+  capabilities.sendInput = { support: 'supported', qualification: 'passed' }
+  const nativeChild = child({ parentNodeId: 'node-z', parentAgentId: 'agent-z', nativeMode: 'codex-collab', capabilities })
+  const record = { subagent: nativeChild, availableActions: { sendInput: true, interrupt: false, blockedReason: null } }
+  const hierarchy = (runId: string) => WorkflowHierarchyReadResultSchema.parse({ ...scope,
+    workflowVersionId: runId === 'run-a' ? 'version-a' : 'version-b', revision: 1,
+    hierarchy: runId === 'run-a' ? { version: 1, masterNodeId: 'node-x', parents: [
+      { workflowNodeId: 'node-y', parentNodeId: 'node-x' }, { workflowNodeId: 'node-z', parentNodeId: 'node-y' },
+    ] } : null,
+    agents: runA.nodes.map((node, index) => ({ ...scope, workflowNodeId: node.id,
+      agentId: `agent-${['x', 'y', 'z'][index]}`, displayName: node.name,
+      configurationVersionId: node.kind !== 'job' ? node.agentConfigurationVersionId : undefined,
+      productRole: ['master', 'orchestrator', 'coder'][index] })),
+    run: { runId, state: 'running' },
+  })
+  const read = (path: string, body: JsonBodyType) => { requests.push(path); return HttpResponse.json(body) }
+  server.use(...pinnedRunHandlers(scope),
+    http.get('*/api/management/workspaces/:workspaceId/workflows/:workflowId/runs/summaries', () => HttpResponse.json({
+      items: ['run-a', 'run-b'].map(runId => ({ runId, shortId: runId,
+        startedAt: '2026-10-01T00:00:00Z', status: 'succeeded', trigger: 'manual' })), pageInfo: { nextCursor: null },
+    })),
+    http.get('*/api/management/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/snapshot',
+      ({ params }) => HttpResponse.json(reply(String(params.runId)))),
+    http.get('*/api/management/workspaces/:workspaceId/runs/:runId/version',
+      ({ params }) => HttpResponse.json(versionReply(reply(String(params.runId)).snapshot))),
+    http.get(hierarchyPath, ({ request }) => read('hierarchy', hierarchy(new URL(request.url).searchParams.get('runId')!))),
+    http.get(`${hierarchyPath}/reports`, ({ request }) => {
+      const runId = new URL(request.url).searchParams.get('runId')!
+      return read('reports', { ...scope, runId, workflowVersionId: hierarchy(runId).workflowVersionId,
+        items: [], nextCursor: null, hasMore: false, revision: 1 })
+    }),
+    http.get(base, () => read('children', { items: [record], nextCursor: null, projection: 'caught-up' })),
+    http.get(`${base}/:subagentId`, () => read('child', record)),
+    http.get(`${base}/:subagentId/messages`, () => read('messages', { items: [message()], nextCursor: null, coverage: nativeChild.coverage })),
+    http.get(`${base}/:subagentId/tools`, () => read('tools', { items: [], nextCursor: null, coverage: nativeChild.coverage })),
+  )
+  return { requests, record }
+}
+async function mount(entry = runsUrl('run-a'), { hasHierarchy = true, slots }: {
+  hasHierarchy?: boolean; slots?: WorkflowCollaborationSlots
+} = {}) {
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(cache)
+  const root = createRootRoute({ component: Outlet })
+  const route = createRoute({ getParentRoute: () => root, path: '/workspaces/$workspaceId', validateSearch: RunsSelectorSearchSchema,
+    component: () => <WorkflowBoard {...scope} inspection={{}} selectInspection={() => undefined}
+      selectRun={() => undefined} summaries={[]} collaborationSlots={slots}>
+      <p>Draft editor</p>
+    </WorkflowBoard> })
+  const router = createRouter({ routeTree: root.addChildren([route]),
+    history: createMemoryHistory({ initialEntries: [entry] }), defaultPendingMinMs: 0 })
+  await router.load()
+  render(<QueryClientProvider client={cache}><RouterProvider router={router} /></QueryClientProvider>)
+  await screen.findByTestId('unified-workflow-board')
+  if (hasHierarchy) await screen.findByRole('group', { name: 'Z, saved agent, read only' })
+  return { cache, router }
+}
+/** The URL owns the workflow memory dialog; the Board opens it from a Kanban card. */
+const openMemoryBoard = (router: Awaited<ReturnType<typeof mount>>['router']) => act(async () => {
+  const { pathname, search, hash } = router.history.location
+  router.history.push(`${pathname}${search ? `${search}&` : '?'}boardMemory=true${hash}`)
+})
+const childScope = { ...scope, runId: 'run-a' }
+
+it.each(['reply', 'accept'] as const)('opens the waiting Master’s exact Agent chat for %s', async action => {
+  install()
+  const target = WorkflowExecutionChatTargetSchema.parse({ kind: 'workflow_execution',
+    agent: { ...scope, workflowNodeId: 'node-x', agentId: 'agent-x' },
+    execution: { runId: 'run-a', workflowVersionId: 'version-a', executionId: 'held-master', attempt: 1 },
+  })
+  const key = executionChatDraftKey(target)
+  useConversationDraftStore.getState().setDraft(key, 'Keep my draft')
+  const requested: URL[] = []
+  server.use(
+    http.get('*/api/management/workspaces/:workspaceId/runs/run-a/executions', () => HttpResponse.json({
+      run: { ...scope, runId: 'run-a', workflowVersionId: 'version-a', executionSemanticsVersion: 3,
+        executionState: 'running', outcome: 'pending', createdAt: '2026-10-01T00:00:00Z', cleanupPending: false,
+        directionWait: { workflowNodeId: 'node-x', agentId: 'agent-x', agentName: 'Master', executionId: 'held-master',
+          findings: ['Review the remaining findings'], findingsCount: 1, since: '2026-10-01T00:00:00Z' } },
+      items: [], pageInfo: { nextCursor: null },
+    })),
+    http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/execution-chat/target', ({ request }) => {
+      requested.push(new URL(request.url))
+      return HttpResponse.json({ kind: 'selected', target, workflowVersionId: 'version-a', source: 'direction', state: 'queued',
+        agent: { ...target.agent, displayName: 'Master', productRole: 'master', configurationVersionId: 'config-x-old' } })
+    }),
+  )
+  const { router } = await mount(runsUrl('run-a'), { slots: {
+    executionChat: () => <textarea aria-label="Waiting Master reply" defaultValue={getConversationDraft(key)} />,
+  } })
+  fireEvent.click(await screen.findByRole('button', { name: action === 'reply' ? 'Reply to Master' : 'Finish & accept findings' }))
+  expect(await screen.findByRole('textbox', { name: 'Waiting Master reply' }))
+    .toHaveValue(action === 'reply' ? 'Keep my draft' : `Keep my draft ${acceptFindingsDirection}`)
+  expect(router.state.location.search).toMatchObject({ runId: 'run-a', workflowVersionId: 'version-a',
+    boardPanel: 'agent', boardAgentTab: 'chat', boardNodeId: 'node-x', boardExecutionId: 'held-master' })
+  expect(requested).toHaveLength(1)
+  expect(requested[0]!.searchParams.get('executionId')).toBe('held-master')
+})
+
+it.each(['graph', 'overview'])('stops an ordinary selected Run from %s and keeps its command after a lost receipt', async view => {
+  install()
+  const stops: Record<string, unknown>[] = []
+  const run = { ...scope, runId: 'run-b', workflowVersionId: 'version-b', executionSemanticsVersion: 3,
+    executionState: 'running', outcome: 'pending', createdAt: '2026-10-01T00:00:00Z', cleanupPending: false }
+  server.use(
+    http.get('*/api/local-human', () => HttpResponse.json(LocalHumanAccessSchema.parse({ principal: {
+      id: 'operator-test', name: 'Test Operator', expiresAt: '2099-01-01T00:00:00Z',
+      grants: [{ actions: ['runs:read', 'runs:stop'], scope: { workspaceIds: [scope.workspaceId] } }],
+    } }))),
+    http.get('*/api/management/workflows/capabilities/v3', () => HttpResponse.json(CurrentWorkflowCapabilitiesSchema.parse({
+      ...CURRENT_WORKFLOW_CAPABILITIES, runtimeAdmission: true, meaningfulEdit: true, stopAvailable: true, reasons: [],
+      editIntents: { ...CURRENT_WORKFLOW_CAPABILITIES.editIntents, stopUnsettled: true },
+    }))),
+    http.get('*/api/management/workspaces/:workspaceId/runs/run-b/executions', () => HttpResponse.json({
+      run, items: [], pageInfo: { nextCursor: null },
+    })),
+    http.post('*/api/management/workspaces/:workspaceId/runs/run-b/stop', async ({ request }) => {
+      stops.push(await request.json() as Record<string, unknown>)
+      if (stops.length === 1) return HttpResponse.error()
+      return HttpResponse.json({ runId: 'run-b', status: 'accepted', processStopped: false, replayed: true })
+    }),
+  )
+  await mount(`${runsUrl('run-b')}&boardView=${view}`, { hasHierarchy: false })
+  const controls = within(await screen.findByRole('region', { name: 'Selected Run controls' }))
+  await waitFor(() => expect(controls.getByRole('button', { name: 'Stop' })).toBeEnabled())
+  fireEvent.click(controls.getByRole('button', { name: 'Stop' }))
+  await screen.findByText(/Stop is not confirmed:/)
+  expect(stops).toHaveLength(1)
+  expect(stops[0]).toMatchObject({ workspaceId: scope.workspaceId, runId: 'run-b' })
+  // The same Stop button resends the retained command, not a new one.
+  await waitFor(() => expect(controls.getByRole('button', { name: 'Stop' })).toBeEnabled())
+  fireEvent.click(controls.getByRole('button', { name: 'Stop' }))
+  await waitFor(() => expect(controls.getByRole('button', { name: 'Stop again' })).toBeEnabled())
+  expect(controls.getByText('Stopping…')).toBeVisible()
+  expect(stops).toHaveLength(2)
+  expect(stops[1]).toEqual(stops[0])
+})
+
+it('uses saved roles and coordinates, docks one inspector, and keeps geometry through legacy view navigation', async () => {
+  install()
+  const { router } = await mount()
+  const master = screen.getByRole('group', { name: 'X before rename, saved agent, read only' })
+  const worker = screen.getByRole('group', { name: 'Z, saved agent, read only' })
+  await waitFor(() => expect(master).toHaveTextContent('Master'))
+  await waitFor(() => expect(worker).toHaveTextContent('Worker · Reports to Y'))
+  const position = worker.style.transform
+  fireEvent.click(screen.getByRole('button', { name: 'Open Z information' }))
+  const inspector = await screen.findByRole('region', { name: 'Run node inspector: Z' })
+  expect(screen.getAllByRole('complementary', { name: 'Workflow side panel' })).toHaveLength(1)
+  expect(within(screen.getByRole('complementary', { name: 'Workflow side panel' }))
+    .getByRole('region', { name: 'Run node inspector: Z' })).toBe(inspector)
+  await act(async () => { await router.navigate({ href: `${runsUrl('run-a')}&boardView=overview&boardPanel=agent&boardNodeId=node-z&boardAgentTab=details` }) })
+  expect(await screen.findByRole('region', { name: 'Run node inspector: Z' })).toBeVisible()
+  expect(screen.queryByRole('navigation', { name: 'Workflow views' })).not.toBeInTheDocument()
+  expect(screen.getByRole('group', { name: 'Z, saved agent, read only' }).style.transform).toBe(position)
+  expect(router.state.location.search.selectedRunId).toBe('run-a')
+})
+
+it('retains native-child text through Memory and access loss without hidden reads', async () => {
+  const wire = install()
+  const { cache, router } = await mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Research, Codex, Running' }))
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Message to subagent' }), { target: { value: 'Keep this direction' } })
+  await openMemoryBoard(router)
+  await screen.findByRole('dialog', { name: 'Memory board' })
+  const hiddenReads = wire.requests.length
+  await act(async () => { await cache.invalidateQueries({ queryKey: subagentsKey(childScope) }) })
+  expect(wire.requests).toHaveLength(hiddenReads)
+  expect(screen.queryByRole('dialog', { name: 'Research' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Close memory board' }))
+  expect(await screen.findByRole('textbox', { name: 'Message to subagent' })).toHaveValue('Keep this direction')
+  server.use(http.get(base, () => HttpResponse.json({ error: { code: 'FORBIDDEN', message: 'No access' } }, { status: 403 })))
+  await act(async () => { await cache.invalidateQueries({ queryKey: [...subagentsKey(childScope), 'list'] }) })
+  await screen.findByText("Couldn't load subagents.")
+  expect(screen.queryByText('Child answer')).not.toBeInTheDocument()
+  server.use(http.get(base, () => HttpResponse.json({ items: [wire.record], nextCursor: null, projection: 'caught-up' })))
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByRole('textbox', { name: 'Message to subagent' })).toHaveValue('Keep this direction')
+})
+
+it('keeps a hidden pending command identity and defers failure refresh until its native-child panel is visible', async () => {
+  const wire = install()
+  const pending = deferred()
+  const bodies: Record<string, unknown>[] = []
+  server.use(http.post(`${base}/:subagentId/input`, async ({ request }) => {
+    const body = await request.json() as Record<string, unknown>
+    bodies.push(body)
+    if (bodies.length === 1) { await pending.promise; return HttpResponse.error() }
+    return HttpResponse.json(receipt({ commandId: body.commandId }))
+  }))
+  const { cache, router } = await mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Research, Codex, Running' }))
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Message to subagent' }), { target: { value: 'One direction' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() => expect(bodies).toHaveLength(1))
+  await openMemoryBoard(router)
+  await screen.findByRole('dialog', { name: 'Memory board' })
+  const hiddenReads = wire.requests.filter(path => path === 'child').length
+  await act(async () => { pending.resolve() })
+  await waitFor(() => expect(cache.isMutating()).toBe(0))
+  expect(wire.requests.filter(path => path === 'child')).toHaveLength(hiddenReads)
+  fireEvent.click(screen.getByRole('button', { name: 'Close memory board' }))
+  expect(await screen.findByRole('textbox', { name: 'Message to subagent' })).toHaveValue('One direction')
+  fireEvent.click(await screen.findByRole('button', { name: 'Check again' }))
+  await screen.findByText('Message delivered to the subagent.')
+  expect(bodies).toHaveLength(2)
+  expect(bodies[1]).toEqual(bodies[0])
+})
+
+it('restores exact inspector pins and geometry through browser history', async () => {
+  install()
+  const { router } = await mount(`${runsUrl('run-a')}&boardPanel=agent&boardAgentTab=details&boardNodeId=node-x&boardExecutionId=execution-old`)
+  const firstPosition = screen.getByRole('group', { name: 'X before rename, saved agent, read only' }).style.transform
+  await screen.findByRole('region', { name: 'Run node inspector: X before rename' })
+  fireEvent.click(screen.getByRole('button', { name: 'Runs' }))
+  const menu = await screen.findByRole('menu', { name: 'Runs' })
+  fireEvent.click(await within(menu).findByRole('menuitemradio', { name: /run-b/ }))
+  await screen.findByRole('group', { name: 'X in B, saved agent, read only' })
+  expect(router.state.location.search.selectedRunId).toBe('run-b')
+  expect(router.state.location.search.boardExecutionId).toBeUndefined()
+  expect(screen.queryByRole('group', { name: 'Y, saved agent, read only' })).not.toBeInTheDocument()
+  await act(async () => { router.history.back() })
+  await screen.findByRole('region', { name: 'Run node inspector: X before rename' })
+  expect(router.state.location.search).toMatchObject({ selectedRunId: 'run-a', boardExecutionId: 'execution-old', boardNodeId: 'node-x' })
+  expect(screen.getByRole('group', { name: 'X before rename, saved agent, read only' }).style.transform).toBe(firstPosition)
+  expect(screen.getAllByRole('complementary', { name: 'Workflow side panel' })).toHaveLength(1)
+})
+
+it('opens a legacy Overview link on the saved Board without reading or streaming deleted reports', async () => {
+  const wire = install()
+  const { router } = await mount(`${runsUrl('run-a')}&boardView=overview`)
+  expect(screen.getByRole('group', { name: 'Z, saved agent, read only' })).toBeVisible()
+  expect(screen.queryByRole('region', { name: 'Master Overview' })).not.toBeInTheDocument()
+  expect(wire.requests.filter(path => path === 'reports')).toEqual([])
+  expect(ReportSource.instances).toHaveLength(0)
+  await openMemoryBoard(router)
+  expect(await screen.findByRole('dialog', { name: 'Memory board' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Close memory board' }))
+  expect(await screen.findByRole('group', { name: 'Z, saved agent, read only' })).toBeVisible()
+  expect(router.state.location.search.selectedRunId).toBe('run-a')
+  expect(wire.requests.filter(path => path === 'reports')).toEqual([])
+  expect(ReportSource.instances).toHaveLength(0)
+})

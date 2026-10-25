@@ -33,7 +33,7 @@ it.each(['not-ready', 'offline', 'extension-rejected'])('excludes a %s build com
     const files = Array.from({ length: 48 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
     const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'gate' },
       { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) },
-      { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, fleet(2, unavailable))
+      { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, fleet(2, unavailable))
     expect(parts.some(part => part.plannedHostKey === 'builder-paired')).toBe(false)
     expect(parts.some(part => part.plannedHostKey === 'builder-main')).toBe(true)
     expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
@@ -53,7 +53,7 @@ it.each([1, 2])('excludes a builder with %i occupied slots from gate planning', 
   const files = Array.from({ length: 48 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) },
-    { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, endpoint)
+    { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, endpoint)
   expect(parts.some(part => part.plannedHostKey === 'builder-main')).toBe(false)
   expect(parts.some(part => part.plannedHostKey === 'builder-paired')).toBe(true)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort()).toEqual([...files].sort())
@@ -83,7 +83,7 @@ it.each([
     const ordinaryFile = 'apps/api/test/feature.integration.test.ts'
     const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true },
       { files: [hostFile, ordinaryFile], durations: {} },
-      { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, endpoint,
+      { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, endpoint,
       new Map(), 0, undefined, new Map(source === 'persisted' ? [['builder-main', 1]] : []))
     const integration = parts.filter(part => part.suite === 'integration')
     expect(integration.find(part => part.files.includes(hostFile)))
@@ -99,25 +99,28 @@ it('plans a production-sized gate within a second', async () => {
   const started = Date.now()
   const parts = await planCiGate(mainCiContext, input,
     { files, durations: Object.fromEntries(files.map((file, index) => [file, 5_000 + (index % 40) * 3_000])) },
-    { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, fleet(44))
+    { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, fleet(44))
   expect(Date.now() - started).toBeLessThan(1_000)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort()).toEqual([...files].sort())
 })
 
 it('splits heavy measured unit inventories and retains their estimates in the gate', async () => {
-  const files = Array.from({ length: 9 }, (_, index) => `apps/api/src/feature-${index}.test.ts`)
+  const files = ['apps/api/src', 'apps/web/src'].flatMap(directory =>
+    Array.from({ length: 9 }, (_, index) => `${directory}/feature-${index}.test.ts`))
   const durations = Object.fromEntries(files.map(file => [file, 90_000]))
   const integrationFiles = Array.from({ length: 48 }, (_, index) =>
     `apps/api/test/feature-${index}.integration.test.ts`)
   const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files: integrationFiles, durations: Object.fromEntries(integrationFiles.map(file => [file, 120_000])) },
-    { files, durations}, durations, fleet(44))
+    { files, durations, heavy: [] }, durations, fleet(44))
   const integrationTarget = Math.max(...parts.filter(part => part.suite === 'integration')
     .map(part => part.expectedDurationMs))
-  const unit = parts.filter(part => part.part === 'unit-api')
-  expect(unit).toHaveLength(9)
-  expect(unit.every(part => part.expectedDurationMs === 180_000)).toBe(true)
-  expect(unit.every(part => part.expectedDurationMs <= integrationTarget)).toBe(true)
+  for (const name of ['unit-api', 'unit-web']) {
+    const unit = parts.filter(part => part.part === name)
+    expect(unit).toHaveLength(9)
+    expect(unit.every(part => part.expectedDurationMs === 180_000)).toBe(true)
+    expect(unit.every(part => part.expectedDurationMs <= integrationTarget)).toBe(true)
+  }
 })
 
 it.each([80_000, 120_000])('balances %i ms integration files against cloud checks', async durationMs => {
@@ -138,14 +141,13 @@ it.each([80_000, 120_000])('balances %i ms integration files against cloud check
   const files = Array.from({ length: 48 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const input: CiRunInput = { suite: 'integration', scope: 'full', gate: true, commandId: 'gate' }
   const parts = await planCiGate(mainCiContext, input, { files, durations: Object.fromEntries(files.map(file => [file, durationMs])) },
-    { files: ['apps/api/src/site.test.ts', 'packages/contracts/src/site.test.ts'], durations: {}}, {}, endpoint)
+    { files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.tsx'], durations: {}, heavy: [] }, {}, endpoint)
   const integration = parts.filter(part => part.suite === 'integration')
   expect(integration.flatMap(part => part.files).sort()).toEqual([...files].sort())
   expect(integration.filter(part => part.plannedHostKey.startsWith('builder-'))).toHaveLength(2)
   const checks = parts.filter(part => part.suite !== 'integration')
-  // typecheck and lint (API and other) and one unit part each for the API and the rest.
-  expect(checks).toHaveLength(6)
-  expect(integration).toHaveLength(20)
+  expect(checks).toHaveLength(9)
+  expect(integration).toHaveLength(17)
   for (const part of integration) {
     const cpuSlots = part.plannedHostKey.startsWith('builder-') ? 16 : 4
     expect(part.integrationShards).toBe(cpuSlots)
@@ -198,7 +200,7 @@ it.each([
   const files = Array.from({ length: 96 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'gate' },
     { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) },
-    { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, {
+    { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, {
       computers: async () => computers,
       request: async computer => ({ operation: 'status', ready: true, reasons: [],
         cpuCount: computer.hostRef.kind === 'cloud' ? 4 : cpuCount,
@@ -218,8 +220,9 @@ it.each([2, 10])('bounds gate unit shards by %i free cloud slots', async slots =
   const durations = Object.fromEntries(files.map(file => [file, 30_000]))
   const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'unit-capacity' },
     { files: ['apps/api/test/feature.integration.test.ts'], durations: {} },
-    { files, durations}, durations, fleet(slots))
+    { files, durations, heavy: [] }, durations, fleet(slots))
   expect(parts.filter(part => part.part === 'unit-api')).toHaveLength(Math.min(6, slots))
+  expect(parts.filter(part => part.part === 'unit-web-heavy')).toHaveLength(2)
   expect(parts.filter(part => part.part === 'unit-other')).toHaveLength(1)
 })
 
@@ -232,7 +235,7 @@ it.each([
     const durations = Object.fromEntries(files.map(file => [file, 150_000]))
     const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'reserved-unit-capacity' },
       { files: ['apps/api/test/feature.integration.test.ts'], durations: {} },
-      { files, durations}, durations, fleet(4), new Map(), 1, reportedSlots)
+      { files, durations, heavy: [] }, durations, fleet(4), new Map(), 1, reportedSlots)
     expect(parts.filter(part => part.part === 'unit-api')).toHaveLength(expectedShards)
   })
 
@@ -242,7 +245,7 @@ it('plans one gate part per cloud executor so no part waits behind another on th
   const unitDurations = Object.fromEntries(unit.map(file => [file, 30_000]))
   const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'one-wave' },
     { files, durations: Object.fromEntries(files.map((file, index) => [file, 20_000 + (index % 10) * 20_000])) },
-    { files: unit, durations: unitDurations}, unitDurations, fleet(24), new Map(), 2)
+    { files: unit, durations: unitDurations, heavy: [] }, unitDurations, fleet(24), new Map(), 2)
   const clouds = parts.filter(part => part.plannedHostKey.startsWith('cloud-'))
   expect(clouds.some(part => part.suite !== 'integration')).toBe(true)
   const perCloud = new Map<string, number>()
@@ -277,7 +280,7 @@ it.each([
     }
     const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'recovery-budget' },
       { files, durations: { [files[0]!]: durationMs, [files[1]!]: durationMs, [files[2]!]: 81_000 } },
-      { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, endpoint)
+      { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }, {}, endpoint)
     const integration = parts.filter(part => part.suite === 'integration')
     expect(integration).toHaveLength(1)
     expect(integration[0]!.files.slice().sort()).toEqual(files.slice().sort())

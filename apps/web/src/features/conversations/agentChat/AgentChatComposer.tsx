@@ -1,5 +1,4 @@
-import { useId, type ReactNode, type RefObject } from 'react'
-import { isComposerSendKey, useAutosizeTextarea } from '../../../shared/ui/composerInput'
+import { useLayoutEffect, useId, type ReactNode, type RefObject } from 'react'
 import { ArrowUp, CornerDownLeft, Square } from 'lucide-react'
 import { parseSessionCommand, type SessionMode } from '@foreman-code/contracts'
 import { IconButton, Textarea, Tooltip } from '../../../shared/ui/nocturne'
@@ -30,7 +29,24 @@ export function AgentChatComposer({ name, draftKey, inputRef, disabled, reason, 
     if (disabled || inFlight || unavailable || (!content.trim() && !hasAttachments) || content.length > 32_000) return
     onSubmit(content, submitted.kind === 'plan-task' ? 'plan' : undefined)
   }
-  useAutosizeTextarea(inputRef, draft, { maxLines: 8 })
+  useLayoutEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    const resize = () => {
+      input.style.height = 'auto'
+      const lineHeight = parseFloat(getComputedStyle(input).lineHeight) || 20
+      input.style.height = `${Math.min(input.scrollHeight, lineHeight * 8)}px`
+    }
+    resize()
+    let width = input.clientWidth
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => {
+      if (input.clientWidth === width) return
+      width = input.clientWidth
+      resize()
+    })
+    observer?.observe(input)
+    return () => observer?.disconnect()
+  }, [draft, inputRef])
   return <form className="agent-chat-composer" aria-label="Conversation composer" aria-busy={pending || undefined}
     onSubmit={event => { event.preventDefault(); submit() }}>
     {menu.menu}
@@ -45,7 +61,8 @@ export function AgentChatComposer({ name, draftKey, inputRef, disabled, reason, 
             const recalled = onRecall()
             if (recalled !== undefined) { event.preventDefault(); change(recalled); return }
           }
-          if (event.defaultPrevented || !isComposerSendKey(event)) return
+          if (event.defaultPrevented || event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey
+            || event.metaKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
           event.preventDefault()
           submit()
         }} />

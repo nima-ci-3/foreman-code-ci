@@ -42,6 +42,21 @@ test('API discovery retains unit tests and excludes integration, acceptance and 
   assert.throws(() => unitFiles([], 'other'), /Unknown unit suite/)
 })
 
+test('web discovery follows the fast phase and its configured heavy glob exclusions', () => {
+  assert.deepEqual(unitFiles([
+    'apps/web/src/routes/WorkspaceRouteEntry.test.tsx',
+    'apps/web/src/routes/WorkspaceRouteEntry.extra.test.tsx',
+    'apps/web/src/features/combined/a.test.tsx',
+    'apps/web/src/features/combined/nested/a.test.tsx',
+    'apps/web/src/features/a.integration.test.tsx',
+    'apps/web/src/features/a.test.tsx', 'apps/web/src/features/b.spec.ts',
+    'apps/web/test/outside.test.tsx', 'apps/api/test/a.test.ts',
+  ], 'unit-web', [
+    'src/routes/WorkspaceRouteEntry*.test.tsx', 'src/features/combined/**/*.test.tsx',
+    'src/**/*.integration.test.tsx',
+  ]), ['apps/web/src/features/a.test.tsx', 'apps/web/src/features/b.spec.ts'])
+})
+
 test('JSON reporter timings retain only successful files inside the selected package', () => {
   const root = resolve('report-fixture')
   const result = (name, status, startTime, endTime) => ({ name: resolve(root, name), status, startTime, endTime })
@@ -53,8 +68,9 @@ test('JSON reporter timings retain only successful files inside the selected pac
     result('apps/web/src/a.test.tsx', 'passed', 100, 200),
     result('../outside.test.ts', 'passed', 100, 200),
   ] }
-  assert.deepEqual(measuredUnitDurations(report, root), { 'apps/api/test/a.test.ts': 75 })
-  assert.deepEqual(measuredUnitDurations({}, root), {})
+  assert.deepEqual(measuredUnitDurations(report, root, 'unit-api'), { 'apps/api/test/a.test.ts': 75 })
+  assert.deepEqual(measuredUnitDurations(report, root, 'unit-web'), { 'apps/web/src/a.test.tsx': 100 })
+  assert.deepEqual(measuredUnitDurations({}, root, 'unit-api'), {})
 })
 
 for (const exitCode of [0, 7]) {
@@ -78,11 +94,9 @@ writeFileSync(report, JSON.stringify({ testResults: [
 ] }))
 process.exit(Number(process.env.SUITE_EXIT_CODE))
 `, { mode: 0o755 })
-    // The API slice joins a CI cgroup through sudo; the fixture has nothing to delegate.
-    writeFileSync(join(directory, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     const result = spawnSync('bash', ['scripts/ci-suite.sh'], {
       cwd: root, encoding: 'utf8',
-      env: { ...process.env, SUITE: 'unit-api', SCOPE: 'full', SLICE: '1/3', CI_PREREQUISITES_UNTRACKED: '1',
+      env: { ...process.env, SUITE: 'unit-web', SCOPE: 'full', SLICE: '1/3',
         CI_PROGRESS_FILE: '', CI_WATCHDOG_ACTIVE: '', CI_EXPECTED_DURATION_MS: '',
         CI_HOST_RUNNER: '0',
         DURATIONS_INPUT: '', DURATIONS_OUTPUT: output, CI_STATE: join(directory, 'state'),
@@ -97,7 +111,7 @@ process.exit(Number(process.env.SUITE_EXIT_CODE))
     const measured = JSON.parse(readFileSync(output, 'utf8'))
     assert.equal(Object.keys(measured).length, 1)
     assert.equal(Object.values(measured)[0], 75)
-    assert.ok(Object.keys(measured)[0].startsWith('apps/api/'))
+    assert.ok(Object.keys(measured)[0].startsWith('apps/web/src/'))
     assert.equal(JSON.parse(readFileSync(`${output}.vitest.json`, 'utf8')).testResults.length, 1)
   })
 }
