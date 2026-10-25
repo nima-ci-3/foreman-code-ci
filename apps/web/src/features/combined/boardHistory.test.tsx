@@ -218,7 +218,7 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
     expect(screen.queryByRole('heading', { name: 'Selected Run' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument()
     const graph = within(board)
-    const node = await graph.findByRole('button', { name: 'Y, Saved' })
+    const node = await graph.findByRole('button', { name: /^Y, / })
     expect(node).toBeVisible()
     expect(node).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Activities' }))
@@ -265,10 +265,11 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
         return region
       })
       expect(router.state.location.search).toMatchObject(expectedPins(runId))
-      const node = await within(pinned).findByRole('button', { name: `${name}, Saved` })
+      const node = await within(pinned).findByRole('button', { name: label => label.startsWith(`${name}, `) })
       expect(node).toHaveRole('button')
       expect(node).toBeVisible()
       expect(node).toBeEnabled()
+      expect(within(pinned).queryByRole('button', { name: `Inspect ${name}` })).not.toBeInTheDocument()
       expect(screen.queryByLabelText('Agent chat', { selector: 'aside, [role=complementary]' })).not.toBeInTheDocument()
       expect(screen.queryByLabelText('Open Selected Run panel', { selector: 'button' })).not.toBeInTheDocument()
       return { pinned, node }
@@ -276,10 +277,10 @@ describe('Selected Board history', { timeout: 30_000 }, () => {
     const visitAgain = async (assertSelection: (runId: string, name: string) => Promise<void>) => {
       await choose(user, 'run-b')
       await assertSelection('run-b', 'X in B')
-      expect(screen.queryByRole('button', { name: 'Y, Saved' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: name => name.startsWith('Y, ') })).not.toBeInTheDocument()
       await choose(user, 'run-a')
       await assertSelection('run-a', 'Y')
-      expect(screen.queryByRole('button', { name: 'X in B, Saved' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: name => name.startsWith('X in B, ') })).not.toBeInTheDocument()
     }
     return { user, router, targetReads, expectedPins, pinnedGraph, visitAgain }
   }

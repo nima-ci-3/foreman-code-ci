@@ -1367,6 +1367,10 @@ describe('latest Run inspection on the retained Board', () => {
       Object.defineProperty(event, 'view', { value: window })
       fireEvent(jobButton, event)
     }
+    await waitFor(() => expect(jobButton).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.queryByRole('button', { name: 'Attempt 1 · job-node-execution' })).not.toBeInTheDocument()
+    await user.hover(jobButton)
+    await user.click(within(canvasNode(job.id)).getByRole('button', { name: 'Open Build information' }))
     await user.click(await screen.findByRole('button', { name: 'Attempt 1 · job-node-execution' }))
     expect(await screen.findByRole('region', { name: 'Job logs' })).toBeVisible()
     expect(await screen.findByRole('region', { name: 'Job artifacts' })).toBeVisible()
