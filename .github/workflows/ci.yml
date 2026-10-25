@@ -93,6 +93,8 @@ jobs:
           if [ "$SUITE" != install ]; then
             echo "contracts=$(node scripts/ci-contracts.mjs key "$PWD")" >> "$GITHUB_OUTPUT"
           fi
+          # A stable per-shard key, so each shard's warm cache is reused by the same shard of later runs.
+          echo "shard=$(printf '%s|%s' "$SLICE" "$CI_PARTITION" | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
           # The CLIs install with the 48-hour package age rule; a weekly key refreshes them.
           echo "clis=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       # Harness CLIs installed by the suite's start step; restored before it so a hit skips the install.
@@ -155,8 +157,19 @@ jobs:
           path: apps/web/node_modules/.cache/tsc
           key: web-typecheck-${{ runner.os }}-node22.23.2-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**', 'apps/web/*.ts', 'apps/web/tsconfig*.json', 'apps/web/package.json', 'packages/contracts/src/**', 'packages/contracts/tsconfig*.json') }}
           restore-keys: web-typecheck-${{ runner.os }}-node22.23.2-${{ hashFiles('pnpm-lock.yaml') }}-
-      # Suite state is private to each immutable ci-snapshot ref. Do not upload rolling
-      # archives here: later snapshots cannot restore them, and they evict shared package caches.
+      # Compiler and ESLint entries validate file content. Dependency caches come from the main-branch warmer;
+      # snapshot jobs only restore them, so package archives are never uploaded on the result path.
+      - id: suite-cache
+        if: inputs.suite != 'install'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules/.vitest-cache
+            apps/*/node_modules/.cache
+            packages/*/node_modules/.cache
+            !apps/web/node_modules/.cache/tsc
+          key: ci-v2-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.cache-inputs.outputs.shard }}
+          restore-keys: ci-v2-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-
       - name: Suite
         # The output is also kept as an artifact, so Main settles the result without downloading the provider log.
         shell: bash
@@ -189,6 +202,16 @@ jobs:
           path: .logs/test-integration/
           retention-days: 2
           if-no-files-found: ignore
+      - name: Save suite caches
+        if: always() && steps.suite-cache.conclusion == 'success' && steps.suite-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            node_modules/.vitest-cache
+            apps/*/node_modules/.cache
+            packages/*/node_modules/.cache
+            !apps/web/node_modules/.cache/tsc
+          key: ${{ steps.suite-cache.outputs.cache-primary-key }}
       - name: Save API build cache
         if: success() && steps.api-build.outputs.cache-hit != 'true' && steps.api-build.conclusion == 'success'
         uses: actions/cache/save@v4
