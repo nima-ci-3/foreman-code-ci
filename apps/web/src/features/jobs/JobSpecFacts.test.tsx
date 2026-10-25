@@ -1,13 +1,20 @@
 import type { ReactElement } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render as renderView, screen } from '@testing-library/react'
+import { cleanup, render as renderView, screen } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it } from 'vitest'
 import { server } from '../../mocks/server'
 import { JobQueueFacts } from './JobSpecFacts'
 import { autoQueueTicket, definition, verificationQueueTicket } from './fixtures'
 
-const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+let client: QueryClient
+beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  server.use(http.get('*/api/management/computers/activity', () => HttpResponse.json({
+    mainId: definition.spec.target.hostRef.mainId, computers: [], cloud: [], truncated: false, activityComplete: true,
+  })))
+})
+afterEach(() => { cleanup(); client.clear() })
 const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
 const render = (ui: ReactElement) => renderView(ui, { wrapper })
 
