@@ -1,4 +1,5 @@
 // Unit slices use the CI database snapshot supplied through DURATIONS_INPUT.
+import { unitTestFile } from '../packages/contracts/src/ciTestInventory.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, matchesGlob, relative, resolve } from 'node:path'
@@ -9,16 +10,8 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 export function unitFiles(files, suite, heavy = []) {
   const prefix = suite === 'unit-api' ? 'apps/api/' : 'apps/web/'
   if (suite !== 'unit-api' && suite !== 'unit-web') throw new Error(`Unknown unit suite: ${suite}`)
-  return files.filter(file => {
-    if (!file.startsWith(prefix) || /(?:^|\/)(?:node_modules|dist|\.git)\//.test(file)) return false
-    const local = file.slice(prefix.length)
-    if (suite === 'unit-api') {
-      return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(local)
-        && !/\.(?:integration|acceptance)\.test\.ts$/.test(local)
-    }
-    return /^src\/.*\.(?:test|spec)\.tsx?$/.test(local)
-      && !heavy.some(pattern => matchesGlob(local, pattern))
-  }).sort()
+  return files.filter(file => file.startsWith(prefix) && unitTestFile(file)
+    && (suite === 'unit-api' || !heavy.some(pattern => matchesGlob(file.slice(prefix.length), pattern)))).sort()
 }
 
 export function durationSlice(files, durations, slice = '') {

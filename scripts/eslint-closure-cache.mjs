@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { createRequire } from 'node:module'
+import { ciModuleCandidates } from '../packages/contracts/src/ciImportGraph.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const project = process.cwd()
@@ -87,10 +88,7 @@ function packageHash(directory) {
 }
 
 function resolveRelative(from, specifier) {
-  const base = resolve(dirname(from), specifier)
-  const stem = base.replace(/\.(?:[cm]?js|jsx)$/, '')
-  for (const candidate of [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${stem}.cts`, `${stem}.js`, `${stem}.mjs`,
-    join(base, 'index.ts'), join(base, 'index.tsx'), join(base, 'index.js')]) {
+  for (const candidate of ciModuleCandidates(resolve(dirname(from), specifier))) {
     if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
   }
   return undefined

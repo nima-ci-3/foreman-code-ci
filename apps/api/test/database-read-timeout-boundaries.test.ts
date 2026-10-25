@@ -18,7 +18,7 @@ const principal: ManagementPrincipal = {
 }
 const timeouts = [
   { error: () => new Error('Query read timeout'), details: { retryable: true, reason: 'query_read_timeout' } },
-  { error: () => Object.assign(new Error('private SQL and values'), { code: '57014' }),
+  { error: () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }),
     details: { retryable: true, reason: 'query_canceled', sqlState: '57014' } },
   { error: () => Object.assign(new Error('private lock details'), { code: '55P03' }),
     details: { retryable: true, reason: 'lock_timeout', sqlState: '55P03' } },
@@ -36,6 +36,18 @@ it.each(timeouts)('maps an unhandled HTTP database deadline to a retryable 503: 
     code: 'DATABASE_READ_TIMEOUT', message: 'The database read exceeded its deadline. Retry the request.',
     details: timeout.details, requestId: expect.any(String),
   } })
+})
+
+it('does not report an explicitly canceled query as a retryable read timeout', async () => {
+  // 57014 also covers cancellation (pg_cancel_backend, a closed request); repeating that read is not a retry.
+  const app = buildApp({ readiness })
+  apps.push(app)
+  app.get('/database-read', async () => {
+    throw Object.assign(new Error('canceling statement due to user request'), { code: '57014' })
+  })
+  const response = await app.inject('/database-read')
+  expect(response.statusCode).not.toBe(503)
+  expect(response.json().error?.code).not.toBe('DATABASE_READ_TIMEOUT')
 })
 
 it.each(timeouts)('maps MCP authentication deadlines before parsing the body: $details.reason', async timeout => {

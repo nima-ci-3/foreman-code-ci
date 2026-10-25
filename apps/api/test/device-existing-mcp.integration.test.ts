@@ -5,14 +5,14 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { expect, it } from 'vitest'
 import { DeviceListResultSchema, DevicePairingGrantResultSchema, MainDeviceIdentityPublicSchema } from '@foreman-code/contracts/device-identity'
 import { publicKeyFingerprint, pairingProof } from '@foreman-code/contracts-node/device-identity-node'
-import type { OperatorServices } from '../../mcp/operator/types.js'
-import { buildApp } from '../../app.js'
-import { applyApplicationMigrations } from '../../infrastructure/migrations.js'
-import { PostgresAccessService } from '../access/postgres.js'
-import { PostgresCommandCoordinator } from '../commands/postgres.js'
-import { PostgresDeviceAccessService } from './access.js'
-import { loadOrCreateMainDeviceIdentity, mainDeviceIdentityMigration } from './mainIdentity.js'
-import { deviceIdentityMigration } from '../../infrastructure/deviceIdentityMigration.js'
+import type { OperatorServices } from '../src/mcp/operator/types.js'
+import { buildApp } from '../src/app.js'
+import { applyApplicationMigrations } from '../src/infrastructure/migrations.js'
+import { PostgresAccessService } from '../src/modules/access/postgres.js'
+import { PostgresCommandCoordinator } from '../src/modules/commands/postgres.js'
+import { PostgresDeviceAccessService } from '../src/modules/devices/access.js'
+import { loadOrCreateMainDeviceIdentity, mainDeviceIdentityMigration } from '../src/modules/devices/mainIdentity.js'
+import { deviceIdentityMigration } from '../src/infrastructure/deviceIdentityMigration.js'
 
 /** Root runs this fixture after applying the real /mcp and management-route composition patch. */
 it('serves device management through the existing authenticated API/MCP with denial audit and persisted readback', async () => {

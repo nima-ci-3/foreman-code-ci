@@ -1,3 +1,4 @@
+import { integrationTestFile, unitTestFile } from '@foreman-code/contracts/ci-test-inventory'
 import type { CiContext, GitWorktreePorts } from './environment.js'
 import type { CiCommits } from './service.js'
 import { ciRepositoryCapabilities } from './repository.js'
@@ -86,10 +87,7 @@ export class GitCiCommits implements CiCommits {
       read(['show', `${commit}:apps/web/heavy-tests.json`]),
     ])
     if (tree.code !== 0) throw new Error('Could not read the CI commit inventory.')
-    const files = tree.stdout.trim().split('\n').filter(file => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
-      && !/(?:^|\/)(?:node_modules|dist|\.git)\//.test(file)
-      && !(file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file))
-      && (!file.startsWith('apps/web/') || /^apps\/web\/src\/.*\.(?:test|spec)\.tsx?$/.test(file)))
+    const files = tree.stdout.trim().split('\n').filter(unitTestFile)
     return { files, durations: {},
       heavy: heavy.code === 0 ? (JSON.parse(heavy.stdout) as { files: string[] }).files : [] }
   }
@@ -99,8 +97,7 @@ export class GitCiCommits implements CiCommits {
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
     const tree = await this.git.git(['ls-tree', '-r', '--name-only', commit], { cwd: clone, signal })
     if (tree.code !== 0) throw new Error('Could not read the CI integration inventory.')
-    return { files: tree.stdout.trim().split('\n').filter(file =>
-      /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(file)).sort(),
+    return { files: tree.stdout.trim().split('\n').filter(integrationTestFile).sort(),
     durations: {} }
   }
 

@@ -8,13 +8,12 @@ import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { artifactFiles, validateWorkerTarget, workerReleaseVersion, assertWorkerUpdateToolchain } from './worker-artifact-files.mjs'
+import { WORKER_PUBLICATION_DEADLINE_MS as PUBLICATION_DEADLINE_MS } from '../packages/contracts/src/workerPublication.mjs'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 // Retain bounded publication retries for slow upload links.
 const PUBLICATION_COMMAND_TIMEOUT_MS = 15 * 60_000
 const PUBLICATION_RETRY_MS = 60_000
-// WORKER_PUBLICATION_DEADLINE_MS in packages/contracts/src/workerUpdate.ts; installed scripts cannot import contracts.
-const PUBLICATION_DEADLINE_MS = 2 * 60 * 60_000
 
 /** Retries keep the pending publication's start and deadline until it succeeds. */
 function publicationWindow(previous, now = Date.now()) {

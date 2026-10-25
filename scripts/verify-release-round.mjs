@@ -11,6 +11,7 @@
 // optionally FOREMAN_CODE_WORKSPACE_ID.
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mcpClient, workspaceFor } from './ci-remote.mjs'
+import { integrationTestFile, unitTestFile } from '../packages/contracts/src/ciTestInventory.mjs'
 
 export const RELEASE_SUITES = ['typecheck', 'lint', 'unit', 'integration']
 
@@ -136,15 +137,10 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
   return problems
 }
 
-/** The unit and integration test files of a commit, as Main's CI inventories list them. */
+/** The unit and integration test files of a commit, by the inventory rules Main uses. */
 function testInventory(commit, cwd) {
   const files = git(['ls-tree', '-r', '--name-only', commit], cwd).split('\n').filter(Boolean)
-  const integration = files.filter(file => /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(file))
-  const unit = files.filter(file => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
-    && !/(?:^|\/)(?:node_modules|dist|\.git)\//.test(file)
-    && !(file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file))
-    && (!file.startsWith('apps/web/') || /^apps\/web\/src\/.*\.(?:test|spec)\.tsx?$/.test(file)))
-  return { unit, integration }
+  return { unit: files.filter(unitTestFile), integration: files.filter(integrationTestFile) }
 }
 
 async function rerunProblems(call, workspaceId, failed, ticketId, parent, cwd) {

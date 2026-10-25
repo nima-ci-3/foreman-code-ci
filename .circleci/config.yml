@@ -137,7 +137,7 @@ jobs:
       # Keep the pnpm store inside node_modules so cache hits retain the package integrity index.
       - restore_cache:
           keys:
-            - packages-with-store-metadata-v2-{{ checksum ".logs/ci-packages-key" }}
+            - packages-with-store-metadata-v3-{{ checksum ".logs/ci-packages-key" }}
       - run:
           name: Install from cached store
           command: node scripts/ci-packages.mjs install "$PWD"
@@ -236,7 +236,7 @@ jobs:
       # The suite adds its own caches under these folders; the packages cache keeps only the installed state.
       - run: rm -rf node_modules/.vitest-cache apps/*/node_modules/.cache apps/*/node_modules/.tmp packages/*/node_modules/.cache
       - save_cache:
-          key: packages-with-store-metadata-v2-{{ checksum ".logs/ci-packages-key" }}
+          key: packages-with-store-metadata-v3-{{ checksum ".logs/ci-packages-key" }}
           paths:
             - node_modules
             - .logs/pnpm-metadata
@@ -244,7 +244,11 @@ jobs:
             - apps/ci/node_modules
             - apps/web/node_modules
             - apps/worker/node_modules
+            # Every workspace directory (pnpm-workspace.yaml); scripts/ci-packages.mjs treats a restore missing one
+            # as incomplete and installs again.
             - packages/contracts/node_modules
+            - packages/contracts-node/node_modules
+            - packages/verification-runner/node_modules
       - when:
           condition:
             not:

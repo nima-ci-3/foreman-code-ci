@@ -19,9 +19,13 @@ function safePath(path) {
   return typeof path === 'string' && path.length <= 1024 && /^[a-zA-Z0-9_@.+/[\]-]+$/.test(path)
     && path.split('/').every(part => part && part !== '.' && part !== '..');
 }
+const nodeMajor = target => /^v(\d+)\./.exec(target?.node ?? '')?.[1];
+
+/** A browser runtime's native host runs on the Worker's Node, so it matches a target of the same Node major: the
+ * current Node 24 bundles and the Node 22 transition carriers each get their own. */
 export function matchesBrowserRuntimeTarget(actual, expected) {
   return ['os', 'osRelease', 'arch', 'libc'].every(key => actual?.[key] === expected?.[key])
-    && /^v24\./.test(actual?.node ?? '') && /^v24\./.test(expected?.node ?? '');
+    && nodeMajor(actual) !== undefined && nodeMajor(actual) === nodeMajor(expected);
 }
 
 export function validateBrowserRuntimeManifest(manifest, target) {

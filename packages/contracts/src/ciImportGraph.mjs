@@ -53,6 +53,27 @@ export function workspacePackageExports(read) {
   }))
 }
 
+/** Extensions and index files a module path may resolve to, in the order TypeScript and Node try them; every
+ * resolver of repository imports (the selector, the result cache, the ESLint closure cache) uses this one list.
+ * @param {string} target
+ * @returns {string[]} */
+export function ciModuleCandidates(target) {
+  const stem = target.replace(/\.(?:[cm]?js|jsx)$/, '')
+  return [target, ...['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '.json', '/index.ts', '/index.tsx', '/index.js']
+    .map(extension => `${stem}${extension}`)]
+}
+
+/** The source path, relative to its package, that a workspace package's `exports` entry names: a string, or the
+ * import, default or types condition; built `dist` paths map to their `src` sources, as tests run them.
+ * @param {unknown} entry
+ * @returns {string | undefined} */
+export function ciExportSource(entry) {
+  const conditions = entry && typeof entry === 'object' ? /** @type {Record<string, unknown>} */ (entry) : undefined
+  const path = typeof entry === 'string' ? entry
+    : [conditions?.import, conditions?.default, conditions?.types].find(value => typeof value === 'string')
+  return typeof path === 'string' ? path.replace(/^\.\//, '').replace(/^dist\//, 'src/') : undefined
+}
+
 /** The repository file a relative or workspace-package specifier names, or null when it names none.
  * @param {string} file
  * @param {string} specifier
@@ -68,16 +89,11 @@ export function resolveImport(file, specifier, paths, exports) {
   let target
   if (specifier.startsWith('.')) target = posix.normalize(posix.join(posix.dirname(file), specifier))
   else if (name) {
-    const entry = /** @type {Record<string, unknown>} */ (packages[name] ?? {})[`.${specifier.slice(name.length)}`]
-    const path = typeof entry === 'string' ? entry
-      : entry && typeof entry === 'object' && 'import' in entry && typeof entry.import === 'string' ? entry.import : undefined
-    if (path) target = `${ciWorkspacePackages[name]}/${path.replace(/^\.\//, '').replace(/^dist\//, 'src/')}`
+    const path = ciExportSource(/** @type {Record<string, unknown>} */ (packages[name] ?? {})[`.${specifier.slice(name.length)}`])
+    if (path) target = `${ciWorkspacePackages[name]}/${path}`
   }
   if (!target) return null
-  const stem = target.replace(/\.[cm]?js$/, '')
-  const candidates = [target, ...['.ts', '.tsx', '.mts', '.mjs', '.js', '.jsx', '.json', '/index.ts', '/index.tsx', '/index.js']
-    .map(extension => `${stem}${extension}`)]
-  return candidates.find(candidate => paths.has(candidate)) ?? null
+  return ciModuleCandidates(target).find(candidate => paths.has(candidate)) ?? null
 }
 
 /** Repository files named by literal fixture URLs or filesystem reads.

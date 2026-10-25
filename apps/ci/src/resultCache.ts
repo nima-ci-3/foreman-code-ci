@@ -1,6 +1,6 @@
 import { isBuiltin } from 'node:module'
 import { posix } from 'node:path'
-import { ciCodeFile, ciInfrastructureFile, importSpecifiers, resolveImport } from '@foreman-code/contracts/ci-import-graph'
+import { ciCodeFile, ciExportSource, ciInfrastructureFile, importSpecifiers, resolveImport } from '@foreman-code/contracts/ci-import-graph'
 import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
 
 /** Bump when the key inputs or the doubt rules change, so earlier passes stop matching. */
@@ -516,12 +516,9 @@ export class CiResultKeys {
    * paths map to their `src` sources, as tests run them). */
   private workspaceSource(file: string, specifier: string, name: string,
     workspace: { directory: string; exports: Record<string, unknown> }): string | null {
-    const entry = workspace.exports[`.${specifier.slice(name.length)}`]
-    const conditions = entry && typeof entry === 'object' ? entry as Record<string, unknown> : undefined
-    const path = typeof entry === 'string' ? entry : [conditions?.import, conditions?.default, conditions?.types]
-      .find((value): value is string => typeof value === 'string')
+    const path = ciExportSource(workspace.exports[`.${specifier.slice(name.length)}`])
     if (!path) return null
-    const target = `${workspace.directory}/${path.replace(/^\.\//, '').replace(/^dist\//, 'src/')}`
+    const target = `${workspace.directory}/${path}`
     return resolveImport(file, `./${posix.relative(posix.dirname(file), target)}`, this.tree.blobs, {})
   }
 

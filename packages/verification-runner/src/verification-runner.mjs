@@ -1,4 +1,5 @@
 import { INSTALLATION_NAMES } from '../../contracts/src/installationNames.mjs'
+import { integrationTestFile } from '../../contracts/src/ciTestInventory.mjs'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statfsSync } from 'node:fs'
@@ -174,31 +175,34 @@ export function integrationPartition(files, durations, partition) {
   }
   return files.filter(file => owner.get(file) === partition.index)
 }
-const integrationTestFiles = root => existsSync(join(root, 'apps/api/test'))
-  ? readdirSync(join(root, 'apps/api/test')).filter(name => name.endsWith('.integration.test.ts'))
-    .map(name => `apps/api/test/${name}`).sort()
-  : []
+/** Repository-relative files under `directory`, skipping build output and dependencies. */
+function repositoryFiles(root, directory = '') {
+  const files = []
+  const visit = path => {
+    if (!existsSync(path)) return
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (['node_modules', 'dist', '.git', '.logs'].includes(entry.name)) continue
+      const child = join(path, entry.name)
+      if (entry.isDirectory()) visit(child)
+      else if (entry.isFile()) files.push(relative(root, child).split(sep).join('/'))
+    }
+  }
+  visit(join(root, directory))
+  return files
+}
+const integrationTestFiles = root => repositoryFiles(root, 'apps/api').filter(integrationTestFile).sort()
 
 /** `qualification` selects the commit's committed integration smoke subset when it has one: qualification proves
  * the computer's runtime (PostgreSQL startup and isolation, migrations, MCP, sources, Jobs), not the whole suite. */
 export function captureVerificationInventory(root, suite, { qualification = false, partition } = {}) {
   const portions = expectedPortions(root, suite)
   if (portions.every(portion => ['command', 'bootstrap'].includes(portion.kind))) return portions
-  const files = []
-  const visit = directory => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (['node_modules', 'dist', '.git', '.logs'].includes(entry.name)) continue
-      const path = join(directory, entry.name)
-      if (entry.isDirectory()) visit(path)
-      else if (entry.isFile()) files.push(relative(root, path).split(sep).join('/'))
-    }
-  }
-  if (suite === 'unit' || suite === 'integration') visit(root)
+  const files = suite === 'unit' || suite === 'integration' ? repositoryFiles(root) : []
   return portions.map(portion => {
     if (!['vitest', 'node', 'integration'].includes(portion.kind)) return portion
     let selected
     if (portion.kind === 'integration') {
-      selected = files.filter(path => /^apps\/api\/test\/.*\.integration\.test\.ts$/.test(path))
+      selected = files.filter(integrationTestFile)
       if (qualification && existsSync(join(root, QUALIFICATION_SUBSET))) {
         const subset = JSON.parse(readFileSync(join(root, QUALIFICATION_SUBSET), 'utf8')).files
         if (!Array.isArray(subset) || !subset.length || subset.some(path => !selected.includes(path))) {
