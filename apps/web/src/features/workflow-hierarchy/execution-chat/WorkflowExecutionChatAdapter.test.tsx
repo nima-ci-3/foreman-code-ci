@@ -131,7 +131,8 @@ it('opens the latest attempt of a finished Run and keeps history switching avail
     execution: { ...fixture.execution, executionId, attempt } },
   agent: choice.agent, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
   install()
-  const items = [candidate('execution', 1), candidate('check', 2)]
+  // Newest first, as the server lists them; attempt numbers restart for each activation.
+  const items = [candidate('check', 1), candidate('execution', 2)]
   server.use(http.get(`${base}/target`, ({ request }) => {
     const pinned = items.find(item => item.target.execution.executionId === new URL(request.url).searchParams.get('executionId'))
     return HttpResponse.json(pinned ? { ...choice, target: pinned.target, state: 'idle' }
@@ -141,8 +142,41 @@ it('opens the latest attempt of a finished Run and keeps history switching avail
   expect(await screen.findByRole('region', { name: 'Execution conversation' })).toHaveTextContent('check')
   expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"check"')
   fireEvent.click(screen.getByRole('button', { name: 'Other attempts' }))
-  fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 1' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 2' }))
   await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"execution"'))
+})
+
+it('opens the newest execution again for another Agent of the same Run', async () => {
+  const choice = selected()
+  if (choice.kind !== 'selected') throw new Error('Expected selected fixture')
+  install()
+  const item = (nodeId: string, executionId: string) => ({ target: { ...choice.target,
+    agent: { ...choice.target.agent, workflowNodeId: nodeId }, execution: { ...fixture.execution, executionId } },
+  agent: { ...choice.agent, workflowNodeId: nodeId }, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
+  server.use(http.get(`${base}/target`, ({ request }) => {
+    const params = new URL(request.url).searchParams, node = params.get('workflowNodeId')!
+    const items = [item(node, `${node}-new`), item(node, `${node}-old`)]
+    const pinned = items.find(entry => entry.target.execution.executionId === params.get('executionId'))
+    return HttpResponse.json(pinned ? { ...choice, agent: pinned.agent, target: pinned.target, state: 'idle' }
+      : { kind: 'selection_required', items, revision: 1, nextCursor: null, hasMore: false })
+  }))
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.push(cache)
+  function Shell() {
+    const [pins, setPins] = useState<Omit<WorkflowExecutionChatSlotSelection, 'onSelectRun' | 'onSelectTarget'>>(
+      { ...scope, nodeId: 'first', runId: 'run' })
+    return <>
+      <button onClick={() => setPins({ ...scope, nodeId: 'second', runId: 'run' })}>Second Agent</button>
+      <output aria-label="Chat selection">{JSON.stringify(pins)}</output>
+      {slot({ ...pins, onSelectRun: run => setPins({ ...scope, nodeId: pins.nodeId, ...run }),
+        onSelectTarget: (target, workflowVersionId) => setPins({ ...scope, nodeId: pins.nodeId, workflowVersionId,
+          runId: 'run', ...(target.kind === 'workflow_execution' ? { executionId: target.execution.executionId } : {}) }) })}
+    </>
+  }
+  render(<QueryClientProvider client={cache}><Shell /></QueryClientProvider>)
+  await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"first-new"'))
+  fireEvent.click(screen.getByRole('button', { name: 'Second Agent' }))
+  await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"second-new"'))
 })
 
 it('retains transient status, hides denied history through a failed retry, and resumes only after a successful read', async () => {
