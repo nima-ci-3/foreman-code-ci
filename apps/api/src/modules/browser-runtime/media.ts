@@ -15,9 +15,6 @@ interface Viewer {
 interface ViewReceipt { descriptor: BrowserRuntimeView; closed: boolean }
 interface ViewOpenInput { ownerId: string; viewerId: string; sessionId: string; tabId: string; browserGeneration: number; commandId?: string }
 
-/** About 30 frames per second; Chromium sends a frame only when the page changed. */
-const FRAME_INTERVAL_MS = 33
-
 /** Dedicated browser media: one replaceable frame per viewer, independent of ordinary device RPC slots. */
 export class BrowserMediaService {
   private readonly viewers = new Map<string, Viewer>()
@@ -56,7 +53,7 @@ export class BrowserMediaService {
     this.viewers.set(id, viewer)
     try {
       viewer.capture = this.broker.capture(input.sessionId, input.tabId, input.browserGeneration, frame => {
-        if (frame.data.byteLength > 2 * 1024 * 1024 || viewer.closed || performance.now() - viewer.lastFrameAt < FRAME_INTERVAL_MS) return
+        if (frame.data.byteLength > 2 * 1024 * 1024 || viewer.closed || performance.now() - viewer.lastFrameAt < 100) return
         viewer.lastFrameAt = performance.now()
         viewer.latest = { ...frame, sequence: ++viewer.sequence }
         for (const listener of viewer.listeners) listener()
