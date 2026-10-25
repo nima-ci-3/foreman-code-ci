@@ -15,15 +15,15 @@ import '../graph.css'
 import './nextDraft.css'
 
 /** Authoring adapter within the workspace board. Selected Run is NOT an editor key. */
-export function NextDraftEditor({ workspaceId, workflowId, initialContext, updateFailures, changedElsewhere }: {
-  workspaceId: string; workflowId: string; initialContext?: AuthoringContext; updateFailures?: readonly BoardUpdateFailure[]; changedElsewhere?: boolean
+export function NextDraftEditor({ workspaceId, workflowId, initialContext, updateFailures }: {
+  workspaceId: string; workflowId: string; initialContext?: AuthoringContext; updateFailures?: readonly BoardUpdateFailure[]
 }) {
   const key = nextDraftKey(workspaceId, workflowId)
-  return <GraphPresentationProvider key={key}><DraftLoader draftKey={key} workspaceId={workspaceId} workflowId={workflowId} initialContext={initialContext} updateFailures={updateFailures} changedElsewhere={changedElsewhere} /></GraphPresentationProvider>
+  return <GraphPresentationProvider key={key}><DraftLoader draftKey={key} workspaceId={workspaceId} workflowId={workflowId} initialContext={initialContext} updateFailures={updateFailures} /></GraphPresentationProvider>
 }
 
-function DraftLoader({ draftKey, workspaceId, workflowId, initialContext, updateFailures, changedElsewhere }: {
-  draftKey: string; workspaceId: string; workflowId: string; initialContext?: AuthoringContext; updateFailures?: readonly BoardUpdateFailure[]; changedElsewhere?: boolean
+function DraftLoader({ draftKey, workspaceId, workflowId, initialContext, updateFailures }: {
+  draftKey: string; workspaceId: string; workflowId: string; initialContext?: AuthoringContext; updateFailures?: readonly BoardUpdateFailure[]
 }) {
   const edit = useGraphDraftStore((state) => state.nextDrafts[draftKey])
   const [storageError, setStorageError] = useState<string>()
@@ -73,7 +73,7 @@ function DraftLoader({ draftKey, workspaceId, workflowId, initialContext, update
       }
     } catch (error) { setStorageError(errorMessage(error, 'Retained edits are unavailable.')) }
   }, [draftKey, initialContext, ownershipReady, source.data, source.isError, source.isFetchedAfterMount])
-  if (edit) return <EditorForm draftKey={draftKey} edit={edit} updateFailures={updateFailures} changedElsewhere={changedElsewhere} />
+  if (edit) return <EditorForm draftKey={draftKey} edit={edit} updateFailures={updateFailures} />
   if (storageError || source.isError) return <section className="workflow-graph-state" role="alert">
     <h2>Authoring unavailable</h2><p>{storageError ?? source.error?.message}</p>
     {!storageError ? <Button onClick={() => void source.refetch()}>Try again</Button> : null}
@@ -81,7 +81,7 @@ function DraftLoader({ draftKey, workspaceId, workflowId, initialContext, update
   return <BoardLoading />
 }
 
-function EditorForm({ draftKey, edit, updateFailures, changedElsewhere }: { draftKey: string; edit: NextDraftEdit; updateFailures?: readonly BoardUpdateFailure[]; changedElsewhere?: boolean }) {
+function EditorForm({ draftKey, edit, updateFailures }: { draftKey: string; edit: NextDraftEdit; updateFailures?: readonly BoardUpdateFailure[] }) {
   const controller = useDraftEditorController(draftKey, edit)
-  return <DraftEditorView draftKey={draftKey} edit={edit} updateFailures={updateFailures} changedElsewhere={changedElsewhere} controller={controller} />
+  return <DraftEditorView draftKey={draftKey} edit={edit} updateFailures={updateFailures} controller={controller} />
 }

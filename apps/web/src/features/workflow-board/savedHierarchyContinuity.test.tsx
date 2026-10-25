@@ -108,6 +108,7 @@ async function mount(entry = runsUrl('run-a'), { hasHierarchy = true, slots }: {
   if (hasHierarchy) await screen.findByRole('group', { name: 'Z, saved agent, read only' })
   return { cache, router }
 }
+const toolbar = () => within(screen.getByRole('navigation', { name: 'Workflow views' }))
 /** The URL owns the workflow memory dialog; the Board opens it from a Kanban card. */
 const openMemoryBoard = (router: Awaited<ReturnType<typeof mount>>['router']) => act(async () => {
   const { pathname, search, hash } = router.history.location
@@ -189,7 +190,7 @@ it.each(['graph', 'overview'])('stops an ordinary selected Run from %s and keeps
   expect(stops[1]).toEqual(stops[0])
 })
 
-it('uses saved roles and coordinates, docks one inspector, and keeps geometry through legacy view navigation', async () => {
+it('uses saved roles and coordinates, docks one inspector, and navigates teams without changing the Run', async () => {
   install()
   const { router } = await mount()
   const master = screen.getByRole('group', { name: 'X before rename, saved agent, read only' })
@@ -197,19 +198,24 @@ it('uses saved roles and coordinates, docks one inspector, and keeps geometry th
   await waitFor(() => expect(master).toHaveTextContent('Master'))
   await waitFor(() => expect(worker).toHaveTextContent('Worker · Reports to Y'))
   const position = worker.style.transform
-  fireEvent.click(screen.getByRole('button', { name: 'Open Z information' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Inspect Z' }))
   const inspector = await screen.findByRole('region', { name: 'Run node inspector: Z' })
   expect(screen.getAllByRole('complementary', { name: 'Workflow side panel' })).toHaveLength(1)
   expect(within(screen.getByRole('complementary', { name: 'Workflow side panel' }))
     .getByRole('region', { name: 'Run node inspector: Z' })).toBe(inspector)
-  await act(async () => { await router.navigate({ href: `${runsUrl('run-a')}&boardView=overview&boardPanel=agent&boardNodeId=node-z&boardAgentTab=details` }) })
-  expect(await screen.findByRole('region', { name: 'Run node inspector: Z' })).toBeVisible()
-  expect(screen.queryByRole('navigation', { name: 'Workflow views' })).not.toBeInTheDocument()
+  fireEvent.click(toolbar().getByRole('button', { name: 'Overview' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'View team' }))
+  await screen.findByRole('region', { name: 'Selected team' })
+  expect(router.state.location.search).toMatchObject({ selectedRunId: 'run-a', boardTeamId: 'node-y', boardView: 'overview' })
+  fireEvent.click(screen.getByRole('button', { name: 'All teams' }))
+  await waitFor(() => expect(router.state.location.search.boardTeamId).toBeUndefined())
+  fireEvent.click(toolbar().getByRole('button', { name: 'Graph' }))
+  await screen.findByRole('button', { name: 'Inspect Z' })
   expect(screen.getByRole('group', { name: 'Z, saved agent, read only' }).style.transform).toBe(position)
   expect(router.state.location.search.selectedRunId).toBe('run-a')
 })
 
-it('retains native-child text through Memory and access loss without hidden reads', async () => {
+it('retains native-child text through Memory, Overview and access loss without hidden reads', async () => {
   const wire = install()
   const { cache, router } = await mount()
   fireEvent.click(await screen.findByRole('button', { name: 'Research, Codex, Running' }))
@@ -221,6 +227,11 @@ it('retains native-child text through Memory and access loss without hidden read
   expect(wire.requests).toHaveLength(hiddenReads)
   expect(screen.queryByRole('dialog', { name: 'Research' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Close memory board' }))
+  expect(await screen.findByRole('textbox', { name: 'Message to subagent' })).toHaveValue('Keep this direction')
+  fireEvent.click(toolbar().getByRole('button', { name: 'Overview' }))
+  await screen.findByRole('region', { name: 'Master Overview' })
+  expect(screen.queryByRole('dialog', { name: 'Research' })).not.toBeInTheDocument()
+  fireEvent.click(toolbar().getByRole('button', { name: 'Graph' }))
   expect(await screen.findByRole('textbox', { name: 'Message to subagent' })).toHaveValue('Keep this direction')
   server.use(http.get(base, () => HttpResponse.json({ error: { code: 'FORBIDDEN', message: 'No access' } }, { status: 403 })))
   await act(async () => { await cache.invalidateQueries({ queryKey: [...subagentsKey(childScope), 'list'] }) })
@@ -260,7 +271,26 @@ it('keeps a hidden pending command identity and defers failure refresh until its
   expect(bodies[1]).toEqual(bodies[0])
 })
 
-it('restores exact inspector pins and geometry through browser history', async () => {
+it('suspends Overview reports while Memory is open and restores the selected branch on close', async () => {
+  const wire = install()
+  const { cache, router } = await mount()
+  fireEvent.click(toolbar().getByRole('button', { name: 'Overview' }))
+  await screen.findByRole('region', { name: 'Master Overview' })
+  fireEvent.click(screen.getByRole('button', { name: 'View branch · 1' }))
+  await screen.findByRole('region', { name: 'Reports to Y' })
+  await waitFor(() => expect(ReportSource.instances).toHaveLength(1))
+  await openMemoryBoard(router)
+  await screen.findByRole('dialog', { name: 'Memory board' })
+  expect(ReportSource.instances[0]!.closed).toBe(true)
+  const reports = wire.requests.filter(path => path === 'reports').length
+  await act(async () => { await cache.invalidateQueries({ queryKey: ['workflow-hierarchy'] }) })
+  expect(wire.requests.filter(path => path === 'reports')).toHaveLength(reports)
+  fireEvent.click(screen.getByRole('button', { name: 'Close memory board' }))
+  await screen.findByRole('region', { name: 'Reports to Y' })
+  await waitFor(() => expect(ReportSource.instances.filter(source => !source.closed)).toHaveLength(1))
+})
+
+it('keeps historical absence separate and restores exact inspector pins and geometry through browser history', async () => {
   install()
   const { router } = await mount(`${runsUrl('run-a')}&boardPanel=agent&boardAgentTab=details&boardNodeId=node-x&boardExecutionId=execution-old`)
   const firstPosition = screen.getByRole('group', { name: 'X before rename, saved agent, read only' }).style.transform
@@ -271,26 +301,14 @@ it('restores exact inspector pins and geometry through browser history', async (
   await screen.findByRole('group', { name: 'X in B, saved agent, read only' })
   expect(router.state.location.search.selectedRunId).toBe('run-b')
   expect(router.state.location.search.boardExecutionId).toBeUndefined()
-  expect(screen.queryByRole('group', { name: 'Y, saved agent, read only' })).not.toBeInTheDocument()
+  fireEvent.click(toolbar().getByRole('button', { name: 'Overview' }))
+  await screen.findByRole('heading', { name: 'No Master in this Run' })
+  expect(screen.queryByRole('heading', { name: 'X before rename Master' })).not.toBeInTheDocument()
+  await act(async () => { router.history.back() })
+  await screen.findByRole('group', { name: 'X in B, saved agent, read only' })
   await act(async () => { router.history.back() })
   await screen.findByRole('region', { name: 'Run node inspector: X before rename' })
   expect(router.state.location.search).toMatchObject({ selectedRunId: 'run-a', boardExecutionId: 'execution-old', boardNodeId: 'node-x' })
   expect(screen.getByRole('group', { name: 'X before rename, saved agent, read only' }).style.transform).toBe(firstPosition)
   expect(screen.getAllByRole('complementary', { name: 'Workflow side panel' })).toHaveLength(1)
-})
-
-it('opens a legacy Overview link on the saved Board without reading or streaming deleted reports', async () => {
-  const wire = install()
-  const { router } = await mount(`${runsUrl('run-a')}&boardView=overview`)
-  expect(screen.getByRole('group', { name: 'Z, saved agent, read only' })).toBeVisible()
-  expect(screen.queryByRole('region', { name: 'Master Overview' })).not.toBeInTheDocument()
-  expect(wire.requests.filter(path => path === 'reports')).toEqual([])
-  expect(ReportSource.instances).toHaveLength(0)
-  await openMemoryBoard(router)
-  expect(await screen.findByRole('dialog', { name: 'Memory board' })).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Close memory board' }))
-  expect(await screen.findByRole('group', { name: 'Z, saved agent, read only' })).toBeVisible()
-  expect(router.state.location.search.selectedRunId).toBe('run-a')
-  expect(wire.requests.filter(path => path === 'reports')).toEqual([])
-  expect(ReportSource.instances).toHaveLength(0)
 })

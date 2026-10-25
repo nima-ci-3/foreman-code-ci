@@ -58,9 +58,7 @@ export function RuntimeInstanceBoundary({ children }: { children: ReactNode }) {
     </main>
   }
   return <>
-    {/* Drafts live in browser storage and survive a reload, so the owner can reload at once. */}
-    {updated && <div className="runtime-reconnecting runtime-updated" role="status">App updated.
-      <Button size="sm" variant="primary" onClick={() => { reloading.current = true; window.location.reload() }}>Reload now</Button></div>}
+    {updated && <div className="runtime-reconnecting" role="status">App updated. Your pending changes are kept until it can reload.</div>}
     {children}
   </>
 }

@@ -108,7 +108,7 @@ test('ships the SDK runtime within artifact bounds and runs the selected install
   const files = await packaging.artifactFiles(output);
   WorkerArtifactManifestSchema.parse({ format: 1, version: '1.0.0', commit: 'a'.repeat(40),
     lockfileSha256: 'b'.repeat(64), packageManager: 'pnpm@11.27.0', protocolVersion: 1, identityFormat: 1,
-    target: { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' },
+    target: { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' },
     files: [...files, { path: 'src/cli.mjs', size: 0, sha256: 'c'.repeat(64) }] });
   assert.deepEqual(packages.map(entry => entry.name), ['@anthropic-ai/claude-agent-sdk']);
   assert.ok(packages.every(entry => /^sha512-/.test(entry.integrity) && /^[a-f0-9]{64}$/.test(entry.indexBlobSha256)));

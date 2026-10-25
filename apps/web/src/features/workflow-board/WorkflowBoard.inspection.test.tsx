@@ -136,7 +136,7 @@ describe('mounted historical identity and keyboard regressions', () => {
     // Open from a node that is not present in the next selected Run. The drawer
     // may trap focus while open; Escape and its named Close must always exit.
     // Activities opens from the toolbar; an agent card itself only opens its own rim panels.
-    const node = await within(screen.getByLabelText('Selected Run board')).findByLabelText('Open Worker 1 information', { selector: 'button' })
+    const node = await within(screen.getByLabelText('Selected Run board')).findByLabelText('Inspect Worker 1', { selector: 'button' })
     expect(node).toHaveRole('button')
     node.focus(); await user.keyboard('{Enter}')
     expect(screen.queryByLabelText('Close Activities', { selector: 'button' })).not.toBeInTheDocument()
@@ -163,11 +163,12 @@ it('manages current reference files while a historical Run is selected', async (
   expect(within(files).getByText(/Current reference files/)).toBeVisible()
 })
 
-it('keeps draft Activities reachable from a legacy Overview link', async () => {
+it('keeps draft Activities open and reachable when switching to Overview', async () => {
   measureBoardWire(fixture.mock)
-  await mountMeasuredBoard(`/workspaces/${fixture.mock.workspaceId}?workflowId=${fixture.after.workflowId}&boardView=overview`)
+  await mountMeasuredBoard(`/workspaces/${fixture.mock.workspaceId}?workflowId=${fixture.after.workflowId}`)
   await userEvent.click(await screen.findByRole('button', { name: 'Activities' }))
   const activities = await screen.findByRole('region', { name: 'Activities popover' })
+  await userEvent.click(screen.getByRole('button', { name: 'Overview' }))
   expect(activities).toBeVisible()
   expect(screen.getByRole('button', { name: 'Activities' })).toBeVisible()
   await userEvent.click(within(activities).getByRole('button', { name: 'Close Activities' }))
