@@ -200,9 +200,9 @@ async function runAuthenticatedCiSmoke(release, environment) {
     return
   }
   const api = join(release, 'apps/api/dist')
-  const { loadConfig } = await import(pathToFileURL(join(api, 'config.js')))
-  const { createDatabase } = await import(pathToFileURL(join(api, 'infrastructure/database.js')))
-  const { withInstallSmokeCredential } = await import(pathToFileURL(join(api, 'cli/installSmokeCredential.js')))
+  const { loadConfig } = await import(/* ci-key: apps/api/src/config.ts */ pathToFileURL(join(api, 'config.js')))
+  const { createDatabase } = await import(/* ci-key: apps/api/src/infrastructure/database.ts */ pathToFileURL(join(api, 'infrastructure/database.js')))
+  const { withInstallSmokeCredential } = await import(/* ci-key: apps/api/src/cli/installSmokeCredential.ts */ pathToFileURL(join(api, 'cli/installSmokeCredential.js')))
   const database = createDatabase(loadConfig({ ...process.env, ...environment }).database)
   try {
     await withInstallSmokeCredential(database.pool, token => runProductionCiSmoke({ origin, release, token }))

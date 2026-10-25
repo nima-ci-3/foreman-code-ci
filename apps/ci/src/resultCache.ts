@@ -21,9 +21,11 @@ interface Analysis {
   /** Each computed import or require call: the string literals its argument names. */
   computed: { kind: 'import' | 'require'; literals: string[] }[]
   /** Each process start (spawn, exec, fork, new Worker): whether its command is named, and the literals it passes. */
-  processes: { named: boolean; literals: string[] }[]
+  processes: { named: boolean; literals: string[]; command: string[] }[]
   /** Directories named relative to the file by URL (`new URL('.', import.meta.url)`). */
   anchoredDirectories: string[]
+  /** `// ci-key-inputs: <path or package> ...`: what a test that builds and runs artifacts actually depends on. */
+  declaredInputs: string[]
   doubt: string | null; testDoubt: string | null
 }
 
@@ -90,12 +92,33 @@ function processCalls(text: string, code: Uint8Array): Analysis['processes'] {
     const close = closingParen(text, open)
     if (close > 0 && /^\s*[:{]/.test(text.slice(close, close + 40))) continue
     const argument = close < 0 ? text.slice(open + 1) : text.slice(open + 1, close - 1)
-    const literals = [...argument.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!)
-    const command = /^\s*(['"`])[^'"`$]+\1/.test(argument)
+    const declared = [...argument.matchAll(/\/\*\s*ci-key:\s*(\S+)\s*\*\//g)].map(found => found[1]!)
+    const literals = [...declared, ...[...argument.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!)]
+    // The command is the first argument, or what a variable holding it is defined as in this file.
+    const first = argument.replace(/\/\*[^]*?\*\//g, '').trimStart()
+    const name = /^([A-Za-z_$][\w$]*)\s*[,)]?/.exec(first)?.[1]
+    const definition = name && !/^(?:process)$/.test(name)
+      // A declaration or a parameter default (`runtime = process.execPath`).
+      ? new RegExp(`(?:\\b(?:const|let|var)\\s+|[(,]\\s*)${name.replace(/\$/g, '\\$')}(?:\\s*:\\s*[\\w.]+)?\\s*=\\s*([^;\\n,)]+)`).exec(text)?.[1]
+      : undefined
+    const command = (value: string) => /^\s*(['"`])[^'"`$]+\1/.test(value)
     // Node runs inline code or a script; a repository script is reached through the paths the file names, which
     // join the key on their own.
-    const node = /^\s*process\.execPath\b/.test(argument)
-    calls.push({ named: command || node, literals })
+    const node = (value: string) => /^\s*process\.execPath\b/.test(value)
+    // The literals of the command argument itself (`fork(fileURLToPath(new URL('./child.ts', import.meta.url)))`):
+    // a command that names a repository file is proven by it.
+    let depth = 0, end = first.length
+    for (let index = 0; index < first.length; index++) {
+      const char = first[index]!
+      if (char === '"' || char === "'" || char === '`') {
+        for (index++; index < first.length && first[index] !== char; index++) if (first[index] === '\\') index++
+      } else if ('([{'.includes(char)) depth++
+      else if (')]}'.includes(char)) depth--
+      else if (char === ',' && depth === 0) { end = index; break }
+    }
+    calls.push({ named: declared.length > 0 || command(first) || node(first)
+      || definition !== undefined && (command(definition) || node(definition)), literals,
+      command: [...first.slice(0, end).matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!) })
   }
   return calls
 }
@@ -170,6 +193,8 @@ function analyze(path: string, text: string): Analysis {
     relatives: data ? [] : [...new Set([...text.matchAll(relativeLiteral)].map(match => match[1]!))],
     computed: data ? [] : computedCalls(text, code),
     processes: data || !TEST_DOUBTS[1]![0].test(text) ? [] : processCalls(text, code),
+    declaredInputs: data ? [] : [...text.matchAll(/(?:\/\/|\/\*|\*)\s*ci-key-inputs:\s*([^\n*]+)/g)]
+      .flatMap(match => match[1]!.trim().split(/\s+/)),
     anchoredDirectories: data ? [] : [...text.matchAll(/new\s+URL\(\s*['"](\.{1,2})\/?['"]\s*,\s*import\.meta\.url\s*\)/g)].map(match => match[1]!),
     doubt: css ? (/@import\b/.test(text) && cssImports.length < (text.match(/@import\b/g) ?? []).length ? 'imports CSS by a computed name' : null) : DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
     testDoubt: data ? null : TEST_DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
@@ -379,16 +404,31 @@ export class CiResultKeys {
     if (strict && analysis.doubt) throw new CacheDoubt(`${file} ${analysis.doubt}.`)
     // Test support that starts a process must name what it runs; files it reads are proven by the paths it names
     // (below): named files join the key and are followed, files in named directories join it by content.
-    if (strict && support && analysis.processes.some(call => !call.named)) {
-      throw new CacheDoubt(`${file} starts a process it names by a computed path.`)
-    }
     const edges: string[] = []
+    for (const call of strict && support && analysis.declaredInputs.length === 0 ? analysis.processes : []) {
+      if (call.named) continue
+      const commands = call.command.flatMap(literal => this.computedTarget(file, literal))
+        .filter((target): target is string => target !== true)
+      if (!commands.length) throw new CacheDoubt(`${file} starts a process it names by a computed path.`)
+      edges.push(...commands)
+    }
     // A computed import or require is proven by the literals it names: repository files join the key, and packages
     // the manifests pin are covered by the lockfile. A call that names nothing resolvable could load anything.
+    // A test that builds an artifact and then loads or runs it declares the inputs the artifact is made from; they
+    // join the key (files by content with their scripts' imports followed, directories whole, packages through the
+    // lockfile), and that file's runtime loads and process starts are covered by the declaration.
+    const declared = strict && support && analysis.declaredInputs.length > 0
+    for (const input of declared ? analysis.declaredInputs : []) {
+      const targets = this.computedTarget(file, input)
+      const named = targets.length ? targets.filter((target): target is string => target !== true)
+        : this.namedFiles(file, input)
+      if (!targets.length && !named.length) throw new CacheDoubt(`${file} declares the input ${input}, which is not a repository path or pinned package.`)
+      edges.push(...named.map(path => path.startsWith('\0') ? path : `${scriptFile.test(path) ? LOOSE : DATA}${path}`))
+    }
     for (const call of analysis.computed) {
       const resolved = call.literals.flatMap(literal => this.computedTarget(file, literal))
       if (resolved.length) edges.push(...resolved.filter((target): target is string => target !== true))
-      else if (strict) throw new CacheDoubt(`${file} ${call.kind === 'import' ? 'imports' : 'requires'} a computed module.`)
+      else if (strict && !declared) throw new CacheDoubt(`${file} ${call.kind === 'import' ? 'imports' : 'requires'} a computed module.`)
     }
     for (const specifier of analysis.specifiers) {
       const relative = specifier.startsWith('.') || specifier.startsWith('/')
