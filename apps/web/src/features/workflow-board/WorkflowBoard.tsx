@@ -158,9 +158,13 @@ export function WorkflowBoard({ workspaceId, workflowId, run: requestedRun, sele
     const context = state.nextDrafts[nextDraftKey(workspaceId, workflowId)]?.context
     return (context?.savedDraft ?? context?.draft)?.baseWorkflowVersionId ?? undefined
   })
+  // Only a Run already live when the workflow opens takes over the screen; one that starts while the owner edits
+  // lights the "Workflow running · Show run" control instead.
+  const liveAtOpen = useRef<string | null>(undefined)
+  if (liveAtOpen.current === undefined && listed.isFetched) liveAtOpen.current = liveRunId ?? null
   const openedLiveRun = useRef<string>(undefined)
   useEffect(() => {
-    if (!current || !liveRunId || boardRunId !== liveRunId || !boardVersionId || !draftBaseVersionId
+    if (!current || !liveRunId || liveRunId !== liveAtOpen.current || boardRunId !== liveRunId || !boardVersionId || !draftBaseVersionId
       || boardVersionId === draftBaseVersionId || openedLiveRun.current === liveRunId) return
     openedLiveRun.current = liveRunId
     void navigationSelection.selectRun(liveRunId)
