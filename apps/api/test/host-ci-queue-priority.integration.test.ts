@@ -20,7 +20,7 @@ it('fills GitHub slots before CircleCI and build computers for ordinary integrat
     for (let index = 0; index < 5; index++) {
       const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', {
         suite: 'integration', scope: 'affected', files: ['apps/api/test/agent-chat.integration.test.ts'],
-        commit: 'a'.repeat(40), commandId: `provider-order-${index}`,
+        commit: String(index + 1).repeat(40), commandId: `provider-order-${index}`,
       }))
       await settle(f.ci)
       const read = await f.waitFor(f.operator, started.ticketId, output => output.run.state === 'running')

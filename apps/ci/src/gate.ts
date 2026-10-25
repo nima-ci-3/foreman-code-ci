@@ -94,10 +94,10 @@ async function gateComputers(context: CiContext, endpoint: HostCiEndpoint, reser
   return available.filter((value): value is GateComputer => value !== null)
 }
 
-/** Keep free builders eligible; CircleCI takes work only once every eligible GitHub slot has some. */
+/** Other executors take work only once every eligible GitHub slot has some. */
 function preferGithub(items: GateComputer[], unused: (item: GateComputer) => boolean): GateComputer[] {
   const github = items.filter(item => item.computer.hostRef.kind === 'cloud' && item.computer.hostRef.provider === 'github' && unused(item))
-  return github.length ? items.filter(item => item.computer.hostRef.kind !== 'cloud' || github.includes(item)) : items
+  return github.length ? github : items
 }
 
 /** Prefer one wave; GitHub slots can also take integration after checks when that finishes earlier.
