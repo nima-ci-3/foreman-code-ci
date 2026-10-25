@@ -293,7 +293,8 @@ async function thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal
 async function stageRecipe({ runtimeRoot, artifact, recipe, expectedSha256, target, readiness, signal, fetchArtifact, run }) {
   validateBrowserRuntimeRecipe(recipe, target);
   await verifyInventory(artifact, recipe.files);
-  const installer = await import(pathToFileURL(join(artifact, 'installer.mjs')).href);
+  // installer.mjs is the artifact's bundle of browserRuntimeBuild.mjs.
+  const installer = await import(/* ci-key: apps/worker/src/browserRuntimeBuild.mjs */ pathToFileURL(join(artifact, 'installer.mjs')).href);
   const executePinned = (command, args, options = {}) => (run ?? execute)(command, args, { ...options, signal });
   const fetchPinned = (url, options) => (fetchArtifact ?? globalThis.fetch)(url, { ...options,
     ...(signal ? { signal: AbortSignal.any([signal, options.signal]) } : {}) });
@@ -676,7 +677,7 @@ export async function rollbackBrowserRuntime({ runtimeRoot, previousReference, n
 /** The caller already holds stopped-host ownership; this helper never kills processes or steals leases. */
 export async function offlineBrowserRuntimeLifecycle({ nativeHostModule, profileStateRoot }) {
   invariant(isAbsolute(nativeHostModule) && isAbsolute(profileStateRoot), 'private offline lifecycle locations required');
-  const host = await import(pathToFileURL(nativeHostModule).href);
+  const host = await import(/* ci-key: apps/api/src/modules/browser-runtime/hostFactory.ts */ pathToFileURL(nativeHostModule).href);
   invariant(typeof host.createBrowserRuntimeProfileCheckpoint === 'function'
     && typeof host.restoreBrowserRuntimeProfiles === 'function', 'native profile recovery exports unavailable');
   return {
@@ -698,7 +699,7 @@ export async function pruneBrowserRuntimeVersions(runtimeRoot) {
     const activation = await readBrowserRuntimeActivation(runtimeRoot);
     if (current && activation?.state === 'active' && activation.nextReference === current && activation.profileStateRoot) {
       const installed = await verifyInstalled(join(runtimeRoot, current), current.slice('versions/'.length));
-      const host = await import(pathToFileURL(installed.nativeHostModule).href);
+      const host = await import(/* ci-key: apps/api/src/modules/browser-runtime/hostFactory.ts */ pathToFileURL(installed.nativeHostModule).href);
       invariant(typeof host.pruneBrowserRuntimeProfiles === 'function', 'native profile retention export unavailable');
       await host.pruneBrowserRuntimeProfiles({ profileStateRoot: activation.profileStateRoot,
         retainedCheckpointIds: activation.profileCheckpointId ? [activation.profileCheckpointId] : [] });

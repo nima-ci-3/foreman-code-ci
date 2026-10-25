@@ -64,3 +64,33 @@ it('changes a test key when a child process entrypoint the tested code names by 
   const changed = await CiResultKeys.create(tree({ ...files, 'apps/api/src/worker.ts': 'process.send?.(2)\n' }), AbortSignal.timeout(10_000))
   expect((await changed.key('apps/api/test/supervisor.test.ts', 'unit', 'unit-api')).key).not.toBe(first)
 })
+
+it('keys tests whose code loads modules by computed paths that name their files, and follows those files', async () => {
+  // Production: a method named require, `import(join(release, 'apps/x.mjs'))`, a built `dist` path, an installed bundle
+  // named by its ci-key and a call inside generated code made 1,344 of 2,248 unit tests unkeyed.
+  const files = { ...base,
+    'apps/api/src/runtime.ts': "import { join } from 'node:path'\nimport { pathToFileURL } from 'node:url'\n"
+      + 'export class Jobs { require(id: string): void { void id } }\n'
+      + "export const tool = (release: string) => import(pathToFileURL(join(release, 'apps/api/src/tool.mjs')).href)\n"
+      + "export const built = (release: string) => import(pathToFileURL(join(release, 'apps/api/dist/built.js')).href)\n"
+      + 'export const host = (path: string) => import(/* ci-key: apps/api/src/host.ts */ pathToFileURL(path).href)\n'
+      + "export const script = `const x = await import(pathToFileURL(selector).href)`\n",
+    'apps/api/src/tool.mjs': 'export const tool = 1\n',
+    'apps/api/src/built.ts': 'export const built = 1\n',
+    'apps/api/src/host.ts': 'export const host = 1\n',
+    'apps/api/test/runtime.test.ts': "import { tool } from '../src/runtime.js'\nexport const value = tool\n" }
+  const keyOf = async (changed: Record<string, string>) => (await (await CiResultKeys.create(tree({ ...files, ...changed }),
+    AbortSignal.timeout(10_000))).key('apps/api/test/runtime.test.ts', 'unit', 'unit-api')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  for (const path of ['apps/api/src/tool.mjs', 'apps/api/src/built.ts', 'apps/api/src/host.ts']) {
+    expect(await keyOf({ [path]: 'export const changed = 2\n' })).not.toBe(first)
+  }
+})
+
+it('still refuses a key when tested code loads a module whose path names nothing it can follow', async () => {
+  const keys = await CiResultKeys.create(tree({ ...base,
+    'apps/api/src/loader.ts': "import { pathToFileURL } from 'node:url'\nexport const load = (path: string) => import(pathToFileURL(path).href)\n",
+    'apps/api/test/loader.test.ts': "import { load } from '../src/loader.js'\nexport const value = load\n" }), AbortSignal.timeout(10_000))
+  expect(await keys.key('apps/api/test/loader.test.ts', 'unit', 'unit-api')).toMatchObject({ key: null })
+})
