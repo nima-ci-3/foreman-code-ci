@@ -1,7 +1,7 @@
 import { executionNodeCut } from '../../shared/mocks/executionNodeCut'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
-import { cleanup, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { repeatGraphTopologyCurrent } from '@foreman-code/contracts/current'
@@ -82,6 +82,30 @@ it.each([
   await waitFor(() => expect(flight()).toHaveTextContent(word))
   expect(flight()).not.toHaveAttribute('data-reversed')
   await waitFor(() => expect(container.querySelector('[data-testid="rf__node-node-y"]')).toHaveTextContent('Running'), { timeout: 3000 })
+})
+
+it('keeps work nodes unavailable and the handoff dark until a failed handoff read recovers', async () => {
+  let unavailable = true
+  const work = executionNodeCut({ ...current, state: { ...current.state, bindings: [], results: [],
+    executions: current.state.executions.map(execution => ({ ...execution,
+      workActivationId: `activation-${execution.identity.workflowNodeId}` })) } })
+  server.use(
+    http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/graph/v1/current', () => HttpResponse.json(work)),
+    http.get('*/api/management/workspaces/:workspaceId/runs/:runId/handoffs', () => unavailable
+      ? HttpResponse.json({ error: { code: 'UNAVAILABLE', message: 'Handoffs unavailable' } }, { status: 503 })
+      : HttpResponse.json({ scope, policy: 'work', runState: 'running', connections: [], routes: [], notices: [],
+        unresolved: [], directionWait: false, transfers: [{ transferId: 'recovered', kind: 'request', relationshipId: 'edge-xy',
+          fromNodeId: 'node-x', fromExecutionId: 'exec-node-x', toNodeId: 'node-y', toActivationId: 'activation-node-y' }] })))
+  const container = await mount()
+  await screen.findByRole('alert')
+  const node = container.querySelector('[data-testid="rf__node-node-y"]')!
+  await waitFor(() => expect(node).toHaveTextContent('Run state unavailable'))
+  expect(node).not.toHaveTextContent('Draft')
+  expect(container.querySelector('.n-signal-edge-flight')).toBeNull()
+  unavailable = false
+  fireEvent.click(screen.getByRole('button', { name: 'Retry Run state' }))
+  await waitFor(() => expect(container.querySelector('.n-signal-edge-flight')).toHaveTextContent('Handoff'))
+  await waitFor(() => expect(node).toHaveTextContent('Running'), { timeout: 3000 })
 })
 
 it('keeps the Orchestrator on its finished turn while the Worker result travels back to it', async () => {

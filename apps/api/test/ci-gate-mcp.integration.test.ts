@@ -857,7 +857,10 @@ it('queues a second gate behind the first while full and affected requests keep 
     }))
     const second = CiRunOutputSchema.parse(await f.value('ci_run', { ...gate, commandId: randomUUID() }))
     await settle(f.ci)
-    expect(CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: first.ticketId })).group?.state).toBe('running')
+    const firstRead = CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: first.ticketId }))
+    expect(firstRead.group?.state).toBe('running')
+    expect(firstRead.partitions!.every(run => run.computer?.hostRef.kind === 'cloud'
+      && run.computer.hostRef.provider === 'github')).toBe(true)
     expect(CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: second.ticketId }))).toMatchObject({
       run: { state: 'queued', message: expect.stringContaining('gate') },
       queue: { reason: expect.stringContaining('gate') },
