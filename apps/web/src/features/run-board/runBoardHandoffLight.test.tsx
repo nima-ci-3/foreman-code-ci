@@ -35,7 +35,8 @@ beforeEach(() => {
   server.use(
     http.get('*/api/workspaces/:workspaceId/workflows/:workflowId/runs/:runId/graph/v1/current', () => HttpResponse.json(current)),
     http.get('*/api/management/workspaces/:workspaceId/runs/:runId/executions', () => HttpResponse.json({
-      run: { ...scope, ...current.state.run, createdAt: runA.capturedAt }, items: [], pageInfo: { nextCursor: null },
+      run: { ...scope, executionState: 'running', outcome: 'pending', cleanupPending: false, createdAt: runA.capturedAt },
+      items: [], pageInfo: { nextCursor: null },
     })),
     http.get('*/api/management/workspaces/:workspaceId/runs/:runId/subagents', () =>
       HttpResponse.json({ items: [], nextCursor: null, projection: 'caught-up' })),
