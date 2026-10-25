@@ -6,6 +6,7 @@ import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { ciTestResults } from './ci-test-results.mjs'
+import { affectedCommands } from './ci-affected-run.mjs'
 
 for (const files of [
   ['scripts/missing.test.mjs'],
@@ -28,6 +29,16 @@ for (const files of [
     assert.doesNotMatch(result.stderr, /ENOENT/)
   })
 }
+
+test('affected API .mjs tests run with Vitest, as in full runs, and only scripts and Worker tests use Node', () => {
+  // Proof-based selection picked apps/api/test/dev-launcher.test.mjs, a Vitest file, and it ran under node --test.
+  const commands = affectedCommands('unit', ['apps/api/test/dev-launcher.test.mjs', 'scripts/sleep.test.mjs',
+    'apps/worker/test/cli.test.mjs'])
+  const runs = argument => commands.filter(command => command.includes(argument))
+  assert.deepEqual(runs('test/dev-launcher.test.mjs').map(command => command.includes('vitest') && !command.includes('--test')), [true])
+  assert.deepEqual(runs('scripts/sleep.test.mjs').map(command => command.includes('--test')), [true])
+  assert.deepEqual(runs('apps/worker/test/cli.test.mjs').map(command => command.includes('--test')), [true])
+})
 
 for (const failing of [false, true]) {
   test(`affected Node tests retain reports and exit with the ${failing ? 'failing' : 'passing'} suite outcome`, t => {

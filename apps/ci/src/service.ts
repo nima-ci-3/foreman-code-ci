@@ -43,7 +43,7 @@ import { ciExecutionRunId } from './executionAttempt.js'
 import { CI_RETAINED_EXECUTORS, CiExecutorObservationError, CiRetainedExecutors,
   ciExecutorOutageLimit, ciTransportUnavailable, recordCiExecutorStatus } from './executorRecovery.js'
 import { CI_BUSY_TICKET, expireOverdueCiRuns } from './deadlines.js'
-import { ciCachedNotice, planCachedSelection, recordCiResultCache, type CachedSelection } from './resultCacheStore.js'
+import { ciCachedNotice, failedTestFiles, planCachedSelection, recordCiResultCache, type CachedSelection } from './resultCacheStore.js'
 import { CiResultKeys } from './resultCache.js'
 import { ciRequestKey, joinCiRequest, registerCiRequest, releaseCiRequester, releaseStoppedRun,
   spareSharedSupersession } from './requestSharing.js'
@@ -390,37 +390,60 @@ export class HostCiService {
   /** Records the passed files of unit and integration parts finished in the last two days (idempotent upserts), so
    * results proved before per-file recording existed are reused. */
   private async backfillResultCache() {
+    // Oldest first, so a later result always lands after an earlier one; parts that already recorded proofs are done.
     const rows = (await this.pool.query<{ record: unknown; state: string }>(
-      `select record, state from ci_runs where state in ('passed','failed') and test_results is not null
+      `select record, state from ci_runs r where state in ('passed','failed') and test_results is not null
         and created_at > now() - interval '2 days' and record->>'suite' in ('unit','integration')
-        order by created_at desc limit 3000`)).rows
+        and not exists (select 1 from ci_test_result_cache c where c.workspace_id = r.workspace_id and c.ticket_id = r.id)
+        order by created_at limit 3000`)).rows
     let recorded = 0
     for (const row of rows) {
       const run = CiRunRecordSchema.parse(row.record)
-      await recordCiResultCache(this.pool, run, row.state, this.resultKeys(run))
-      recorded++
+      try {
+        await recordCiResultCache(this.pool, run, row.state, this.resultKeys(run))
+        recorded++
+      } catch (error) {
+        this.context.log.warn({ err: error, ticketId: run.id }, 'CI result cache backfill skipped a part')
+      }
+      // Background work: requests and dispatch go first.
+      await new Promise(resolve => setImmediate(resolve))
     }
     this.context.log.info({ parts: recorded }, 'CI result cache backfilled from finished parts')
   }
 
-  /** Result cache keys for a finished part's files, computed from its commit's tree (memoized per commit and suite). */
-  private resultKeys(run: CiRunRecord) {
-    if (!this.commits.testTree || (run.suite !== 'unit' && run.suite !== 'integration')) return undefined
+  /** Result cache keys for files of a commit: on the commits' worker thread when it has one, else in process from the
+   * commit's tree (one graph per recent commit, shared by its parts, each call under its own deadline). */
+  private async keysOf(repository: string, commit: string, files: { file: string; suite: string; part: string }[], signal: AbortSignal) {
+    if (this.commits.resultKeys) return this.commits.resultKeys(repository, commit, files, signal)
+    if (!this.commits.testTree) throw new Error('This repository has no source trees for result cache keys.')
     const testTree = this.commits.testTree.bind(this.commits)
+    const id = `${repository}@${commit}`
+    let graph = this.keyGraphs.get(id)
+    if (!graph) {
+      graph = testTree(repository, commit, AbortSignal.timeout(30_000))
+        .then(tree => CiResultKeys.create(tree, AbortSignal.timeout(30_000)))
+      graph.catch(() => this.keyGraphs.delete(id))
+      this.keyGraphs.set(id, graph)
+      if (this.keyGraphs.size > 8) this.keyGraphs.delete(this.keyGraphs.keys().next().value!)
+    }
+    const keys = (await graph).bounded(AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
+    return Object.fromEntries(await Promise.all(files.map(async ({ file, suite, part }) => [file, await keys.key(file, suite, part)] as const)))
+  }
+
+  /** Result cache keys for a finished part's files. */
+  private resultKeys(run: CiRunRecord) {
+    if ((!this.commits.resultKeys && !this.commits.testTree) || (run.suite !== 'unit' && run.suite !== 'integration')) return undefined
     return async (files: readonly string[]) => {
-      const id = `${run.repository}@${run.commit}`
-      let graph = this.keyGraphs.get(id)
-      if (!graph) {
-        graph = testTree(run.repository, run.commit, AbortSignal.timeout(30_000))
-          .then(tree => CiResultKeys.create(tree, AbortSignal.timeout(30_000)))
-        graph.catch(() => this.keyGraphs.delete(id))
-        this.keyGraphs.set(id, graph)
-        if (this.keyGraphs.size > 8) this.keyGraphs.delete(this.keyGraphs.keys().next().value!)
-      }
-      const keys = await graph
       const part = run.part ?? run.suite
-      return Object.fromEntries((await Promise.all(files.map(async file => [file, (await keys.key(file, run.suite, part)).key] as const)))
-        .flatMap(([file, key]) => key ? [[file, key]] : []))
+      try {
+        const keys = await this.keysOf(run.repository, run.commit, files.map(file => ({ file, suite: run.suite, part })),
+          AbortSignal.timeout(120_000))
+        return Object.fromEntries(Object.entries(keys).flatMap(([file, value]) => value.key ? [[file, value.key]] : []))
+      } catch (error) {
+        // The part's admitted keys are still recorded; these files run again next time.
+        this.context.log.warn({ err: error, ticketId: run.id }, 'CI result cache keys failed for a finished part')
+        return {}
+      }
     }
   }
 
@@ -477,8 +500,14 @@ export class HostCiService {
     // A branch carries changes main never checked, CI infrastructure among them. Diffing against the newest ancestor
     // this suite already passed on re-checks only what changed since then, instead of a full run on every commit.
     if (!input.baseCommit && !input.gate && (input.scope ?? 'affected') === 'affected' && input.files === undefined) {
-      const passed = await this.passedAncestor(repository, input.suite, commit)
+      const passed = await this.passedAncestor(repository, input.suite, commit).catch(error => {
+        this.context.log.warn({ err: error, commit, suite: input.suite }, 'CI passed-ancestor lookup failed; no base')
+        return undefined
+      })
       if (passed) input = { ...input, baseCommit: passed }
+      // Without a commit this check passed on, nothing proves the packages a diff leaves out: check every package
+      // (their restored incremental state keeps unchanged files fast). Test suites prove files one by one instead.
+      else if (input.suite === 'typecheck' || input.suite === 'lint') input = { ...input, scope: 'full' }
     }
     const inventories = Promise.all([
       ['unit', 'integration'].includes(input.suite) ? this.learnedDurations(repository) : null,
@@ -556,6 +585,8 @@ export class HostCiService {
     // never starts a job, and test files that already passed with identical inputs are skipped and the files this run
     // proves are recorded. Any failure leaves the selection to the runner.
     let mainSelection: { files: string[]; reason: string } | undefined
+    let cache: CachedSelection | undefined
+    const partOf = (file: string) => input.suite === 'unit' && capabilities.parts ? unitPartOf(file) : input.suite
     if (deriveFiles && !input.gate && !smokeTarget && ['unit', 'integration', 'typecheck', 'lint'].includes(input.suite)
       && this.commits.affectedSelection) {
       try {
@@ -563,12 +594,22 @@ export class HostCiService {
           ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}), ...(coverage ? { coverage } : {}),
           signal: AbortSignal.timeout(60_000) })
         if (picked.scope === 'affected') mainSelection = { files: picked.files, reason: picked.reason }
-        // A change that makes the selector pick everything (CI or lockfile changes) still skips test files that already
-        // passed with identical inputs: their result keys include those inputs.
+        // Test suites run every file without a passing result at its current inputs: a test that failed, changed or
+        // imports a change has no proof for its new key and runs; everything else is skipped. Files whose inputs no key
+        // can prove run when the change affects them or their latest result failed.
         const everyFile = input.suite === 'unit' ? inventory?.files : input.suite === 'integration' ? integration?.files : undefined
-        if (picked.scope === 'full' && everyFile?.length && this.commits.testTree) {
-          mainSelection = { files: [...everyFile], reason: `${picked.reason} Every file is selected; files that already passed `
-            + 'with identical inputs are skipped.' }
+        if (everyFile?.length && (this.commits.resultKeys || this.commits.testTree)) {
+          const affected = new Set(picked.scope === 'full' ? everyFile : picked.files)
+          const failed = await failedTestFiles(this.pool, { workspaceId: scope.workspaceId, repository, suite: input.suite })
+          const proof = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
+            suite: input.suite, files: everyFile, keys: (files, signal) => this.keysOf(repository, commit, files, signal), partOf })
+          // Without keys nothing is proven: every file runs.
+          const run = proof.unavailable ? proof.files
+            : proof.files.filter(file => proof.keys[file] !== undefined || affected.has(file) || failed.has(file))
+          cache = { files: run, cached: proof.cached,
+            keys: Object.fromEntries(run.flatMap(file => proof.keys[file] ? [[file, proof.keys[file]!]] : [])) }
+          mainSelection = { files: run, reason: `${picked.reason} Runs the tests without a passing result at their current `
+            + `inputs, plus unkeyed tests the change affects or that failed last; ${proof.cached.length} proven files are skipped.` }
         }
       } catch (error) {
         this.context.log.warn({ err: error, commit, suite: input.suite }, 'Main-side affected selection failed; the runner selects')
@@ -579,22 +620,20 @@ export class HostCiService {
     if (mainSelection) { deriveFiles = false; coverage = undefined }
     const explicitFiles = input.files ?? mainSelection?.files
     const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? explicitFiles : [] }
-    // Gates, full scope and smoke runs always run every file; only explicit affected test selections use the cache.
-    let cache: CachedSelection | undefined
-    if (!input.gate && !smokeTarget && selectionScope === 'affected' && explicitFiles?.length && this.commits.testTree
+    // Explicit affected selections use the cache; full scope runs every file. A smoke run proves its file on one
+    // computer, so its proofs are per computer: a computer that already passed the file at these inputs skips it.
+    if (!cache && !input.gate && selectionScope === 'affected' && explicitFiles?.length && (this.commits.resultKeys || this.commits.testTree)
       && (input.suite === 'unit' || input.suite === 'integration')) {
-      const testTree = this.commits.testTree.bind(this.commits)
       cache = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
-        suite: input.suite, files: explicitFiles, tree: signal => testTree(repository, commit, signal),
-        partOf: file => input.suite === 'unit' && capabilities.parts ? unitPartOf(file, inventory?.heavy ?? []) : input.suite })
-      selection.files = cache.files
+        suite: input.suite, files: explicitFiles, keys: (files, signal) => this.keysOf(repository, commit, files, signal),
+        partOf: smokeTarget ? () => `smoke:${smokeTarget.key}` : partOf })
     }
-    const cachedFiles = cache?.cached.length ? cache.cached : undefined
+    if (cache) selection.files = cache.files
     const empty = selectionScope === 'affected' && selection.files?.length === 0
     const split = input.suite === 'integration' ? capabilities.integrationPartitions : capabilities.parts
     let parts: { part: CiRunRecord['part']; partition: CiRunRecord['partition']; files: string[];
       expectedDurationMs?: number; suite?: CiRunRecord['suite']; plannedHostKey?: string;
-      integrationShards?: number; requiresBuildComputer?: boolean }[] = split ? planCiParts(selection, unitDurations, inventory)
+      integrationShards?: number; requiresBuildComputer?: boolean; scope?: CiRunRecord['scope'] }[] = split ? planCiParts(selection, unitDurations, inventory)
       : [{ part: null, partition: null, files: selection.files ?? [] }]
     let smokeShards: number | undefined
     if (smokeTarget && input.suite === 'integration') {
@@ -620,14 +659,32 @@ export class HostCiService {
           }
         }
       }
-      parts = [{ part: null, partition: null, files: input.files! }]
+      parts = [{ part: null, partition: null, files: selection.files ?? input.files! }]
     } else if (input.gate) {
       const speeds = await readExecutorSpeeds(this.pool, planning)
       timing.mark('speedsMs')
       const slots = await readCiSlots(this.context, this.pool, planning)
       timing.mark('slotsMs')
-      parts = await planCiGate(this.context, input, { ...integration!, durations: durations! }, inventory!, unitDurations, planning,
-        speeds, this.reservedCloudSlots, slots.ordinary, slots.usedByComputer)
+      // The default (affected) gate proves every test file: each one runs unless it already passed at its current
+      // inputs, and files no key can prove always run. Full scope runs everything.
+      let gateIntegration = integration!, gateUnit = inventory!
+      if (selectionScope === 'affected' && (this.commits.resultKeys || this.commits.testTree)) {
+        const prove = (suite: 'unit' | 'integration', files: readonly string[]) => planCachedSelection(this.context, this.pool,
+          { workspaceId: scope.workspaceId, repository, commit, suite, files,
+            keys: (keyed, signal) => this.keysOf(repository, commit, keyed, signal),
+            partOf: file => suite === 'unit' ? unitPartOf(file) : 'integration' })
+        const [unitProof, integrationProof] = await Promise.all([prove('unit', inventory!.files), prove('integration', integration!.files)])
+        gateUnit = { ...inventory!, files: unitProof.files }
+        gateIntegration = { ...integration!, files: integrationProof.files }
+        cache = { files: [...unitProof.files, ...integrationProof.files], keys: { ...unitProof.keys, ...integrationProof.keys },
+          cached: [...unitProof.cached, ...integrationProof.cached] }
+        // Main chose every part's files; runners must run exactly those, not select again.
+        deriveFiles = false
+        coverage = undefined
+        timing.mark('gateProofMs')
+      }
+      parts = await planCiGate(this.context, input, { ...gateIntegration, durations: durations! }, gateUnit, unitDurations, planning,
+        speeds, this.reservedCloudSlots, slots.ordinary, slots.usedByComputer, selectionScope === 'affected')
     } else if (integration) {
       const slots = await readCiSlots(this.context, this.pool, planning)
       parts = planIntegrationParts(selection, { ...integration, durations: durations! }, slots.eligible, slots.ordinary)
@@ -636,11 +693,14 @@ export class HostCiService {
       parts = planCiParts(selection, unitDurations, inventory, (await readCiSlots(this.context, this.pool, planning)).eligible.ordinary)
     }
     timing.mark('planMs')
+    const cachedFiles = cache?.cached.length ? cache.cached : undefined
     this.context.log.info({ gate: input.gate === true, suite: input.suite, ...timing.phases }, 'CI run preparation timing')
     let selectionReason = 'Caller supplied the affected files.'
     if (selectionScope === 'full') selectionReason = 'Full scope requested; every file in the suite or partition runs.'
     if (deriveFiles) selectionReason = 'Affected files will be selected on the runner.'
     if (mainSelection) selectionReason = mainSelection.reason
+    if (input.gate && selectionScope === 'affected') selectionReason = 'Proven gate: every test file without a passing result '
+      + `at its current inputs runs (files no key can prove always run); ${cache?.cached.length ?? 0} proven files are skipped.`
     const runs = parts.map((planned, index) => CiRunRecordSchema.parse({
       ...planned,
       ...(index === 0 && cachedFiles ? { cachedFiles } : {}),
@@ -648,8 +708,9 @@ export class HostCiService {
       ...(smokeTarget ? { plannedHostKey: smokeTarget.key,
         ...(smokeShards !== undefined ? { integrationShards: smokeShards } : {}) } : {}),
       id: randomUUID(), workspaceId: scope.workspaceId,
-      suite: planned.suite ?? input.suite, scope: selectionScope, commit, repository, groupId,
-      selection: { scope: selectionScope, files: planned.files ?? explicitFiles ?? [], reason: selectionReason },
+      suite: planned.suite ?? input.suite, scope: input.gate ? planned.scope ?? 'full' : selectionScope, commit, repository, groupId,
+      selection: { scope: input.gate ? planned.scope ?? 'full' : selectionScope, files: planned.files ?? explicitFiles ?? [],
+        reason: selectionReason },
       ciMirror: workspace.ciMirror ? `${workspace.ciMirror.owner}/${workspace.ciMirror.name}` : null,
       priority, priorityReason,
       ...(input.gate ? { gate: true, noSupersede: true } : {}),
@@ -1383,7 +1444,8 @@ export class HostCiService {
     }
     if (terminal && collected.run.collection === 'complete') {
       try {
-        await recordCiResultCache(this.pool, run, collected.run.state, this.resultKeys(run))
+        await recordCiResultCache(this.pool, { ...run, finishedAt: collected.run.finishedAt ?? run.finishedAt }, collected.run.state,
+          this.resultKeys(run))
       } catch (error) {
         collected.run = { ...collected.run, collection: 'pending' }
         observationError ??= error
@@ -1706,8 +1768,9 @@ export class HostCiService {
   }
 
   private async dispatchOnce() {
-    // Once per service start, in the background: record the files that finished parts already proved.
-    this.backfillingResults ??= this.context.platform.withoutCiDatabasePriority(() => this.backfillResultCache())
+    // Once per service start, in the background and after startup settles: record the files finished parts proved.
+    this.backfillingResults ??= new Promise(resolve => setTimeout(resolve, 120_000).unref())
+      .then(() => this.context.platform.withoutCiDatabasePriority(() => this.backfillResultCache()))
       .catch(error => this.context.log.warn({ err: error }, 'CI result cache backfill failed'))
     const snapshots: PolicySnapshots = new Map()
     this.cleaningTickets ??= this.context.platform.withoutCiDatabasePriority(() => this.cancelObsoleteTickets())

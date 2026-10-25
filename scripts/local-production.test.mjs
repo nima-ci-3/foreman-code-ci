@@ -1,3 +1,4 @@
+// ci-key-inputs: scripts/local-production.mjs scripts/local-production-runtime.mjs apps/ci/src/runner.ts packages/contracts-node/src/serverKit.ts
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'

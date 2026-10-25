@@ -3,7 +3,7 @@
 // scripts import it by relative path from the repository under test, as they do the contracts' .mjs files.
 import { isAbsolute, relative } from 'node:path'
 
-export const CI_TEST_RESULT_LIMITS = { tests: 600, files: 300, name: 200, file: 200, message: 240, location: 240 }
+export const CI_TEST_RESULT_LIMITS = { tests: 600, files: 300, name: 200, file: 200, message: 240, location: 240, proven: 5000 }
 const rank = { failed: 0, skipped: 1, passed: 2 }
 const DAY_MS = 24 * 3_600_000
 
@@ -60,6 +60,9 @@ export function ciTestResults(reports, repository) {
   const chosen = new Set(all.sort((left, right) => left.rank - right.rank || left.fileIndex - right.fileIndex
     || left.index - right.index).slice(0, CI_TEST_RESULT_LIMITS.tests).map(entry => `${entry.fileIndex}:${entry.index}`))
   const tests = summary.passed + summary.failed + summary.skipped
-  return { summary, truncated: kept.length < files.length || chosen.size < tests,
+  // Every file whose tests all passed, beyond the display bounds: Main's result cache records each as proven.
+  const proven = files.filter(file => file.status === 'passed' && file.tests.length && file.tests.every(test => test.status === 'passed')
+    && file.file.length < CI_TEST_RESULT_LIMITS.file).map(file => file.file).slice(0, CI_TEST_RESULT_LIMITS.proven)
+  return { summary, proven, truncated: kept.length < files.length || chosen.size < tests,
     files: kept.map((file, fileIndex) => ({ ...file, tests: file.tests.filter((_, index) => chosen.has(`${fileIndex}:${index}`)) })) }
 }

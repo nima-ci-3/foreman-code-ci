@@ -8,6 +8,7 @@ import { CommandAttempt } from '../../shared/api/commandAttempt'
 import { assertSession, sessionGeneration } from '../../shared/api/sessionBoundary'
 import { Button, ConfirmDialog, IconButton, TextField } from '../../shared/ui/nocturne'
 import { useFileDrop } from '../../shared/ui/useFileDrop'
+import { formatFileSize } from '../../shared/ui/formatters'
 import { ATTACHMENT_ACCEPT, inspectAttachment } from '../attachments'
 import { projectFilesClient, type ProjectFileRemoveInput } from './projectFilesClient'
 import { useProjectFileRemove, useProjectFilesQuery, useProjectFileUpload } from './projectFilesQueries'
@@ -98,12 +99,6 @@ function WorkspaceProjectFiles({ workspaceId }: ProjectFilesSectionProps) {
   </section>
 }
 
-function fileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
-}
-
 function ProjectFileItem({ workspaceId, row, onRemove }: ProjectFilesSectionProps & { row: FileRow; onRemove: () => void }) {
   const controller = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -142,7 +137,7 @@ function ProjectFileItem({ workspaceId, row, onRemove }: ProjectFilesSectionProp
       <span className="project-file-name" title={name}>{name}</span>
     </span>
     <span className="project-file-type" title={row.revision.mediaType}>{row.revision.filename.split('.').at(-1)?.toUpperCase()}</span>
-    <span className="project-file-size" title={`${row.revision.byteSize} bytes`}>{fileSize(row.revision.byteSize)}</span>
+    <span className="project-file-size" title={`${row.revision.byteSize} bytes`}>{formatFileSize(row.revision.byteSize)}</span>
     {row.file.state === 'ready' ? <IconButton label={`Download ${name}`} size="sm" variant="ghost"
       disabled={download.isPending} onClick={() => {
         const signal = controller.current?.signal

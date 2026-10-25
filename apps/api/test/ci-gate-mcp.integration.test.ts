@@ -190,7 +190,7 @@ async function fixture(options: { cloudSlots?: number; files?: string[]; offline
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
     integrationInventory: async () => ({ files, durations: Object.fromEntries(files.map(file => [file, 120_000])) }),
     unitInventory: async () => ({ files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.tsx'],
-      durations: {}, heavy: [] }),
+      durations: {}}),
   }, {
     computers: async () => computers,
     request: async (computer, request) => {

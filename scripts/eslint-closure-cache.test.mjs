@@ -26,15 +26,22 @@ function project(realLint = false) {
   symlinkSync(dirname(require.resolve('typescript/package.json')), join(directory, 'node_modules/typescript'))
   mkdirSync(join(directory, 'src'))
   writeFileSync(join(directory, 'node_modules/eslint/bin/eslint.js'), `
-    const { appendFileSync, readFileSync } = require('node:fs')
-    const files = process.argv.slice(2).filter(argument => argument.endsWith('.ts'))
+    const { appendFileSync, readFileSync, writeFileSync } = require('node:fs')
+    const { resolve } = require('node:path')
+    const args = process.argv.slice(2)
+    const files = args.filter(argument => argument.endsWith('.ts'))
     appendFileSync(${JSON.stringify(join(directory, 'linted.log'))}, JSON.stringify(files.map(file => file.replace(/^src\\//, '')).sort()) + '\\n')
-    process.exit(files.some(file => readFileSync(file, 'utf8').includes('LINT_ERROR')) ? 1 : 0)`)
+    const failing = files.filter(file => readFileSync(file, 'utf8').includes('LINT_ERROR'))
+    const output = args[args.indexOf('--output-file') + 1]
+    writeFileSync(output, JSON.stringify(files.map(file => ({ filePath: resolve(file), messages: failing.includes(file)
+      ? [{ line: 1, column: 1, severity: 2, message: 'Lint error', ruleId: 'fixture/error' }] : [] }))))
+    process.exit(failing.length ? 1 : 0)`)
   if (realLint) writeFileSync(join(directory, 'node_modules/eslint/bin/eslint.js'), `
     const { ESLint } = require(${JSON.stringify(require.resolve('eslint'))})
     const tseslint = require(${JSON.stringify(require.resolve('typescript-eslint'))})
-    const { appendFileSync } = require('node:fs')
-    const files = process.argv.slice(2).filter(argument => argument.endsWith('.ts'))
+    const { appendFileSync, writeFileSync } = require('node:fs')
+    const args = process.argv.slice(2)
+    const files = args.filter(argument => argument.endsWith('.ts'))
     appendFileSync(${JSON.stringify(join(directory, 'linted.log'))}, JSON.stringify(files.map(file => file.replace(/^src\\//, '')).sort()) + '\\n')
     const lint = new ESLint({ cwd: ${JSON.stringify(directory)}, overrideConfigFile: true,
       overrideConfig: tseslint.config(...tseslint.configs.recommended, { files: ['**/*.ts'],
@@ -42,6 +49,7 @@ function project(realLint = false) {
         rules: { '@typescript-eslint/no-floating-promises': 'error' } }) })
     lint.lintFiles(files).then(results => {
       for (const result of results) for (const message of result.messages) console.error(message.ruleId, message.message)
+      writeFileSync(args[args.indexOf('--output-file') + 1], JSON.stringify(results))
       process.exit(results.some(result => result.errorCount || result.warningCount) ? 1 : 0)
     }).catch(error => { console.error(error); process.exit(1) })`)
   writeFileSync(join(directory, 'package.json'), '{"name":"closure-fixture"}')
@@ -76,12 +84,16 @@ test('lints every file once, then only files whose own text or imported files ch
   } finally { fixture.close() }
 })
 
-test('a failed lint records no pass, so the failing file is linted again', () => {
+test('a failed file is linted again while the files that passed beside it stay proven', () => {
   const fixture = project()
   try {
     fixture.write('alone.ts', 'export const alone = 1 // LINT_ERROR\n')
-    assert.equal(fixture.lint().status, 1)
     assert.deepEqual(fixture.lint(), { status: 1, linted: ['alone.ts', 'types.ts', 'user.ts'] })
+    // Only the failing file reruns; the others passed at these inputs.
+    assert.deepEqual(fixture.lint(), { status: 1, linted: ['alone.ts'] })
+    fixture.write('alone.ts', 'export const alone = 2\n')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts'] })
+    assert.deepEqual(fixture.lint(), { status: 0, linted: [] })
   } finally { fixture.close() }
 })
 

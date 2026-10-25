@@ -3,7 +3,7 @@ import { useRef } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DurableInteraction } from '@foreman-code/contracts'
 import type { RepeatGraphScopeCurrent } from '@foreman-code/contracts/current'
-import { approvalOptionScope } from '../../../shared/ui/approvalOptionScope'
+import { InteractionOptionButton } from '../../../shared/ui/InteractionOptionButton'
 import { NativeInteractionResponse } from '../../../shared/ui/NativeInteractionResponse'
 import { runActionsClient } from './client'
 import { actionKey, useActionLifetime, useDisclosure } from './state'
@@ -55,13 +55,11 @@ function Approval({ scope, item, run, permitted, refresh }: {
               interactionId: interaction.id, optionId, expectedRevision: interaction.revision,
               ...(values !== undefined ? { response: values } : {}),
             } })} /> : null}
-        {interaction.status === 'pending' && !hasInput ? <div role="group" aria-label="Offered human responses">{interaction.responseOptions.map((option) => <div key={option.optionId} className="run-action-option">
-          <p><strong>{option.label}</strong> — {approvalOptionScope(option)} {option.scopeSummary ?? ''}</p>
-          <button type="button" disabled={!!reason || response.isPending || response.isError || detail.isFetching}
-            title={reason} onClick={() => response.mutate({ expected: interaction, input: {
-              interactionId: interaction.id, optionId: option.optionId, expectedRevision: interaction.revision,
-            } })}>{option.label}</button>
-        </div>)}</div> : null}
+        {interaction.status === 'pending' && !hasInput ? <div role="group" aria-label="Offered human responses">{interaction.responseOptions.map((option) => <InteractionOptionButton key={option.optionId} option={option}
+          disabled={!!reason || response.isPending || response.isError || detail.isFetching}
+          onSelect={(optionId) => response.mutate({ expected: interaction, input: {
+            interactionId: interaction.id, optionId, expectedRevision: interaction.revision,
+          } })} />)}</div> : null}
       </> : null}
       {reason ? <p>{reason}</p> : null}
       {response.isPending ? <p role="status">{isDirection ? 'Recording Run direction…'

@@ -18,7 +18,7 @@ function fleet(): HostCiComputer[] {
 
 const files = Array.from({ length: 901 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
 const inventory = { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) }
-const unit = { files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.ts'], durations: {}, heavy: [] }
+const unit = { files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.ts'], durations: {}}
 
 it('bounds status requests and splits a large gate across cloud executors', async () => {
   let active = 0

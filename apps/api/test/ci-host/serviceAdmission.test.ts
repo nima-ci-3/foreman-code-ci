@@ -60,7 +60,7 @@ function fixture(branch: string | undefined, status?: HostCiEndpoint['request'],
   const commits: CiCommits = {
     resolve: async () => 'a'.repeat(40),
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
-    unitInventory: async () => ({ files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }),
+    unitInventory: async () => ({ files: ['apps/api/src/site.test.ts'], durations: {}}),
     integrationInventory: async () => ({ files: ['apps/api/test/site.integration.test.ts'], durations: {} }),
     ...(branch === undefined ? {} : { branch: async () => branch, isAncestor: async () => true }),
   }

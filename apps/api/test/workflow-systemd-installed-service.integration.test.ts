@@ -1,3 +1,4 @@
+// ci-key-inputs: packages/contracts/src/index.ts
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { RuntimeBuildIdentitySchema } from '@foreman-code/contracts'
 import { createRuntimeBuildIdentity } from '@foreman-code/contracts/runtime-build-identity-node'

@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, readlink, stat, rm } from 'node:fs/promises';
