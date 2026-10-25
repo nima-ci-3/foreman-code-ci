@@ -48,7 +48,6 @@ export function useRuntimeBuildIdentityQuery(guardRequests = false) {
     retry: (_failureCount, error) => ApiError.is(error)
       && (error.code === 'NETWORK_ERROR' || error.status >= 500),
     retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 10_000),
-    // A deploy restarts the API: check the build again every few seconds so an update shows almost at once.
-    enabled: !sessionIsSwitching(), staleTime: 0, refetchInterval: 5_000, refetchOnReconnect: 'always',
+    enabled: !sessionIsSwitching(), staleTime: 0, refetchInterval: 60_000,
     queryFn: ({ signal }) => apiClient.request('/api/runtime/build-identity/v1', RuntimeBuildIdentitySchema, { signal }) })
 }
