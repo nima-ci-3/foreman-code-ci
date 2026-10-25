@@ -11,14 +11,12 @@ interface Viewer {
   listeners: Set<() => void>
   receiptKey: string; inputHash: string; idleTimer?: ReturnType<typeof setTimeout>; closing?: Promise<void>
   capture?: Promise<() => Promise<void>>
-  trailing?: BrowserHostFrame; trailingTimer?: ReturnType<typeof setTimeout>
 }
 interface ViewReceipt { descriptor: BrowserRuntimeView; closed: boolean }
 interface ViewOpenInput { ownerId: string; viewerId: string; sessionId: string; tabId: string; browserGeneration: number; commandId?: string }
 
 /** About 30 frames per second; Chromium sends a frame only when the page changed. */
 const FRAME_INTERVAL_MS = 33
-const CLEANUP_RETRY_MS = 5_000
 
 /** Dedicated browser media: one replaceable frame per viewer, independent of ordinary device RPC slots. */
 export class BrowserMediaService {
@@ -57,23 +55,11 @@ export class BrowserMediaService {
     await this.broker.options.journal.write(receiptKey, { inputHash, state: 'reserved', value: { descriptor, closed: false } satisfies ViewReceipt })
     this.viewers.set(id, viewer)
     try {
-      const publish = (frame: BrowserHostFrame) => {
+      viewer.capture = this.broker.capture(input.sessionId, input.tabId, input.browserGeneration, frame => {
+        if (frame.data.byteLength > 2 * 1024 * 1024 || viewer.closed || performance.now() - viewer.lastFrameAt < FRAME_INTERVAL_MS) return
         viewer.lastFrameAt = performance.now()
         viewer.latest = { ...frame, sequence: ++viewer.sequence }
         for (const listener of viewer.listeners) listener()
-      }
-      viewer.capture = this.broker.capture(input.sessionId, input.tabId, input.browserGeneration, frame => {
-        if (frame.data.byteLength > 2 * 1024 * 1024 || viewer.closed) return
-        const wait = FRAME_INTERVAL_MS - (performance.now() - viewer.lastFrameAt)
-        if (wait <= 0) { publish(frame); return }
-        // A change inside the interval is kept and shown when it ends, so the view never stays on an older frame.
-        viewer.trailing = frame
-        viewer.trailingTimer ??= setTimeout(() => {
-          viewer.trailingTimer = undefined
-          const latest = viewer.trailing
-          viewer.trailing = undefined
-          if (latest && !viewer.closed) publish(latest)
-        }, wait)
       })
       viewer.stop = await viewer.capture
       if (viewer.closed) throw new DomainError('BROWSER_VIEW_CLOSED', 'The view ended while its capture was opening.', 409)
@@ -125,9 +111,8 @@ export class BrowserMediaService {
     if (!viewer) return
     if (viewer.ownerId !== ownerId) throw new DomainError('BROWSER_VIEW_SCOPE', 'This viewer belongs to another caller.', 403)
     if (viewer.closing) return viewer.closing
-    viewer.closed = true; viewer.latest = null; viewer.trailing = undefined
+    viewer.closed = true; viewer.latest = null
     if (viewer.idleTimer) clearTimeout(viewer.idleTimer)
-    if (viewer.trailingTimer) clearTimeout(viewer.trailingTimer)
     const task = (async () => {
       await this.broker.options.journal.write(viewer.receiptKey, { inputHash: viewer.inputHash, state: 'completed',
         value: { descriptor: viewer.descriptor, closed: true } satisfies ViewReceipt })
@@ -137,11 +122,7 @@ export class BrowserMediaService {
         if (viewer.capture) {
           try { viewer.stop = await viewer.capture } catch (error) { this.reportFailure(error) }
         }
-        try { await viewer.stop(); this.viewers.delete(id) } catch (error) {
-          // The capture is still held: retry its cleanup instead of keeping it until the session ends.
-          setTimeout(() => { void this.close(id, viewer.ownerId).catch(this.reportFailure) }, CLEANUP_RETRY_MS).unref?.()
-          throw error
-        }
+        await viewer.stop(); this.viewers.delete(id)
       } finally {
         if (disconnected) await this.broker.disconnectViewer(viewer.descriptor.sessionId, viewer.viewerId)
       }
