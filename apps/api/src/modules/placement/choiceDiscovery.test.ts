@@ -159,6 +159,17 @@ it('omits disabled or incompatible profiles and respects a saved profile selecti
   expect((await f.service.list(f.principal, f.input)).choices).toEqual([])
 })
 
+it('offers a paired computer for an Agent whose saved profile is on Main', async () => {
+  const f = fixture({ host: 'device' })
+  // New board Agents copy the Main profile pin from the defaults; it must not lock them to Main.
+  f.configuration.harnessProfileSelection = { instanceId: randomUUID(), instanceRevision: 'main-1',
+    target: { hostRef: { kind: 'main', mainId: f.profile.target.hostRef.mainId }, applicationInstallationId: f.profile.target.hostRef.mainId,
+      harnessInstallationId: 'installed-main', installationFingerprint: 'b'.repeat(64) } }
+  f.profiles.mockResolvedValue([f.profile])
+  expect((await f.service.list(f.principal, f.input)).choices).toEqual([
+    expect.objectContaining({ placement: expect.objectContaining({ hostRef: f.profile.target.hostRef }) })])
+})
+
 it('uses the retained binding policy after the workspace selects a newer location policy', async () => {
   const f = fixture()
   f.readRoots.mockResolvedValue([{ ...f.policy, rootPolicyRevision: '2', locationRevision: '3' }])
