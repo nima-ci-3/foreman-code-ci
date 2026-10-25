@@ -273,7 +273,7 @@ it('keeps every selected file in a nonempty slice when most files require user s
     }
     expect(read.partitions!.filter(run => run.state === 'queued')).toHaveLength(2)
     expect(read.partitions!.filter(run => run.state === 'running')).toHaveLength(1)
-    expect(f.started[0]).toMatchObject({ computer: 'GitHub Actions 1',
+    expect(f.started[0]).toMatchObject({ computer: 'CircleCI 1',
       request: { partition: { index: 2, hostIndexes: [0, 1] } } })
   } finally { await f.close() }
 })

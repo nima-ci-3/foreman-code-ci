@@ -1,8 +1,8 @@
-import { executionNodeCut } from '../../shared/mocks/executionNodeCut'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
+import { RepeatGraphCurrentStateSchema } from '@foreman-code/contracts/current'
 import { server } from '../../mocks/server'
 import { deferred } from '../../test/deferred'
 import canvasStyles from '../../shared/ui/nocturne/canvas.css?inline'
@@ -22,7 +22,7 @@ const href = () => `/workspaces/${fixture.mock.workspaceId}?workflowId=${fixture
 it('gives Completed enough status width on a default Worker circle', async () => {
   setRunState(fixture, fixture.runs.after.scope, 'running')
   const current = fixture.mock.currents.get(fixture.runs.after.run.id)!
-  fixture.mock.currents.set(current.scope.runId, executionNodeCut({ ...current,
+  fixture.mock.currents.set(current.scope.runId, RepeatGraphCurrentStateSchema.parse({ ...current,
     state: { ...current.state, executions: [{
       identity: { workflowNodeId: fixture.first.id, executionId: 'completed-worker', agentId: fixture.first.agentId,
         agentConfigurationVersionId: fixture.after.agentConfigurationVersionIds[fixture.first.agentId], attempt: 1, occurrence: null },
@@ -98,7 +98,7 @@ it('shows a slow Start as progress and removes confirmation once the Run is know
 it('labels the Board status Stopping while an accepted Stop is cleaning up', async () => {
   setRunState(fixture, fixture.runs.after.scope, 'running', true)
   const current = fixture.mock.currents.get(fixture.runs.after.run.id)!
-  fixture.mock.currents.set(fixture.runs.after.run.id, executionNodeCut({ ...current,
+  fixture.mock.currents.set(fixture.runs.after.run.id, RepeatGraphCurrentStateSchema.parse({ ...current,
     state: { ...current.state, run: { ...current.state.run, stopRequested: true } } }))
   await mountMeasuredBoard(href())
   expect(await screen.findByText('Cleaning up…')).toBeVisible()
@@ -111,7 +111,7 @@ it('opens a live Run of another saved version in its own view instead of hiding 
   const { scope, run } = fixture.runs.before
   setRunState(fixture, scope, 'running', true)
   const current = fixture.mock.currents.get(run.id)!
-  fixture.mock.currents.set(run.id, executionNodeCut({ ...current,
+  fixture.mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...current,
     state: { ...current.state, run: { ...current.state.run, stopRequested: true } } }))
   await mountMeasuredBoard(href())
   expect(await screen.findByRole('region', { name: 'Selected Run board' })).toBeInTheDocument()

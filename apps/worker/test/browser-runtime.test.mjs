@@ -438,22 +438,19 @@ test('a transition browser cannot activate before the old supervisor confirms th
   const facts = { ...target, node: manifest.runtime.version, rootPersistent: true, homePersistent: true };
   const installed = await installVersion({ root, stateDirectory, ...carrier, facts, expected,
     browserRuntimeReadiness: async () => { throw new Error('The old updater cannot prepare the Node 24 browser'); } });
-  const record = { format: 1, manifestSha256: carrier.approvedManifestSha256, status: { state: 'restarting' },
-    restart: { directory: installed.directory } };
+  const record = { format: 1, status: { state: 'restarting' }, restart: { directory: installed.directory } };
   await writeUpdateRecord(stateDirectory, record);
   const f = bootstrapFixture();
   const owner = createWorkerBrowserRuntime({ ...f.options, root, stateDirectory, facts,
     readSelectedRelease: readInstalledRelease, readInstalled: readInstalledBrowserRuntime,
     browserRuntimeReadiness: ready, loadModule: async () => ({ ...f.module, createBrowserHost: async () => f.host }) });
   t.after(() => owner.close());
-  // Repair waits for the old supervisor to confirm the new runtime; nothing activates meanwhile.
-  const repairing = owner.retry();
-  await new Promise(resolve => setTimeout(resolve, 600));
+  await assert.rejects(owner.retry(), /Worker runtime update must finish/);
   await assert.rejects(readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime') }), /BROWSER_RUNTIME_MISSING/);
   assert.equal(owner.getHost(), null);
   record.status = { state: 'current', manifestSha256: carrier.approvedManifestSha256 };
   await writeUpdateRecord(stateDirectory, record);
-  assert.equal((await repairing).ready, true);
+  assert.equal((await owner.retry()).ready, true);
   assert.equal((await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts })).runtimeVersion, '1.0.0');
 });
 

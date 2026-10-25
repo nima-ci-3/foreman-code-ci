@@ -5,7 +5,8 @@ import { onlyCiInfrastructure } from './priority.js'
 import type { CiTestTree } from './resultCache.js'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { CiSelectionSchema, type CiCoverageSelection } from '@foreman-code/contracts'
 
@@ -51,23 +52,13 @@ export class GitCiCommits implements CiCommits {
   }
 
   async coverageAncestors(repository: string, commit: string, candidates: string[]): Promise<string[]> {
-    const signal = AbortSignal.timeout(60_000)
+    const signal = AbortSignal.timeout(30_000)
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
-    const retained = new Set(candidates)
     // Date order keeps descendants ahead of parents, then orders independent branches by commit time.
-    const ancestors = async () => {
-      const result = await this.git.git(['rev-list', '--date-order', commit], { cwd: clone, signal })
-      if (result.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'rev-list')
-      return result.stdout.trim().split('\n').filter(ancestor => retained.has(ancestor))
-    }
-    const found = await ancestors()
-    if (found.length || !candidates.length) return found
-    // A just-fetched commit is a shallow boundary: deepen until the newest candidate's history connects, then read.
-    await this.context.platform.ensureCommit(this.git, repository, candidates[0]!, signal)
-    await this.context.platform.deepenUntilConnected(this.git, clone, [commit, candidates[0]!],
-      async () => (await this.git.git(['merge-base', '--is-ancestor', candidates[0]!, commit], { cwd: clone, signal })).code === 0,
-      signal)
-    return ancestors()
+    const result = await this.git.git(['rev-list', '--date-order', commit], { cwd: clone, signal })
+    if (result.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'rev-list')
+    const retained = new Set(candidates)
+    return result.stdout.trim().split('\n').filter(ancestor => retained.has(ancestor))
   }
 
   async capabilities(repository: string, commit: string) {
@@ -135,15 +126,13 @@ export class GitCiCommits implements CiCommits {
       defaultRef = await this.context.platform.fetchRepositoryBranch(this.git, clone, repository, input.defaultBranch, input.signal)
       await this.context.platform.ensureCommit(this.git, repository, defaultRef, input.signal)
     } else await this.context.platform.ensureCommit(this.git, repository, input.baseCommit, input.signal)
-    // Beside the clone on disk, not in /tmp (a RAM tmpfs on Main computers).
-    const directory = await mkdtemp(join(dirname(clone), '.ci-main-selection-'))
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'ci-main-selection-'))
     try {
       // The selector and the import graph it reads come from the tested commit, as on a runner.
       const code = join(directory, 'code')
       await mkdir(code)
       const archive = await this.git.git(['archive', '--format=tar', '-o', join(directory, 'code.tar'), input.commit,
-        // The selector's import graph: scripts and the workspace packages it reads (contracts, verification runner).
-        'scripts', 'packages'], { cwd: clone, signal: input.signal })
+        'scripts', 'packages/contracts/src'], { cwd: clone, signal: input.signal })
       if (archive.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'archive')
       await run('tar', ['-xf', join(directory, 'code.tar'), '-C', code], { signal: input.signal })
       const coveragePath = join(directory, 'coverage.json')

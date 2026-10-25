@@ -1,4 +1,3 @@
-import { executionNodeCut } from '../../../shared/mocks/executionNodeCut'
 import { nativeNode } from '../../../shared/mocks/nativeFixtureTypes'
 // @vitest-environment jsdom
 import { webcrypto } from 'node:crypto'
@@ -9,7 +8,7 @@ import { RouterProvider, createMemoryHistory, createRouter } from '@tanstack/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import {
-  boardSearchForInspection, boardSearchForRun, runInspectionKey,
+  boardSearchForInspection, boardSearchForRun, runInspectionKey, RepeatGraphCurrentStateSchema,
   type RepeatGraphScopeCurrent, type WorkspaceBoardInspection,
 } from '@foreman-code/contracts/current'
 import { routeTree } from '../../../app/router'
@@ -605,7 +604,7 @@ describe('Live Run status on the Board', () => {
     const node = nativeNode(version.definition.nodes[0]!)
     const message = 'Waiting for the browser profile on Worker A: Computer offline.'
     const base = fixture.mock.currents.get(run.id)!
-    fixture.mock.currents.set(run.id, executionNodeCut({ ...base, state: { ...base.state,
+    fixture.mock.currents.set(run.id, RepeatGraphCurrentStateSchema.parse({ ...base, state: { ...base.state,
       run: { ...base.state.run, executionState: 'running', outcome: 'pending' },
       executions: [{ identity: { workflowNodeId: node.id, executionId: 'preparing-browser', agentId: node.agentId,
         agentConfigurationVersionId: version.agentConfigurationVersionIds[node.agentId]!, attempt: 1, occurrence: null },
@@ -633,7 +632,7 @@ describe('Live Run status on the Board', () => {
       resultOutcome: state === 'completed' ? 'succeeded' : null })
     const base = fixture.mock.currents.get(run.id)!
     const cut = (sequence: string, executionState: 'running' | 'waiting', executions: unknown[]) => fixture.mock.currents.set(run.id,
-      executionNodeCut({ ...base, asOfSequence: sequence, state: { ...base.state, executions,
+      RepeatGraphCurrentStateSchema.parse({ ...base, asOfSequence: sequence, state: { ...base.state, executions,
         run: { ...base.state.run, executionState, outcome: 'pending', pendingInteractionCount: executionState === 'waiting' ? 1 : 0 } } }))
     cut('1', 'running', [execution(first, 'running'), execution(added, 'queued')])
     const ticket = '00000000-0000-4000-8000-000000000011'
