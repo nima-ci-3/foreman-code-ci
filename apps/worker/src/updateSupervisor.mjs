@@ -356,6 +356,8 @@ export async function launchUpdateSupervisor(stateDirectory, { run = execute } =
     await run('/usr/bin/systemd-run', ['--user', '--collect', '--unit', unit, '--property=Type=exec',
       '--property=Restart=on-failure', '--property=RestartSec=1',
       ...(process.env.FOREMAN_INSTALL_SKIP_CI_SMOKE === '1' ? ['--setenv=FOREMAN_INSTALL_SKIP_CI_SMOKE=1'] : []),
+      // A transient unit starts with systemd's default PATH; its CI smoke runs corepack, which needs this Node.
+      `--setenv=PATH=${dirname(process.execPath)}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
       process.execPath, helper, stateDirectory], { timeout: 10_000, maxBuffer: 4096, env: environment() });
   } catch (error) {
     if (error.killed || error.signal || error.code === 'ETIMEDOUT') {
