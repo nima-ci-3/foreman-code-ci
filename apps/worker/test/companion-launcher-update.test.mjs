@@ -14,7 +14,7 @@ const { tsImport } = await import(require.resolve('tsx/esm/api'));
 const { WorkerUpdater } = await tsImport('../src/update.mjs', import.meta.url);
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
+const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
   rootPersistent: true, homePersistent: true, storagePersistent: true };
 const expected = { protocolVersion: 1, identityFormat: 1 };
 

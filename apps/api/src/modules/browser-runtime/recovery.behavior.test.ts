@@ -70,6 +70,22 @@ it('canonical lifecycle release fences staged files even when capture cleanup is
   expect(await f.files.read(download.id, session.id, 0, 20)).toEqual(Buffer.from('result'))
 })
 
+it('retires suspended host file staging while allowing new uploads after the host restarts', async () => {
+  const f = await runtimeRecoveryFixture(); cleanup.push(f.cleanup)
+  const session = await f.prepare(), owner = { sessionId: session.id, tabId: session.selectedTabId!, browserGeneration: session.browserGeneration }
+  const upload = await f.files.begin({ ...owner, commandId: 'old-upload', name: 'upload.txt', mimeType: 'text/plain', byteLength: 3 })
+  const path = join(f.directory, 'retained-output'); await writeFile(path, 'result', { mode: 0o600 })
+  const download = await f.files.adoptDownload(owner, 'output', path, 'result.txt', 6)
+  await f.files.suspendSession(session.id)
+  expect(await f.files.metadata(upload.id, session.id)).toMatchObject({ state: 'canceled' })
+  await expect(f.files.begin({ ...owner, commandId: 'late-upload', name: 'late.txt', mimeType: 'text/plain', byteLength: 0 }))
+    .rejects.toMatchObject({ code: 'BROWSER_FILE_SESSION_CLOSED' })
+  const restarted = new BrowserFileStore(join(f.directory, 'files'), async () => undefined)
+  expect(await restarted.begin({ ...owner, browserGeneration: owner.browserGeneration + 1,
+    commandId: 'new-upload', name: 'new.txt', mimeType: 'text/plain', byteLength: 0 })).toMatchObject({ state: 'uploading' })
+  expect(await restarted.read(download.id, session.id, 0, 20)).toEqual(Buffer.from('result'))
+})
+
 it('fences delayed file admissions, deletes late native downloads after restart, and retains completed downloads on normal close', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'browser-file-close-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))

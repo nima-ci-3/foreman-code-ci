@@ -67,7 +67,10 @@ function AccordionItem({ title, defaultOpen, children }: { title: string; defaul
 }
 
 export interface MenuItem { id: string; label: string; icon?: IconName; shortcut?: string; disabled?: boolean; danger?: boolean; onSelect: () => void }
-export function DropdownMenu({ label, items, icon = 'more' }: { label: string; items: readonly MenuItem[]; icon?: IconName }) {
+/** A menu behind an icon, or behind a small text button showing the current choice (`trigger`); `checkedId` marks it. */
+export function DropdownMenu({ label, items, icon = 'more', trigger: triggerText, checkedId, disabled }: {
+  label: string; items: readonly MenuItem[]; icon?: IconName; trigger?: string; checkedId?: string; disabled?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -90,10 +93,11 @@ export function DropdownMenu({ label, items, icon = 'more' }: { label: string; i
   }
   function close(restore = false) { setOpen(false); if (restore) trigger.current?.focus() }
   return <div ref={root} className="n-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) close() }}>
-    <button type="button" ref={trigger} className="n-button n-button--ghost n-icon-button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}
+    <button type="button" ref={trigger} className={triggerText ? 'n-button n-button--ghost n-menu-trigger' : 'n-button n-button--ghost n-icon-button'}
+      aria-label={triggerText ? `${label}: ${triggerText}` : label} title={label} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
       aria-controls={open ? id : undefined} onClick={() => open ? close() : show()} onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); show(event.key === 'ArrowUp') }
-      }}><Icon name={icon} /></button>
+      }}>{triggerText ? <><span>{triggerText}</span><Icon name="down" size={12} /></> : <Icon name={icon} />}</button>
     {open && <div ref={surface} popover="manual" id={id} role="menu" aria-label={label} className="n-menu-list" onKeyDown={(event) => {
       const index = refs.current.indexOf(document.activeElement as HTMLButtonElement)
       const disabled = items.map((item) => Boolean(item.disabled))
@@ -115,9 +119,11 @@ export function DropdownMenu({ label, items, icon = 'more' }: { label: string; i
       }
       if (next >= 0) { event.preventDefault(); refs.current[next]?.focus() }
     }}>
-      {items.map((item, index) => <button key={item.id} type="button" role="menuitem" tabIndex={-1} disabled={item.disabled} data-danger={item.danger || undefined}
+      {items.map((item, index) => <button key={item.id} type="button" role={checkedId === undefined ? 'menuitem' : 'menuitemradio'}
+        aria-checked={checkedId === undefined ? undefined : checkedId === item.id} tabIndex={-1} disabled={item.disabled} data-danger={item.danger || undefined}
         ref={(element) => { refs.current[index] = element }} onClick={() => { close(true); item.onSelect() }}>
-        {item.icon && <Icon name={item.icon} size={16} />}<span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}
+        {item.icon && <Icon name={item.icon} size={16} />}<span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}
+        {checkedId === item.id ? <Icon name="check" size={14} /> : null}</button>)}
     </div>}
   </div>
 }

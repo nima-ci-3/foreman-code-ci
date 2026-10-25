@@ -14,7 +14,7 @@ import { packBrowserRuntime } from '../../../scripts/browser-runtime-install.mjs
 import { INSTALLATION_NAMES } from '../../../packages/contracts/src/installationNames.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' };
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' };
 const ready = async () => ({ ready: true });
 
 async function fixture(t) {

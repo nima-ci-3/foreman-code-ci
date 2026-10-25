@@ -63,6 +63,12 @@ Do not duplicate one state source in another layer without a documented reason.
 
 - Dismissible modals close when the user clicks their backdrop, outside the modal. Clicks inside the modal and drags that start inside must not dismiss it. Use the shared Dialog behavior; preserve pending-operation locks and unsaved-change guards. Any exception must have a concrete interaction reason.
 
+## When an implementation does not work
+
+Do not give up or stop at reporting that it failed or is limited. Find the cause, look for solutions, implement the
+robust one and verify it. A constraint (for example a cache that would be unsafe as is) is a design problem to solve,
+not a reason to leave the result slow or broken. Report what was fixed and how it was verified.
+
 ## Agent orchestration
 
 - Send related changes and follow-up issues to the existing agent that owns the feature or workstream. Message a running agent or resume an idle agent; do not spawn a new agent for every related issue.

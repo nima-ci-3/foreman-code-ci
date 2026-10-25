@@ -22,7 +22,20 @@ export function cloudService(cloud: CloudCi, run: CiHostRun, commit: string,
     message: run.message, initiator: { principalId: 'operator', executionId: null } })
   let testResults: unknown = null
   let logTail = ''
-  const pool = { query: async (sql: string, parameters?: unknown[]) => {
+  const claims = new Map<unknown, unknown>()
+  const pool = { options: { max: 10 }, query: async (sql: string, parameters?: unknown[]) => {
+    if (sql.startsWith('insert into ci_dispatch_claims')) {
+      if (claims.has(parameters![0])) return { rows: [], rowCount: 0 }
+      claims.set(parameters![0], parameters![1])
+      return { rows: [{ ticket_id: parameters![0] }], rowCount: 1 }
+    }
+    if (sql.startsWith('update ci_dispatch_claims')) {
+      return { rows: [], rowCount: Number(claims.get(parameters![0]) === parameters![1]) }
+    }
+    if (sql.startsWith('delete from ci_dispatch_claims')) {
+      if (claims.get(parameters![0]) === parameters![1]) claims.delete(parameters![0])
+      return { rows: [], rowCount: 1 }
+    }
     if (sql.startsWith('update ci_runs set test_results=')) {
       testResults = JSON.parse(parameters![1] as string)
       return { rows: [], rowCount: 1 }
@@ -33,7 +46,7 @@ export function cloudService(cloud: CloudCi, run: CiHostRun, commit: string,
       if (typeof parameters![5] === 'string') logTail = parameters![5]
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('supersededBy') || sql.includes("record->>'gate'='true'") || sql.includes('durations from ci_runs')) {
+    if (sql.includes("record->>'supersededBy' is not null") || sql.includes("record->>'gate'='true'") || sql.includes('durations from ci_runs')) {
       return { rows: [] }
     }
     if (sql.includes('as group_id')) return { rows: [{ group_id: record.groupId, state: record.state }] }
@@ -43,7 +56,7 @@ export function cloudService(cloud: CloudCi, run: CiHostRun, commit: string,
       || sql.includes("state in ('passed','failed')") && !['passed', 'failed'].includes(record.state)) return { rows: [] }
     return { rows: [{ id: record.id, record, host_key: active ? computer.key : null,
       log_tail: logTail, test_results: testResults, durations: null, position: 1 }] }
-  } } as unknown as pg.Pool
+  }, connect: async () => ({ query: pool.query, release: () => {} }) } as unknown as pg.Pool
   const principal: ManagementPrincipal = { id: 'operator', name: 'Operator', audience: 'operator',
     grants: [], expiresAt: '2099-01-01T00:00:00.000Z', revokedAt: null }
   const authority: CiAuthority = { resolve: async () => ({ principal, workspaceId: 'workspace' }) }

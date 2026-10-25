@@ -41,7 +41,7 @@ export class ClaudeCheckedNativeConfigurationPort implements ClaudeNativeConfigu
       structuredEvents: capabilities.basicTurns, supportsResume: capabilities.resume, supportsCancellation: capabilities.cancellation,
       supportsWorkingDirectory: capabilities.workingDirectory, supportsStartupPrompt: capabilities.startupPrompt,
       supportedNativeTools: accepted.persistedProof.claudeProof?.observedTools ?? [], supportedSettings,
-      unsupportedCapabilities: ['Exact-turn steering', 'Restartable SDK callbacks', 'Child approvals', 'Background continuation',
+      unsupportedCapabilities: ['Restartable SDK callbacks', 'Child approvals', 'Background continuation',
         ...(!capabilities.history ? ['Native history'] : []), ...(!capabilities.fork ? ['Native fork'] : [])] }
   }
   discover(workingDirectory: string, signal: AbortSignal) { return this.source.discover(workingDirectory, signal) }

@@ -31,7 +31,7 @@ import { CiPrewarm } from './prewarm.js'
 import { collectCiResults } from './resultCollection.js'
 import { IntegrationCoverageStore } from './coverageStore.js'
 import { sanitizeCiText, serializeCiJson } from './text.js'
-import { isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
+import { ciComputerPreference, isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
 import { weighCiPartitions } from './partitionPlanning.js'
 import { invalidateExecutorSpeeds, readExecutorSpeeds } from './executorSpeed.js'
 import { readCiGateReservation, readQueuedCiRuns } from './queuedRuns.js'
@@ -383,6 +383,31 @@ export class HostCiService {
     return outcome.value
   }
 
+  /** The newest ancestor of commit on which every part of this suite passed, as a full or selector-chosen run (a run of
+   * hand-picked files proves nothing about the rest; a selector run's cached files were proven by earlier passes). */
+  private async passedAncestor(repository: string, suite: string, commit: string) {
+    if (!this.commits.coverageAncestors) return undefined
+    // Candidate groups come from ci_runs_passed_suite_idx without reading the large records; one part per group is
+    // read for its commit and selection, and groups with any other outcome are excluded (106 ms for integration).
+    const passed = await this.pool.query<{ commit: string }>(
+      `select r.commit from (
+          select group_id, workspace_id, max(created_at) as at from ci_runs
+          where state = 'passed' and record->>'repository' = $1 and record->>'suite' = $2
+            and created_at > now() - interval '14 days'
+          group by group_id, workspace_id) g
+        cross join lateral (select record->>'commit' as commit, record->>'scope' as scope,
+          record->>'deriveFiles' as derive, record->>'selectedOnMain' as main
+          from ci_runs x where x.workspace_id = g.workspace_id and x.group_id = g.group_id limit 1) r
+        where r.commit <> $3 and (r.scope = 'full' or r.derive = 'true' or r.main = 'true')
+          and not exists (select 1 from ci_runs o where o.workspace_id = g.workspace_id and o.group_id = g.group_id
+            and o.state <> 'passed')
+        order by g.at desc limit 200`, [repository, suite, commit])
+    const candidates = passed.rows.map(row => row.commit)
+    const base = candidates.length ? (await this.commits.coverageAncestors(repository, commit, candidates))[0] : undefined
+    this.context.log.info({ suite, commit, candidates: candidates.length, base: base ?? null }, 'CI passed-ancestor base')
+    return base
+  }
+
   private async prepareRuns(caller: ManagementPrincipal, input: CiRunInput,
     scope: Awaited<ReturnType<CiAuthority['resolve']>>): Promise<PreparedCiRuns> {
     const workspace = WorkspaceSchema.parse((await this.pool.query<{ record: unknown }>(
@@ -408,6 +433,12 @@ export class HostCiService {
     const snapshot = scope.executionId && !input.commit && this.snapshots ? await this.snapshots(scope.executionId) : null
     const commit = await this.commits.resolve(repository, defaultBranch, input.commit, snapshot)
     timing.mark('commitMs')
+    // A branch carries changes main never checked, CI infrastructure among them. Diffing against the newest ancestor
+    // this suite already passed on re-checks only what changed since then, instead of a full run on every commit.
+    if (!input.baseCommit && !input.gate && (input.scope ?? 'affected') === 'affected' && input.files === undefined) {
+      const passed = await this.passedAncestor(repository, input.suite, commit)
+      if (passed) input = { ...input, baseCommit: passed }
+    }
     const inventories = Promise.all([
       ['unit', 'integration'].includes(input.suite) ? this.learnedDurations(repository) : null,
       input.suite === 'integration' ? this.commits.integrationInventory?.(repository, commit) : undefined,
@@ -477,17 +508,36 @@ export class HostCiService {
         'This repository has no affected test selection. Request scope full and omit files.', 409)
     }
     const selectionScope = supportsSelection ? input.scope ?? 'affected' : 'full'
-    const deriveFiles = selectionScope === 'affected' && input.files === undefined
-    const coverage = deriveFiles && input.suite === 'integration'
+    let deriveFiles = selectionScope === 'affected' && input.files === undefined
+    let coverage = deriveFiles && input.suite === 'integration'
       ? await this.coverage.selection(repository, commit, this.commits) : undefined
-    const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? input.files : [] }
+    // Suites select their affected files here, with the selector the runner would use: a part with nothing affected
+    // never starts a job, and test files that already passed with identical inputs are skipped and the files this run
+    // proves are recorded. Any failure leaves the selection to the runner.
+    let mainSelection: { files: string[]; reason: string } | undefined
+    if (deriveFiles && !input.gate && !smokeTarget && ['unit', 'integration', 'typecheck', 'lint'].includes(input.suite)
+      && this.commits.affectedSelection) {
+      try {
+        const picked = await this.commits.affectedSelection(repository, { commit, suite: input.suite, defaultBranch,
+          ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}), ...(coverage ? { coverage } : {}),
+          signal: AbortSignal.timeout(60_000) })
+        if (picked.scope === 'affected') mainSelection = { files: picked.files, reason: picked.reason }
+      } catch (error) {
+        this.context.log.warn({ err: error, commit, suite: input.suite }, 'Main-side affected selection failed; the runner selects')
+      }
+      timing.mark('mainSelectionMs')
+    }
+    // The coverage input was for the selection; a run whose files are chosen no longer waits for runner selection.
+    if (mainSelection) { deriveFiles = false; coverage = undefined }
+    const explicitFiles = input.files ?? mainSelection?.files
+    const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? explicitFiles : [] }
     // Gates, full scope and smoke runs always run every file; only explicit affected test selections use the cache.
     let cache: CachedSelection | undefined
-    if (!input.gate && !smokeTarget && selectionScope === 'affected' && input.files?.length && this.commits.testTree
+    if (!input.gate && !smokeTarget && selectionScope === 'affected' && explicitFiles?.length && this.commits.testTree
       && (input.suite === 'unit' || input.suite === 'integration')) {
       const testTree = this.commits.testTree.bind(this.commits)
       cache = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
-        suite: input.suite, files: input.files, tree: signal => testTree(repository, commit, signal),
+        suite: input.suite, files: explicitFiles, tree: signal => testTree(repository, commit, signal),
         partOf: file => input.suite === 'unit' && capabilities.parts ? unitPartOf(file, inventory?.heavy ?? []) : input.suite })
       selection.files = cache.files
     }
@@ -542,6 +592,7 @@ export class HostCiService {
     let selectionReason = 'Caller supplied the affected files.'
     if (selectionScope === 'full') selectionReason = 'Full scope requested; every file in the suite or partition runs.'
     if (deriveFiles) selectionReason = 'Affected files will be selected on the runner.'
+    if (mainSelection) selectionReason = mainSelection.reason
     const runs = parts.map((planned, index) => CiRunRecordSchema.parse({
       ...planned,
       ...(index === 0 && cachedFiles ? { cachedFiles } : {}),
@@ -550,7 +601,7 @@ export class HostCiService {
         ...(smokeShards !== undefined ? { integrationShards: smokeShards } : {}) } : {}),
       id: randomUUID(), workspaceId: scope.workspaceId,
       suite: planned.suite ?? input.suite, scope: selectionScope, commit, repository, groupId,
-      selection: { scope: selectionScope, files: planned.files ?? input.files ?? [], reason: selectionReason },
+      selection: { scope: selectionScope, files: planned.files ?? explicitFiles ?? [], reason: selectionReason },
       ciMirror: workspace.ciMirror ? `${workspace.ciMirror.owner}/${workspace.ciMirror.name}` : null,
       priority, priorityReason,
       ...(input.gate ? { gate: true, noSupersede: true } : {}),
@@ -559,7 +610,7 @@ export class HostCiService {
       ...(!input.gate && input.noSupersede !== undefined ? { noSupersede: input.noSupersede } : {}),
       ...(smokeTarget ? { noSupersede: true } : {}),
       ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
-      ...(deriveFiles ? { deriveFiles } : {}),
+      ...(deriveFiles ? { deriveFiles } : {}), ...(mainSelection ? { selectedOnMain: true as const } : {}),
       state: empty ? 'passed' : 'queued', computer: null, step: empty ? input.suite : null,
       exitCode: empty ? 0 : null,
       message: empty ? (cachedFiles ? `All ${cachedFiles.length} selected files already passed with identical inputs; `
@@ -1688,9 +1739,7 @@ export class HostCiService {
       const reasons = (run.unstartedProviders ?? []).map(provider => `${provider}: dispatch retries exhausted`)
       const preferred = (computer: HostCiComputer) => {
         if (run.gate && run.suite !== 'integration') return Number(computer.hostRef.kind === 'cloud')
-        if (computer.hostRef.kind !== 'cloud') return 3
-        if (run.suite !== 'integration') return Number(isGitHubComputer(computer))
-        return isGitHubComputer(computer) ? 1 : 2
+        return ciComputerPreference(computer)
       }
       const affectedFiles = run.scope === 'affected' && !run.deriveFiles ? { files: run.files } : {}
       const plannedProvider = run.gate

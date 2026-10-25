@@ -75,6 +75,14 @@ const client = () => new QueryClient({ defaultOptions: { queries: { retry: false
 afterEach(() => { cleanup(); store.summaries.clear(); store.details.clear() })
 
 describe('ExecutionInspector exact selected job execution', () => {
+  it('omits repeat controls and repeat-status copy for an ordinary workflow', () => {
+    install('agent-exec', 'agent')
+    render(tree('agent-exec', client()))
+    expect(screen.getByRole('button', { name: /agent-exec/ })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Business repetition')).not.toBeInTheDocument()
+    expect(screen.queryByText('This saved version has no repeat blocks.')).not.toBeInTheDocument()
+  })
+
   it('shows the JobExecution behind a distinct node execution ID and never reads the node execution ID as a job', async () => {
     install('node-exec-a')
     const requested: string[] = []

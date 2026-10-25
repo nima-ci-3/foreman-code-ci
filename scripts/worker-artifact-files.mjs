@@ -27,7 +27,7 @@ export function workerReleaseVersion(product) {
 export function validateWorkerTarget(target) {
   if (target.arch !== 'x64') throw new Error('Sharp assets are qualified only for linux-x64');
   if (target.os !== 'ubuntu' || !/^\d+\.\d+$/.test(target.osRelease)
-    || !/^glibc-\d+\.\d+$/.test(target.libc) || !/^v22\.\d+\.\d+$/.test(target.node)) {
+    || !/^glibc-\d+\.\d+$/.test(target.libc) || !/^v24\.\d+\.\d+$/.test(target.node)) {
     throw new Error('Unsupported build target');
   }
 }
