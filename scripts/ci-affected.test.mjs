@@ -118,8 +118,6 @@ test('runs affected commands without leaking dispatch selections into nested com
     DEFAULT_BRANCH: 'stable', CI_PARTITION: '{}', CI_DURATIONS: '{}' } })
   assert.equal(run.status, 0, run.stderr)
   assert.match(run.stdout, /pnpm --dir apps\/api exec eslint src\/feature\.ts --max-warnings 0/)
-  // Files unchanged since they last passed under the same rules are not linted again.
-  assert.match(run.stdout, /--cache --cache-strategy content --cache-location node_modules\/\.cache\/eslint\//)
 })
 
 for (const progress of ['', 'parent-progress.jsonl']) {

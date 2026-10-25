@@ -200,7 +200,6 @@ it.each(['Agent settings Save', 'Agent settings Save and run', 'Save inside Agen
     expect(accessReads).toBeGreaterThan(accessReadsBeforeStart)
     source = { ...source, draft: { ...source.draft, revision: 9, publishedRevision: 9,
       graph: { ...source.draft.graph, name: 'External rename' } } }
-    source.savedDraft = source.draft
     await act(async () => {
       await client.refetchQueries({ queryKey: boardDraftContextKey('workspace', 'workflow') })
     })

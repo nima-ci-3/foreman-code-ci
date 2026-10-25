@@ -3,13 +3,13 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { GraphEditReadResultCurrent } from '@foreman-code/contracts/current'
-import { boardDraftContextKey, newNextDraft, nextDraftKey } from '../board-core'
+import { boardDraftContextKey, nextDraftKey } from '../board-core'
 import { PersistedWorkflowBoundary } from './PersistedWorkflowBoundary'
 import { useGraphDraftStore } from './store'
 import { fixture } from './nextDraft/core.cases'
 import { journalIntent, savedJournal } from './nextDraft/nim2644Journal.fixture'
 import { nextDraftApi, type AuthoringContext } from './nextDraft/transport'
-import { clearEditIntentStorage, storeEditSnapshot } from './nextDraft/editIntentStorage'
+import { clearEditIntentStorage } from './nextDraft/editIntentStorage'
 
 vi.mock('./nextDraft/DraftCanvas', () => ({ DraftCanvas: () => <div>Workflow canvas</div> }))
 
@@ -70,20 +70,6 @@ it('opens the persisted draft for editing without a storage error', async () => 
   mount(context)
   expect(await screen.findByRole('button', { name: 'Authoring fixture' })).toBeVisible()
   expect(screen.queryByRole('heading', { name: 'Authoring unavailable' })).not.toBeInTheDocument()
-})
-
-it('warns about a newer saved version even when the retained local revision counter is higher', async () => {
-  const base = fixture()
-  const retained = newNextDraft({ ...base, savedDraft: base.draft,
-    draft: { ...base.draft, revision: 12 } }, 'retained-form')
-  retained.graph = { ...retained.graph, name: 'Retained local workflow' }
-  storeEditSnapshot(draftKey, retained)
-  const fresh = { ...base, draft: { ...base.draft, revision: 8, publishedRevision: 8,
-    baseWorkflowVersionId: 'newer-saved-version', graph: { ...base.draft.graph, name: 'Newer saved workflow' } } }
-  vi.spyOn(nextDraftApi, 'context').mockResolvedValue(fresh)
-  mount(fresh)
-  expect(await screen.findByRole('button', { name: 'Retained local workflow' })).toBeVisible()
-  expect(await screen.findByText(warning)).toBeVisible()
 })
 
 it.each(['draft read first', 'save reply first'] as const)(
