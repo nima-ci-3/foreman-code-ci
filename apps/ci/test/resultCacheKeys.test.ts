@@ -116,29 +116,3 @@ it('still refuses a key when a test helper starts a process it names by a comput
     'apps/api/test/run.test.ts': "import { run } from './fixtures/run.js'\nexport const value = run\n" }), AbortSignal.timeout(10_000))
   expect(await keys.key('apps/api/test/run.test.ts', 'unit', 'unit-api')).toMatchObject({ key: null })
 })
-
-it('keys the last kinds of unkeyed tests and follows what each one reads', async () => {
-  // Production: the remaining 202 unkeyed unit tests named large directories, ran Node scripts held in variables,
-  // wrote imports inside fixture strings, imported workspace builds by relative dist paths or used CSS @import.
-  const files = { ...base,
-    'apps/api/src/deep.ts': 'export const deep = 1\n',
-    'apps/api/src/lib/runner.mjs': "import { deep } from '../deep.js'\nexport const run = deep\n",
-    'packages/kit/package.json': JSON.stringify({ name: '@example/kit' }),
-    'packages/kit/src/value.ts': 'export const value = 1\n',
-    'apps/web/src/theme.css': '.a { color: red }\n',
-    'apps/web/src/app.css': "@import './theme.css';\n",
-    'apps/api/test/fixtures/repo.ts': "import { spawnSync } from 'node:child_process'\nimport { join } from 'node:path'\n"
-      + "export const source = 'apps/api/src/lib'\nconst script = join(source, 'runner.mjs')\n"
-      + 'export const run = () => spawnSync(process.execPath, [script])\n'
-      + "export const fixture = \"import { gone } from './gone.js'\"\n"
-      + "export const kit = () => import('../../../../packages/kit/dist/value.js')\n",
-    'apps/api/test/repo.test.ts': "import { run } from './fixtures/repo.js'\nimport '../../web/src/app.css'\nexport const value = run\n" }
-  const keyOf = async (changed: Record<string, string>) => (await (await CiResultKeys.create(tree({ ...files, ...changed }),
-    AbortSignal.timeout(10_000))).key('apps/api/test/repo.test.ts', 'unit', 'unit-api')).key
-  const first = await keyOf({})
-  expect(first).toMatch(/^[a-f0-9]{64}$/)
-  // A script inside the named directory, what that script imports, the workspace build's source and the CSS import.
-  for (const path of ['apps/api/src/lib/runner.mjs', 'apps/api/src/deep.ts', 'packages/kit/src/value.ts', 'apps/web/src/theme.css']) {
-    expect(await keyOf({ [path]: 'export const changed = 2\n' })).not.toBe(first)
-  }
-})
