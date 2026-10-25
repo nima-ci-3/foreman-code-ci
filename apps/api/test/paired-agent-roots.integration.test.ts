@@ -74,6 +74,23 @@ describe.skipIf(!postgresEnabled)('paired Agent workspace roots', () => {
     } finally { await f.close() }
   }, 120_000)
 
+  it('sets up the harness on a paired computer that has it installed but no project or profile yet', async () => {
+    const preparedHosts: unknown[] = []
+    const f = await pairedAgentRootsFixture({ harnessInstances: { prepareWorkerConfiguration: async (_principal, _source, _harness, target) => {
+      preparedHosts.push(target.hostRef)
+      return { reason: 'Checking the harness on this computer.', pending: true }
+    } } })
+    try {
+      // A freshly paired Worker: the harness is installed there, but no profile or project root exists yet.
+      await f.base.db.pool.query(`delete from harness_instance_settings where record#>>'{target,hostRef,kind}'='device'`)
+      const owner = await f.connect()
+      const result = NodePlacementChoicesResultSchema.parse(decodeMcpToolResult(
+        await owner.callTool({ name: 'workflow_node_placement_choices', arguments: f.input })))
+      expect(preparedHosts).toContainEqual(f.device.hostRef)
+      expect(result.pending).toBe(true)
+    } finally { await f.close() }
+  }, 120_000)
+
   it('keeps the primary Main location when a device root is added, updated and replayed', async () => {
     const f = await pairedAgentRootsFixture()
     try {
