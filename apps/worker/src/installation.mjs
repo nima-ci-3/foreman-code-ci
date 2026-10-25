@@ -1,4 +1,4 @@
-import { PACKAGE_MANAGER } from '../../../packages/contracts/src/packagePolicy.mjs';
+import { PACKAGE_MANAGER } from '../../../packages/contracts/src/installationNames.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';

@@ -3,14 +3,11 @@ import { useState } from 'react'
 import { ChevronRight, Terminal } from 'lucide-react'
 import { Button, CodeBlock } from '../../../shared/ui/nocturne'
 import './agentChat.css'
+import { activityStatusLabels } from './activityStatusLabels'
 
 const verbs: Record<OperatorActivity['kind'], string> = {
   thinking: '', tool: 'Ran', mcp: 'Called', web_search: 'Searched',
   file_read: 'Read', file_write: 'Wrote', subagent: 'Agent',
-}
-/** One wording for an activity's status in every chat (Agent, run and Operator transcripts). */
-export const activityStatusLabels: Record<OperatorActivity['status'], string> = {
-  pending: 'Waiting', running: 'Running', completed: '', failed: 'Failed', canceled: 'Stopped', unknown: 'Unconfirmed',
 }
 
 export function AgentChatActivity({ entry, onBrowse, onExpand, expandState }: {

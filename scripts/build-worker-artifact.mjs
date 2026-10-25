@@ -1,6 +1,5 @@
 import { verificationRuntimeFiles, verificationArtifactPath } from '../packages/verification-runner/runtime-files.mjs';
-import { INSTALLATION_NAMES, standaloneInstallationSource as inlineNames } from '../packages/contracts/src/installationNames.mjs'
-import { STANDALONE_PACKAGE_POLICY } from '../packages/contracts/src/packagePolicy.mjs'
+import { INSTALLATION_NAMES, standaloneInstallationSource } from '../packages/contracts/src/installationNames.mjs'
 
 import { readProductEnvironment } from '../packages/contracts/src/productEnvironment.mjs'
 import { inspectQuotaHelperAbi } from './quota-helper-abi.mjs';
@@ -28,8 +27,6 @@ import {
   committedWorkerInputPath, workerReleaseVersion, validateWorkerTarget, assertWorkerUpdateToolchain,
 } from './worker-artifact-files.mjs';
 
-// Raw-copied Worker files also import the package policy; installed copies have no node_modules.
-const standaloneInstallationSource = source => inlineNames(source, [STANDALONE_PACKAGE_POLICY])
 const [targetFile, outputDirectory, runtimeFile = 'apps/worker/artifacts/node-24.22.1-linux-x64.json', bootstrapNode] = process.argv.slice(2);
 if (!targetFile || !outputDirectory) throw new Error('Usage: build-worker-artifact.mjs apps/worker/artifacts/approved-target.json /new-output-directory [apps/worker/artifacts/reviewed-runtime.json]');
 const requestedCommit = readProductEnvironment(process.env, 'WORKER_BUILD_COMMIT');

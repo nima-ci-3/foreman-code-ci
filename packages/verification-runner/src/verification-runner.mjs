@@ -1,6 +1,5 @@
-import { INSTALLATION_NAMES } from '../../contracts/src/installationNames.mjs'
+import { INSTALLATION_NAMES, PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, PNPM_VERSION, RELEASE_AGE_MINUTES } from '../../contracts/src/installationNames.mjs'
 import { integrationTestFile } from '../../contracts/src/ciTestInventory.mjs'
-import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, PNPM_VERSION, RELEASE_AGE_MINUTES } from '../../contracts/src/packagePolicy.mjs'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statfsSync } from 'node:fs'

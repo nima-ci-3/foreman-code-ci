@@ -22,7 +22,6 @@ export const verificationRuntimeFiles = [
   'apps/worker/src/diagnostics.mjs',
   'packages/contracts/src/installationNames.mjs',
   'packages/contracts/src/ciTestInventory.mjs',
-  'packages/contracts/src/packagePolicy.mjs',
   'packages/contracts/src/verificationEnvironment.mjs',
   'packages/contracts/src/integrationScheduling.mjs',
   'packages/ci-protocol/src/testResults.mjs',

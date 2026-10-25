@@ -8,11 +8,13 @@ import { ChatPrimaryActions, type ComposerSessionControls } from '../chat-core'
 import '../conversations/chatAttachments.css'
 
 export function OperatorComposer({ conversationId, context, attachmentControl, deliveryControl, fileDropProps, hasAttachments = false,
-  sendDisabled = false, isSending = false, onSubmit, onNewChat, onCancel, sessionControls }: {
+  sendDisabled = false, isSending = false, onSubmit, onNewChat, onCancel, onRecall, sessionControls }: {
   conversationId: string; context?: ReactNode; attachmentControl?: ReactNode; deliveryControl?: ReactNode; hasAttachments?: boolean;
   sendDisabled?: boolean; isSending?: boolean; sessionControls?: ComposerSessionControls;
   fileDropProps?: ReturnType<typeof useFileDrop>['dropTargetProps'];
   onSubmit(content: string, mode?: SessionMode): void; onNewChat(): void; onCancel?: () => void;
+  /** ↑ in the empty composer: takes the newest queued message back for editing; returns its text. */
+  onRecall?(): string | undefined
 }) {
   const input = useRef<HTMLTextAreaElement>(null)
   const id = useId()
@@ -46,6 +48,10 @@ export function OperatorComposer({ conversationId, context, attachmentControl, d
         onChange={event => change(event.target.value)}
         onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || menu.onKeyDown(event)) return
+          if (event.key === 'ArrowUp' && !value && onRecall) {
+            const recalled = onRecall()
+            if (recalled !== undefined) { event.preventDefault(); change(recalled); return }
+          }
           if (isComposerSendKey(event)) { event.preventDefault(); void send() }
         }} />
       <div className="operator-composer-actions">

@@ -4,7 +4,7 @@ import { open, readdir, realpath } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PACKAGE_MANAGER, RELEASE_AGE_MINUTES } from '../../../../packages/contracts/src/packagePolicy.mjs';
+import { PACKAGE_MANAGER, RELEASE_AGE_MINUTES } from '@foreman-code/contracts/installation-names';
 
 export { PACKAGE_MANAGER, RELEASE_AGE_MINUTES };
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');

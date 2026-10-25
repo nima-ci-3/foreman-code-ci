@@ -1,4 +1,4 @@
-import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, RELEASE_AGE_MINUTES } from '../../../../packages/contracts/src/packagePolicy.mjs'
+import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, RELEASE_AGE_MINUTES } from '@foreman-code/contracts/installation-names'
 import { verificationRuntimeFiles, verificationArtifactPath } from '../../../../packages/verification-runner/runtime-files.mjs';
 import { INSTALLATION_NAMES, standaloneInstallationSource } from '@foreman-code/contracts/installation-names'
 import { execFileSync } from 'node:child_process';
