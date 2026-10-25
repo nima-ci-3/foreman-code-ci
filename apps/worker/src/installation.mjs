@@ -1,3 +1,4 @@
+import { PACKAGE_MANAGER } from '../../../packages/contracts/src/packagePolicy.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
@@ -20,10 +21,11 @@ export function validateManifest(manifest, facts, expected) {
     || manifest.runtime?.version === manifest.target.node;
   if (facts.os !== 'ubuntu' || manifest.target.os !== facts.os || manifest.target.osRelease !== facts.osRelease || manifest.target.arch !== facts.arch || manifest.target.libc !== facts.libc || !runtimeMatches) throw new WorkerError('target_runtime_mismatch');
   if (!facts.rootPersistent || !facts.homePersistent || facts.storagePersistent === false) throw new WorkerError('nonpersistent_storage');
-  if (manifest.packageManager !== 'pnpm@11.27.0' || !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 512) throw new WorkerError('manifest_invalid');
+  // Installed Workers run this file standalone (no zod), so it mirrors WorkerArtifactManifestSchema's file rules.
+  if (manifest.packageManager !== PACKAGE_MANAGER || !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 512) throw new WorkerError('manifest_invalid');
   const names = new Set();
   for (const file of manifest.files) {
-    if (!/^[a-zA-Z0-9_@./-]+$/.test(file.path) || file.path.startsWith('/') || file.path.split('/').some((part) => !part || part === '.' || part === '..') || !digest.test(file.sha256) || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > 64 * 1024 * 1024 || names.has(file.path)) throw new WorkerError('manifest_invalid');
+    if (typeof file?.path !== 'string' || file.path.length > 1024 || file.path === 'manifest.json' || !/^[a-zA-Z0-9_@./-]+$/.test(file.path) || file.path.startsWith('/') || file.path.split('/').some((part) => !part || part === '.' || part === '..') || !digest.test(file.sha256) || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > 64 * 1024 * 1024 || names.has(file.path)) throw new WorkerError('manifest_invalid');
     names.add(file.path);
   }
   if (!names.has('src/cli.mjs')) throw new WorkerError('entrypoint_missing');

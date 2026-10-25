@@ -3,6 +3,7 @@ import type { Message } from '@foreman-code/contracts'
 import { EmptyState, MessageBubble } from '../../shared/ui/nocturne'
 import './conversationHistory.css'
 import { TextTruncationNotice } from '../chat-core'
+import { ChatMessageBody } from './ChatMessageBody'
 
 export interface ConversationHistoryProps {
   messages: Message[]
@@ -36,7 +37,7 @@ export function ConversationHistory({ messages, assistantName = 'Assistant', int
               status={renderStatus?.(message)}
               actions={renderActions?.(message)}
             >
-              <p className="conversation-message-content">{message.content}</p>
+              <ChatMessageBody content={message.content} role={message.role} />
               <TextTruncationNotice truncation={message.truncation} />
             </MessageBubble>
             {renderAfter?.(message)}

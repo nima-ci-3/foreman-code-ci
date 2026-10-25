@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker scripts/worker-snapshot-policy.mjs
 import { persistentFixtureRoot } from './fixtureStorage.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';

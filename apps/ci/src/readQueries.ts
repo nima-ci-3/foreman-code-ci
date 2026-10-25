@@ -4,7 +4,7 @@ import { CI_FAILURE_HISTORY_LIMITS, CI_LOG_MAX_BYTES, CI_RUN_JOBS_LIMIT, CiListO
   type OperatorCiListInput } from '@foreman-code/contracts'
 import type { ManagementPrincipal } from '@foreman-code/contracts/management'
 import type { MainCiContext } from './environment.js'
-import { DomainError, databaseReadFailure } from '@foreman-code/contracts-node/server-kit'
+import { DomainError, retryDatabaseRead } from '@foreman-code/contracts-node/server-kit'
 import { CI_GET_ACTIONS, type CiAuthority } from './authority.js'
 import { ciGroupState } from './parts.js'
 import { CI_QUEUE_ORDER, ciQueueReason } from './priority.js'
@@ -20,18 +20,7 @@ import { ciLogPage } from './logPage.js'
 import { sanitizeCiText } from './text.js'
 
 /** CI reads are idempotent: one retry after a lock or statement timeout, then a typed retryable error. */
-export async function retryRead<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work()
-  } catch (error) {
-    if (databaseReadFailure(error) === error) throw error
-    try {
-      return await work()
-    } catch (retryError) {
-      throw databaseReadFailure(retryError)
-    }
-  }
-}
+export const retryRead = <T>(work: () => Promise<T>): Promise<T> => retryDatabaseRead(work, 2)
 
 /** Every server-side wait answers within this chunk, below the stdio bridge (120 s) and Worker relay (100 s) deadlines;
  * the bridge continues a group wait with further chunks. */

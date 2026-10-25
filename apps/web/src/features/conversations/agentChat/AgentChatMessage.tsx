@@ -1,34 +1,11 @@
 import { memo, useState, type ReactNode } from 'react'
-import Markdown from 'react-markdown'
-import type { Components } from 'react-markdown'
 import type { Message } from '@foreman-code/contracts'
 import { useMutation } from '@tanstack/react-query'
 import { errorMessage } from '../../../shared/errorMessage'
 import { Button, CodeBlock, Icon, MessageBubble } from '../../../shared/ui/nocturne'
 import { TextTruncationNotice } from '../../chat-core'
+import { ChatMarkdown } from '../ChatMessageBody'
 import { partialStructuredResult, structuredResult } from './structuredResult'
-
-const markdownComponents: Components = {
-  pre({ node }) {
-    const code = node?.children[0]
-    if (code?.type !== 'element') return null
-    const text = code.children.map(child => child.type === 'text' ? child.value : '').join('')
-    const classes = code.properties.className
-    const language = Array.isArray(classes)
-      ? classes.map(String).find(value => value.startsWith('language-'))?.slice(9) : undefined
-    return <CodeBlock code={text.replace(/\n$/, '')} label="Code" language={language ?? 'text'} />
-  },
-  a({ children, href }) {
-    return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-  },
-  img({ alt }) {
-    return <span>{alt}</span>
-  },
-}
-
-const AgentMarkdown = memo(function AgentMarkdown({ content }: { content: string }) {
-  return <Markdown components={markdownComponents} skipHtml>{content}</Markdown>
-})
 
 export const AgentChatMessage = memo(function AgentChatMessage({ message, name, status, actions, children, onExpand }: {
   message: Omit<Message, 'conversationId'>
@@ -51,7 +28,7 @@ export const AgentChatMessage = memo(function AgentChatMessage({ message, name, 
     <MessageBubble author={user ? 'You' : name} role={user ? 'user' : 'assistant'} status={status} actions={actions}
       {...(time ? { time, dateTime: timestamp } : {})}>
       <div className={user ? undefined : 'agent-chat-answer'}>
-        <div className="conversation-message-content">{user ? message.content : <AgentContent content={message.content} />}</div>
+        <div className={user ? 'conversation-message-content' : 'conversation-message-content chat-message-body'}>{user ? message.content : <AgentContent content={message.content} />}</div>
       </div>
       <TextTruncationNotice truncation={message.truncation} />
       {message.truncation?.truncated && onExpand ? <MessageExpansion key={`${message.id}:${message.revision}`}
@@ -75,10 +52,10 @@ function AgentContent({ content }: { content: string }) {
   const result = structuredResult(content)
   // While the result is still streaming its JSON, show progress instead of the raw text.
   if (!result && partialStructuredResult(content)) return <p className="agent-chat-writing" role="status">Writing the result…</p>
-  if (!result) return <AgentMarkdown content={content} />
+  if (!result) return <ChatMarkdown content={content} />
   return <>
-    {result.prose ? <AgentMarkdown content={result.prose} /> : null}
-    {result.summary ? <AgentMarkdown content={result.summary} /> : <p>Turn finished.</p>}
+    {result.prose ? <ChatMarkdown content={result.prose} /> : null}
+    {result.summary ? <ChatMarkdown content={result.summary} /> : <p>Turn finished.</p>}
     <ResultDetails value={result.value} />
   </>
 }

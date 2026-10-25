@@ -265,25 +265,10 @@ for (const suite of ['unit-other']) {
   })
   test(`${suite} stops before affected tests when its database preparation failed`, t => {
     const { result, calls } = runSuite(t, suite, '', 'affected', '', true,
-      { scope: 'affected', files: ['apps/web/src/example.test.tsx'], databaseFailure: true })
+      { scope: 'affected', files: ['packages/contracts/src/example.test.ts'], databaseFailure: true })
     assert.equal(result.status, 1, result.stderr)
     assert.match(result.stdout, /Database unavailable/)
     assert.equal(calls.some(call => call[0] === 'scripts/ci-affected-run.mjs'), false)
-  })
-}
-for (const suite of ['unit-web', 'unit-web-heavy']) {
-  for (const action of ['start', 'prepare']) {
-    test(`${suite} ${action} needs no PostgreSQL or harness installation`, t => {
-      const { result, calls } = runSuite(t, suite, '', 'full', action, false)
-      assert.equal(result.status, 0, result.stderr)
-      assert.deepEqual(calls, [])
-    })
-  }
-  test(`${suite} runs affected browser tests independently of PostgreSQL`, t => {
-    const { result, calls } = runSuite(t, suite, '', 'affected', '', true,
-      { scope: 'affected', files: ['apps/web/src/example.test.tsx'], databaseFailure: true })
-    assert.equal(result.status, 0, result.stderr)
-    assert.ok(calls.some(call => call[0] === 'scripts/ci-affected-run.mjs'))
   })
 }
 for (const suite of ['install', 'lint-api', 'typecheck-other', 'build-api']) {
@@ -293,7 +278,7 @@ for (const suite of ['install', 'lint-api', 'typecheck-other', 'build-api']) {
     assert.deepEqual(calls, [])
   })
 }
-for (const suite of ['unit-web', 'unit-web-heavy', 'unit-other', 'lint-api', 'lint-other', 'typecheck-api', 'typecheck-other']) {
+for (const suite of ['unit-other', 'lint-api', 'lint-other', 'typecheck-api', 'typecheck-other']) {
   test(`${suite} forwards its affected selection to the parent suite runner`, t => {
     const { result, calls } = runSuite(t, suite, '', 'affected')
     assert.equal(result.status, 0, result.stderr)

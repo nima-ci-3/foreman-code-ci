@@ -845,7 +845,7 @@ it.each([
     files: ['apps/api/test/workflow.integration.test.ts'] },
   { suite: 'unit', requiresBuildComputer: false,
     files: ['apps/api/test/ci-host/servicePlacement.test.ts'] },
-] as const)('prefers an idle build computer for affected $suite with requiresBuildComputer=$requiresBuildComputer',
+] as const)('prefers eligible GitHub capacity for affected $suite with requiresBuildComputer=$requiresBuildComputer',
   async ({ suite, requiresBuildComputer, files }) => {
     const records = queuedRuns(1).map(run => CiRunRecordSchema.parse({ ...run,
       suite, scope: 'affected', files, requiresBuildComputer,
@@ -858,9 +858,9 @@ it.each([
     const f = fleet(records, [circleci, github, host])
     await f.service.dispatch()
     expect(f.started).toHaveLength(1)
-    expect(f.started[0]?.computer.key).toBe(host.key)
+    expect(f.started[0]?.computer.key).toBe(github.key)
     expect(f.started[0]?.request).toMatchObject({ operation: 'start', suite, scope: 'affected', files })
-    expect(records[0]).toMatchObject({ state: 'running', computer: { hostRef: host.hostRef } })
+    expect(records[0]).toMatchObject({ state: 'running', computer: { hostRef: github.hostRef } })
   })
 
 it('assigns host slices to build computers even when a cloud computer has higher priority', async () => {

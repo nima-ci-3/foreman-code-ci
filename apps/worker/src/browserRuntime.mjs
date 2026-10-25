@@ -6,7 +6,8 @@ import { readUpdateRecord } from './updateRecord.mjs';
 import { readInstalledBrowserRuntime, readBrowserRuntimeStatus, writeBrowserRuntimeStatus,
   stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
 
-const importHost = path => import(pathToFileURL(path).href);
+// Loads the installed native host: the release's bundle of hostFactory.ts.
+const importHost = path => import(/* ci-key: apps/api/src/modules/browser-runtime/hostFactory.ts */ pathToFileURL(path).href);
 
 function unavailable(message, cause) {
   const error = new Error(message, cause ? { cause } : undefined);

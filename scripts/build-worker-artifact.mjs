@@ -1,5 +1,7 @@
 import { verificationRuntimeFiles, verificationArtifactPath } from '../packages/verification-runner/runtime-files.mjs';
-import { INSTALLATION_NAMES, standaloneInstallationSource } from '../packages/contracts/src/installationNames.mjs'
+import { INSTALLATION_NAMES, standaloneInstallationSource as inlineNames } from '../packages/contracts/src/installationNames.mjs'
+import { STANDALONE_PACKAGE_POLICY } from '../packages/contracts/src/packagePolicy.mjs'
+
 import { readProductEnvironment } from '../packages/contracts/src/productEnvironment.mjs'
 import { inspectQuotaHelperAbi } from './quota-helper-abi.mjs';
 import { buildBrowserRuntimeRecipe } from './browser-runtime-install.mjs';
@@ -25,6 +27,9 @@ import {
   copySharpPackagesFromStore, copyClaudeSdkPackagesFromStore, artifactFiles, assertWorkerDependency,
   committedWorkerInputPath, workerReleaseVersion, validateWorkerTarget, assertWorkerUpdateToolchain,
 } from './worker-artifact-files.mjs';
+
+// Raw-copied Worker files also import the package policy; installed copies have no node_modules.
+const standaloneInstallationSource = source => inlineNames(source, [STANDALONE_PACKAGE_POLICY])
 const [targetFile, outputDirectory, runtimeFile = 'apps/worker/artifacts/node-24.22.1-linux-x64.json', bootstrapNode] = process.argv.slice(2);
 if (!targetFile || !outputDirectory) throw new Error('Usage: build-worker-artifact.mjs apps/worker/artifacts/approved-target.json /new-output-directory [apps/worker/artifacts/reviewed-runtime.json]');
 const requestedCommit = readProductEnvironment(process.env, 'WORKER_BUILD_COMMIT');
@@ -44,7 +49,7 @@ function snapshotSource(path) {
 async function requirePinnedSource(path) {
   if (!snapshotSource(path).equals(await readFile(join(root, path)))) throw new Error(`Uncommitted build control input: ${path}`);
 }
-for (const path of ['scripts/build-worker-artifact.mjs', 'scripts/browser-runtime-install.mjs', 'scripts/worker-artifact-files.mjs', 'packages/contracts/package.json', 'packages/contracts-node/package.json', 'apps/api/package.json', 'apps/ci/package.json', 'packages/contracts/src/productEnvironment.mjs', 'packages/contracts/src/installationNames.mjs', 'apps/worker/package.json', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml']) await requirePinnedSource(path);
+for (const path of ['scripts/build-worker-artifact.mjs', 'scripts/browser-runtime-install.mjs', 'scripts/worker-artifact-files.mjs', 'packages/contracts/package.json', 'packages/contracts-node/package.json', 'apps/api/package.json', 'apps/ci/package.json', 'packages/contracts/src/productEnvironment.mjs', 'packages/contracts/src/installationNames.mjs', 'packages/contracts/src/packagePolicy.mjs', 'apps/worker/package.json', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml']) await requirePinnedSource(path);
 await requirePinnedSource('scripts/quota-helper-abi.mjs');
 await requirePinnedSource('scripts/worker-snapshot-policy.mjs');
 await requirePinnedSource('apps/worker/artifacts/licenses/cfworker.txt');

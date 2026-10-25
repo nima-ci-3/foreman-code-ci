@@ -1,5 +1,5 @@
-// Releases main after one clean full round through Foreman CI:
-//   corepack pnpm release <X.Y.Z> [--notes-file <file>] [--gate-ticket <ticket>] [--rerun <failed>=<replacement>]...
+// Releases main after one clean round through Foreman CI (a proven gate by default; --full runs every file):
+//   corepack pnpm release <X.Y.Z> [--notes-file <file>] [--gate-ticket <ticket>] [--rerun <failed>=<replacement>]... [--full]
 // Requires a clean main equal to origin/main. Gates HEAD on Main's CI (typecheck, lint, unit and integration, full
 // scope; see scripts/ci-remote.mjs for the connection settings), reusing the gate that already ran on HEAD, and waits
 // for every part. With --gate-ticket, explicit --rerun substitutions identify infrastructure failures and must pass
@@ -13,7 +13,7 @@ import { gateCommandId, gateRoundProblems, parseReruns, releaseRoundProblems } f
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
-async function release(version, notesFile, gateTicket, rerunValues) {
+async function release(version, notesFile, gateTicket, rerunValues, full = false) {
   if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) {
     throw new Error('usage: corepack pnpm release <X.Y.Z> [--notes-file <file>] [--gate-ticket <id>] [--rerun <failed>=<replacement>]...')
   }
@@ -38,8 +38,9 @@ async function release(version, notesFile, gateTicket, rerunValues) {
   // ran on this exact commit (for example from the gate line) instead of starting a second full round.
   // --gate-ticket names a gate that already ran on this commit under another credential's commandId.
   const started = gateTicket ? await namedGate(call, workspaceId, gateTicket, commit)
-    : await call('ci_run', { workspaceId, commit, suite: 'integration', scope: 'full', gate: true,
-      priority: 'high', commandId: gateCommandId(commit) })
+    // The default gate is proven: test files that already passed at identical inputs are skipped. --full runs everything.
+    : await call('ci_run', { workspaceId, commit, suite: 'integration', scope: full ? 'full' : 'affected', gate: true,
+      priority: 'high', commandId: full ? `full-${gateCommandId(commit)}` : gateCommandId(commit) })
   const groups = [{ suite: 'gate', tickets: (started.partitions ?? [{ ticketId: started.ticketId }]).map(value => value.ticketId) }]
   console.error(`[release] Clean round for ${commit.slice(0, 12)}: ${groups.map(group => `${group.suite} (${group.tickets.length})`).join(', ')}`)
   if (reruns.size) {
@@ -88,5 +89,8 @@ const rerunValues = []
 while (args.includes('--rerun')) {
   rerunValues.push(args.splice(args.indexOf('--rerun'), 2)[1])
 }
-process.exitCode = await release(args[0], notesFile, gateTicket, rerunValues)
+const fullIndex = args.indexOf('--full')
+const full = fullIndex >= 0
+if (full) args.splice(fullIndex, 1)
+process.exitCode = await release(args[0], notesFile, gateTicket, rerunValues, full)
   .catch(error => { console.error(`[release] ${error.message}`); return 1 })

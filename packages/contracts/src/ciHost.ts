@@ -13,11 +13,12 @@ export const CI_HOST_NAMESPACE = 'ci-host-v1'
 export const CI_HOST_START_PROTOCOL_VERSION = 3
 export const CI_LOG_MAX_BYTES = 65_536
 export const CI_UNIT_SHARD_LIMIT = 32
-export const CI_HEAVY_WEB_SHARDS = 2
 export const CI_MAX_RUN_TICKETS = 256
 
 export const CiSuiteSchema = z.enum(['install', 'typecheck', 'lint', 'unit', 'build', 'integration'])
 export type CiSuite = z.infer<typeof CiSuiteSchema>
+// unit-web and unit-web-heavy remain readable for historical tickets; nothing plans them since the web interface has
+// no unit tests.
 const CiPartSchema = z.enum(['unit-api', 'unit-web', 'unit-web-heavy', 'unit-other',
   'lint-api', 'lint-other', 'typecheck-api', 'typecheck-other', 'build-api', 'build-other'])
 export type CiPart = z.infer<typeof CiPartSchema>
@@ -80,7 +81,7 @@ export type CiDurations = z.infer<typeof CiDurationsSchema>
 /** Structured per-test results a finished test run reports with its measured durations. Bounded with the durations
  * so one read reply stays far below the device channel's 1 MiB message limit: failed tests are kept first, then
  * skipped, then passed; `summary` always counts every test. */
-export const CI_TEST_RESULT_LIMITS = { tests: 600, files: 300, name: 200, file: 200, message: 240, location: 240 } as const
+export const CI_TEST_RESULT_LIMITS = { tests: 600, files: 300, name: 200, file: 200, message: 240, location: 240, proven: 5000 } as const
 export const CiTestStatusSchema = z.enum(['passed', 'failed', 'skipped'])
 export type CiTestStatus = z.infer<typeof CiTestStatusSchema>
 const CiTestDurationSchema = z.number().nonnegative().finite().max(24 * 3_600_000).nullable()
@@ -94,6 +95,8 @@ export const CiTestSummarySchema = z.object({ passed: z.number().int().nonnegati
   skipped: z.number().int().nonnegative() }).strict()
 export const CiTestResultsSchema = z.object({ summary: CiTestSummarySchema,
   files: z.array(CiTestFileSchema).max(CI_TEST_RESULT_LIMITS.files),
+  /** Every file whose tests all passed, including files the bounded list leaves out. */
+  proven: z.array(z.string().min(1).max(CI_TEST_RESULT_LIMITS.file)).max(CI_TEST_RESULT_LIMITS.proven).optional(),
   /** Some tests or files were left out to stay within the bounds. */
   truncated: z.boolean() }).strict()
   .refine(value => value.files.reduce((count, file) => count + file.tests.length, 0) <= CI_TEST_RESULT_LIMITS.tests,
@@ -148,7 +151,8 @@ const CiHostStartSchema = z.object({
   /** Printed at the top of the run log, such as the selected files the result cache skipped. */
   notice: z.string().max(CI_LOG_MAX_BYTES).optional(),
 }).strip().refine(value => value.gate
-  ? value.suite === 'integration' && value.scope === 'full' && !!value.files?.length && !value.partition && !value.part
+  ? value.suite === 'integration' && (value.scope === 'full' || value.scope === 'affected') && !!value.files?.length
+    && !value.partition && !value.part
     && value.integrationShards !== undefined && value.files.every(file => /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(file))
   : validCiSelection(value) && value.integrationShards === undefined,
   'Gate jobs require full integration scope, assigned files and a shard count; other selections require affected scope.')

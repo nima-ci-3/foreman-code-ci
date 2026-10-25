@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/api/test/fixtures/codex-app-server.cjs
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'

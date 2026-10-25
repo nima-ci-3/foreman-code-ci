@@ -99,7 +99,7 @@ async function main() {
   const prune = args.includes('--prune')
   const root = args.find(arg => !arg.startsWith('--')) ?? defaultRoot
   const pendingFile = `${scriptsDirectory}/api-module-boundaries-pending.mjs`
-  const { internalImports, mutualPairs } = await import(pathToFileURL(pendingFile).href)
+  const { internalImports, mutualPairs } = await import(/* ci-key: scripts/api-module-boundaries-pending.mjs */ pathToFileURL(pendingFile).href)
   const crossings = crossModuleImports(root)
   const problems = boundaryProblems(crossings, { internalImports, mutualPairs })
   const stale = problems.staleEntry.length + problems.staleMutual.length

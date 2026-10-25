@@ -231,7 +231,8 @@
 .workflow-floating-panel-body:has(> .agent-conversation) { padding-bottom: 0; }
 .workflow-floating-panel .agent-chat-composer-controls { padding-bottom: var(--space-1); }
 /* Resize from every edge and corner. */
-.workflow-panel-resize { position: absolute; z-index: 2; touch-action: none; }
+.workflow-panel-resize { position: absolute; z-index: 2; touch-action: none; appearance: none; border: 0; padding: 0; background: transparent; }
+.workflow-panel-resize:focus-visible { outline: 2px solid var(--focus-ring, currentColor); }
 .workflow-panel-resize[data-edge='n'], .workflow-panel-resize[data-edge='s'] { left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
 .workflow-panel-resize[data-edge='e'], .workflow-panel-resize[data-edge='w'] { top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
 .workflow-panel-resize[data-edge*='n'] { top: -3px; }
