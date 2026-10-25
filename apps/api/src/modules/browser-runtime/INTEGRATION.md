@@ -41,21 +41,9 @@ Runtime activation checkpoints profile state only after native work is drained. 
 
 Profile removal calls file cleanup only for sessions whose exact `setupForProfileId` matches the deleted profile. It waits for in-flight file reads, removes those setup downloads and transient native staging, and preserves execution/conversation outputs. Ordinary session close preserves completed downloads, cancels uploads/partial downloads, and writes a durable closed-session fence so late native events cannot recreate staging. Cleanup can retry even when the metadata was already marked canceled.
 
-`runtime/browser/manifest.json`, `runtime-lock.json`, and each target's committed
-resolved wheel lock define the browser recipe. Release packaging bundles only
-the native host, bridge, skill, notices and installer from the captured commit.
-No Python, wheels or Chromium are included and no native assembly is required
-per commit. Workers download checksum-pinned upstream archives during explicit
-staging and reuse third-party inventories keyed by lock and target. A lock update
-uses `scripts/browser-runtime-install.mjs assemble` on a matching runner to
-resolve a new closure once; commit the resolved lock before packaging.
+`runtime/browser/manifest.json`, `runtime-lock.json`, and `LICENSES.txt` are source inputs to the reproducible assembly path. Run `scripts/browser-runtime-install.mjs assemble` through Foreman CI/fleet on the requested native target. Assembly checks its OS release, architecture, libc and Node runtime, verifies the pinned executable downloads, runs native readiness, and emits a checksummed artifact plus `index.json`. Tests consume provisioned user-namespace support or an explicit `CHROME_DEVEL_SANDBOX` and `CHROME_DEVEL_SANDBOX_SHA256`; they do not provision privileged binaries.
 
-The release approves `browserRuntime.recipeSha256`; installed descriptors retain
-that recipe identity alongside the actual installed manifest hash. Bootstrap
-checks the recipe against the selected release before loading the native host.
-The installed inventory, readiness, drain and rollback checks stay unchanged.
-Tests consume provisioned user namespaces or the explicitly configured sandbox;
-real-install qualification runs in the integration suite.
+Pass the collected runner artifact directory to release assembly through `FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS`. Its index has `format: 1`, `sourceCommit`, and `artifacts` entries containing `directory`, `target`, and `descriptorSha256`. Each directory is relative to the index. Main consumes matching artifacts, checks their source and every transferred chunk, and never cross-builds browser units. Browser units support Node 22 patch changes; OS release, architecture and libc must still match. Core Worker targets retain their separate exact Node contract.
 
 Missing or failed browser setup is explicit in the Worker artifact, installed `browser-runtime/status.json`, and Main release's `browser-runtime.json`. Core installation can complete so repair remains reachable. Worker `retry()` uses the selected release under its running owner; Main can repeat `stageProductionBrowserRuntime` for the same release, then use the normal activation lifecycle. Release assembly retries previously failed artifact resolution. D must connect these repair/status surfaces to existing Settings and Operator maintenance composition and supply the collected fleet artifacts. Starting a node, reading a computer, or displaying settings does not install dependencies.
 

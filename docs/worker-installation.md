@@ -120,30 +120,28 @@ restart the Worker). Its existing retry installs and activates the browser
 from the selected release without reinstalling the Worker. Keep Chromium's
 sandbox and the system's user-namespace restriction enabled.
 
-Worker releases carry a small browser recipe and per-release glue. They contain no
-Python, wheel or Chromium payload. Packaging bundles the native host from the
-captured commit and includes `runtime/browser/runtime-lock.json` plus the committed
-`ubuntu-24.04-x64-resolved-lock.json` or `ubuntu-26.04-x64-resolved-lock.json`.
-Dependency resolution belongs only to a deliberate lock update on a matching
-runner; commit its resolved closure before packaging. Deploys need no browser
-artifact environment variable, native-host assembly, or artifact transfer.
+Browser units are built on native runners at the same source commit. On each
+matching Ubuntu runner, use the pinned pnpm installation and run:
 
-During explicit installation, staging or retry, the Worker downloads the pinned
-Python archive, every locked wheel, and Chromium from their official URLs. Each
-download must pass its SHA-256 check before extraction or installation. Wheels
-install offline with hashes and no dependency resolution. A private cache keyed
-by the input lock and target retains the normalized third-party files and their
-verified inventory across source commits. Downloads retry transient failures;
-`FOREMAN_BROWSER_ARTIFACT_CACHE` optionally retains checksum-verified archives.
+```sh
+node scripts/browser-runtime-install.mjs assemble apps/worker/artifacts/ubuntu-24.04-x64-target.json "$HOME/.cache/foreman-tmp/browser-24.04"
+```
 
-The release's `browserRuntime.recipeSha256` approves the complete recipe, including
-its installer and glue inventory. Installed units retain that identity and their
-own manifest hash. Bootstrap checks the selected release's recipe before loading
-the host, and rechecks selection after import. Full file inventory checks, private
-modes, readiness, staged activation, drain, profile checkpoint and rollback remain
-in force. AppArmor failures keep the recipe available for retry.
+Use the 26.04 target on the 26.04 runner. Assembly verifies the native host,
+resolves and locks native wheels there, and launches the actual Chromium with
+its sandbox before emitting an artifact. Transfer both artifact directories to
+Main, retaining their indexes and chunks, then collect them at that same commit:
 
-The quota helper remains checked against each target's
+```sh
+node scripts/browser-runtime-install.mjs collect "$HOME/.cache/foreman-tmp/browser-release" "$HOME/.cache/foreman-tmp/browser-24.04" "$HOME/.cache/foreman-tmp/browser-26.04"
+export FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS="$HOME/.cache/foreman-tmp/browser-release"
+```
+
+Main consumes each target's verified unit when building the Worker release.
+A configured collection with a missing, corrupt, duplicate, or wrong-commit
+unit fails the build. Publishing a 24.04 bundle requires a ready, verified
+browser unit even when no collection was configured. Collection never relabels
+a 26.04 unit as 24.04. The quota helper remains checked against each target's
 libc by `inspectQuotaHelperAbi`;
 newer symbol requirements fail packaging.
 

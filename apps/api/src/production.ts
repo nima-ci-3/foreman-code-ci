@@ -94,6 +94,7 @@ import { createProductionJobs } from './modules/jobs/production.js'
 import type { OperatorServices } from './mcp/operator/types.js'
 import { WorkflowHierarchyService } from './modules/workflow-hierarchy/service.js'
 import { createClaudeProductionDiscovery } from './modules/harnesses/claudeSdk/bootstrap.js'
+import { authorizeRemoteWorkflowClaudeCallback } from './modules/harnesses/claudeSdk/domainAuthority.js'
 import { productionClaudeMetadata } from './modules/harnesses/claudeSdk/productionMetadata.js'
 import { initializeNativeDefaults } from './modules/harnesses/initializeDefaults.js'
 import { qualifyClaudeNativeProfile } from './modules/harnesses/claudeSdk/nativeProfileQualification.js'
@@ -2198,7 +2199,8 @@ async function initializeWorkflowArtifacts(services: ProductionServices, machine
       })
     started.agentPlacement = agentPlacement
     started.agentPreparation = new AgentExecutionPreparation(jobRuntime.sources, agentPlacement)
-    started.executionAuthority = createExecutionAuthorityExtension(database.pool, locations, agentPlacement)
+    started.executionAuthority = createExecutionAuthorityExtension(database.pool, locations, agentPlacement,
+      authorizeRemoteWorkflowClaudeCallback)
   }
   const artifactPorts: NativeArtifactAuthorityPorts = { locations,
     producer: { assertPinsCurrent: (...args) => {

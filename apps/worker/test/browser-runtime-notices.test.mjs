@@ -53,19 +53,3 @@ test('retains the pinned supplemental notice for the schema validator bundled in
   await copyNativeLicenses(['node_modules/@cfworker/json-schema/dist/index.js'], directory, unit);
   assert.deepEqual(await readFile(join(unit, 'licenses/native-packages/_cfworker_json-schema-4.1.1/LICENSE')), terms);
 });
-
-test('credits capture waits for the complete document instead of accepting a partially parsed license page', async t => {
-  const parent = join(homedir(), '.cache', 'foreman-tmp');
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  const directory = await mkdtemp(join(parent, 'credits-document-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const { fileURLToPath } = await import('node:url');
-  const { stdout } = await promisify(execFile)('python3', [
-    fileURLToPath(new URL('./fixtures/creditsBrowser.py', import.meta.url)),
-    fileURLToPath(new URL('../../../runtime/browser/credits.py', import.meta.url)),
-    join(directory, 'profile'), process.execPath,
-  ]);
-  assert.ok(stdout.endsWith('FINAL LICENSE: complete upstream notice.</body></html>'), stdout.slice(-120));
-});

@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { artifactFiles, validateWorkerTarget, workerReleaseVersion, assertWorkerUpdateToolchain } from './worker-artifact-files.mjs'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
-// Retain bounded publication retries for slow upload links.
+// The Worker bundle is ~316 MB; Main's upload link measured 7 Mbit/s (about 6 min) and is slower under CI load.
 const PUBLICATION_COMMAND_TIMEOUT_MS = 15 * 60_000
 const PUBLICATION_RETRY_MS = 60_000
 // WORKER_PUBLICATION_DEADLINE_MS in packages/contracts/src/workerUpdate.ts; installed scripts cannot import contracts.
@@ -117,8 +117,7 @@ async function verifyArtifact(directory, target, version, commit) {
   if (manifest.browserRuntime) {
     const { readBrowserRuntimeArtifact, matchesBrowserRuntimeTarget } = await import('../apps/worker/src/browserRuntimeInstall.mjs')
     const runtime = await readBrowserRuntimeArtifact(join(directory, 'artifacts/browser-runtime'), manifest.browserRuntime.descriptorSha256)
-    if ((runtime.format === 2 ? manifest.browserRuntime.recipeSha256 !== manifest.browserRuntime.descriptorSha256
-      : runtime.manifestSha256 !== manifest.browserRuntime.manifestSha256) || !matchesBrowserRuntimeTarget(runtime.target, target)) {
+    if (runtime.manifestSha256 !== manifest.browserRuntime.manifestSha256 || !matchesBrowserRuntimeTarget(runtime.target, target)) {
       throw new Error('Browser runtime differs from the Worker target or locked descriptor')
     }
   }

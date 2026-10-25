@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, symlink } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { readCommittedWorkerTargets } from '../../../scripts/worker-release-artifacts.mjs';
-import { collectChromiumNotices } from '../../../scripts/browser-runtime-install.mjs';
+import { collectBrowserRuntimeArtifacts } from '../../../scripts/browser-runtime-install.mjs';
 import { inspectQuotaHelperAbi } from '../../../scripts/quota-helper-abi.mjs';
 import { installVersion, readInstalledRelease } from '../src/installation.mjs';
 import { matchesBrowserRuntimeTarget, readBrowserRuntimeStatus, checkBrowserRuntimeReadiness,
@@ -18,27 +18,17 @@ import { installedBrowserFixture } from './fixtures/installedBrowser.mjs';
 test('a published native Worker installs its real Chromium runtime and loads its native dependencies', { timeout: 600_000 }, async t => {
   const browser = await installedBrowserFixture();
   t.after(browser.cleanup);
-  await t.test('independent credits captures retain the complete identical upstream notice', async () => {
-    const expected = await readFile(join(browser.runtime.rootDirectory, 'licenses/chromium-credits.html'));
-    assert.ok(expected.length > 700_000, `Incomplete pinned Chromium notice: ${expected.length} bytes`);
-    for (const name of ['credits-first', 'credits-second']) {
-      const unit = join(browser.directory, name);
-      await mkdir(join(unit, 'python/bin'), { recursive: true, mode: 0o700 });
-      await symlink(browser.runtime.pythonExecutable, join(unit, 'python/bin/python3'));
-      await copyFile(join(browser.runtime.rootDirectory, 'credits.py'), join(unit, 'credits.py'));
-      await collectChromiumNotices(browser.runtime.chromiumExecutable, unit, unit);
-      assert.deepEqual(await readFile(join(unit, 'licenses/chromium-credits.html')), expected);
-    }
-  });
   const repository = fileURLToPath(new URL('../../../', import.meta.url));
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim();
   const reviewed = readCommittedWorkerTargets(repository, commit);
   const selected = reviewed.find(entry => matchesBrowserRuntimeTarget(entry.target, browser.target));
   assert.ok(selected, 'The native runner must have a published Worker target');
+  const artifacts = join(browser.directory, 'collected');
+  await collectBrowserRuntimeArtifacts({ directories: [join(browser.directory, 'artifact')], output: artifacts, commit });
   const output = join(browser.directory, 'worker');
   execFileSync(process.execPath, ['scripts/build-worker-artifact.mjs', selected.path, output], {
     cwd: repository, encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env, FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS: artifacts },
   });
   const bytes = await readFile(join(output, 'manifest.json'));
   const manifest = JSON.parse(bytes);
