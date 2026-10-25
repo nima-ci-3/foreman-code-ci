@@ -181,18 +181,27 @@ function readJobs(sql: pg.PoolClient, mainId: string) {
 }
 
 function readAgents(sql: pg.PoolClient, mainId: string) {
-  return sql.query<{ target: unknown; activity: unknown }>(`select
+  return sql.query<{ target: unknown; activity: unknown }>(`with active_agents as (
+    select id,run_id,workflow_node_id,agent_id,record->>'state' as state,created_at
+      from harness_executions where record->>'state' in ('starting','running','waiting')
+    union all
+    select c.id,c.run_id,m.workflow_node_id,m.agent->>'agentId' as agent_id,
+      case when c.state='admitted' then 'starting' when c.state='active' then 'running' else 'waiting' end as state,c.created_at
+      from run_coordinator_consultations c join run_coordinator_mailboxes m
+        on m.run_id=c.run_id and m.active_consultation_id=c.id
+      where c.state in ('admitted','active','settling','unknown')
+  ) select
     jsonb_build_object('hostRef', p.record->'hostRef',
       'applicationInstallationId', coalesce(p.record#>'{registration,workerInstallationId}',
         p.record->'mainInstallationId'), 'keyRevision', p.record#>'{registration,keyRevision}',
       'authorizationRevision', p.record#>'{registration,authorizationRevision}') as target,
     jsonb_build_object('id', e.id, 'workspaceId', r.workspace_id, 'workflowId', r.workflow_id,
       'workflowName', v.record#>>'{definition,name}', 'runId', r.id, 'nodeId', e.workflow_node_id,
-      'agentName', a.record->>'name', 'state', e.record->>'state') as activity
-    from harness_executions e join runs r on r.id=e.run_id
+      'agentName', a.record->>'name', 'state', e.state) as activity
+    from active_agents e join runs r on r.id=e.run_id
     join run_node_placements p on p.run_id=e.run_id and p.node_id=e.workflow_node_id
     join workflow_versions v on v.id=r.workflow_version_id join agents a on a.id=e.agent_id
-    where p.record#>>'{hostRef,mainId}'=$2 and e.record->>'state' in ('starting','running','waiting')
+    where p.record#>>'{hostRef,mainId}'=$2
     order by e.created_at,e.id limit $1`, [COMPUTER_ACTIVITY_LIMIT + 1, mainId])
 }
 

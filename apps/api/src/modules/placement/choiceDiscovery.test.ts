@@ -131,7 +131,7 @@ it.each([
   { driver: 'codex', host: 'main', availability: 'ready' },
   { driver: 'codex', host: 'device', availability: 'ready' },
   { driver: 'claude', host: 'main', availability: 'ready' },
-  { driver: 'claude', host: 'device', availability: 'unavailable' },
+  { driver: 'claude', host: 'device', availability: 'ready' },
 ] as const)('matches workflow driver support for $driver on $host', async ({ driver, host, availability }) => {
   const f = fixture({ driver, host })
 
@@ -157,6 +157,17 @@ it('omits disabled or incompatible profiles and respects a saved profile selecti
     instanceId: randomUUID(), instanceRevision: f.profile.instanceRevision }
   f.profiles.mockResolvedValue([f.profile])
   expect((await f.service.list(f.principal, f.input)).choices).toEqual([])
+})
+
+it('offers a paired computer for an Agent whose saved profile is on Main', async () => {
+  const f = fixture({ host: 'device' })
+  // New board Agents copy the Main profile pin from the defaults; it must not lock them to Main.
+  f.configuration.harnessProfileSelection = { instanceId: randomUUID(), instanceRevision: 'main-1',
+    target: { hostRef: { kind: 'main', mainId: f.profile.target.hostRef.mainId }, applicationInstallationId: f.profile.target.hostRef.mainId,
+      harnessInstallationId: 'installed-main', installationFingerprint: 'b'.repeat(64) } }
+  f.profiles.mockResolvedValue([f.profile])
+  expect((await f.service.list(f.principal, f.input)).choices).toEqual([
+    expect.objectContaining({ placement: expect.objectContaining({ hostRef: f.profile.target.hostRef }) })])
 })
 
 it('uses the retained binding policy after the workspace selects a newer location policy', async () => {

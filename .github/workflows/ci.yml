@@ -52,7 +52,8 @@ on:
         default: '{}'
 
 permissions:
-  contents: read
+  # contents: write publishes each typecheck and lint part's state as a ci-state release asset (see below).
+  contents: write
 
 jobs:
   ci:
@@ -93,8 +94,6 @@ jobs:
           if [ "$SUITE" != install ]; then
             echo "contracts=$(node scripts/ci-contracts.mjs key "$PWD")" >> "$GITHUB_OUTPUT"
           fi
-          # A stable per-shard key, so each shard's warm cache is reused by the same shard of later runs.
-          echo "shard=$(printf '%s|%s' "$SLICE" "$CI_PARTITION" | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
           # The CLIs install with the 48-hour package age rule; a weekly key refreshes them.
           echo "clis=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       # Harness CLIs installed by the suite's start step; restored before it so a hit skips the install.
@@ -148,6 +147,33 @@ jobs:
         with:
           path: apps/api/dist
           key: api-build-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/api/src/**', '!apps/api/src/**/*.test.ts', '!apps/api/src/**/__tests__/**', 'apps/api/tsconfig*.json', 'apps/api/package.json', 'apps/ci/src/**', 'apps/ci/tsconfig*.json', 'apps/ci/package.json', 'packages/contracts/src/**', '!packages/contracts/src/**/*.test.ts', '!packages/contracts/src/**/*.spec.ts', 'packages/contracts/tsconfig*.json', 'packages/contracts/package.json', 'scripts/copy-api-runtime.mjs') }}
+      # Main's TypeScript and ESLint state (saved by the default-branch cache warmer): checks re-run only what changed.
+      - name: Typecheck and lint state from main
+        if: startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint')
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            apps/*/node_modules/.cache/tsc
+            apps/*/node_modules/.cache/eslint
+            packages/*/node_modules/.cache/tsc
+            packages/*/node_modules/.cache/eslint
+          key: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-${{ inputs.ref }}
+          restore-keys: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
+      # Snapshot refs can read only main's cache, so a branch's runs never saw each other's state and re-checked
+      # everything that differs from main. Each part's newest state is a release asset (any ref, any provider); its
+      # contents are keyed by file content, so a newer state from another commit is safe to start from.
+      - name: Typecheck and lint state from the newest run
+        if: startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: run-state-${{ inputs.suite }}-${{ steps.cache-inputs.outputs.packages }}.tar.gz
+        run: |
+          if gh release download ci-state -R "$GITHUB_REPOSITORY" -p "$ASSET" -D "$RUNNER_TEMP" 2>/dev/null; then
+            tar -xzf "$RUNNER_TEMP/$ASSET" && echo "Restored the newest run's state ($ASSET)."
+          else
+            echo "No newer run state for $ASSET; starting from main's state."
+          fi
+          node -e 'import("./scripts/ci-suite-state.mjs").then(state => state.recordSuiteState(process.cwd()))'
       # Both suites check the same no-emit web projects; share semantic results instead of checking them twice.
       - name: Web TypeScript cache
         id: web-typecheck
@@ -157,19 +183,8 @@ jobs:
           path: apps/web/node_modules/.cache/tsc
           key: web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**', 'apps/web/*.ts', 'apps/web/tsconfig*.json', 'apps/web/package.json', 'packages/contracts/src/**', 'packages/contracts/tsconfig*.json') }}
           restore-keys: web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-
-      # Compiler and ESLint entries validate file content. Dependency caches come from the main-branch warmer;
-      # snapshot jobs only restore them, so package archives are never uploaded on the result path.
-      - id: suite-cache
-        if: inputs.suite != 'install'
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules/.vitest-cache
-            apps/*/node_modules/.cache
-            packages/*/node_modules/.cache
-            !apps/web/node_modules/.cache/tsc
-          key: ci-v2-${{ runner.os }}-node24.22.1-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.cache-inputs.outputs.shard }}
-          restore-keys: ci-v2-${{ runner.os }}-node24.22.1-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      # Suite state is private to each immutable ci-snapshot ref. Do not upload rolling
+      # archives here: later snapshots cannot restore them, and they evict shared package caches.
       - name: Suite
         # The output is also kept as an artifact, so Main settles the result without downloading the provider log.
         shell: bash
@@ -179,6 +194,22 @@ jobs:
           TEST_RESULTS_OUTPUT: ${{ runner.temp }}/test-results.json
           CI_SELECTION_OUTPUT: ${{ runner.temp }}/selection.json
           CI_WATCHDOG_MESSAGE_FILE: ${{ runner.temp }}/watchdog-message.json
+      - name: Publish this run's typecheck and lint state
+        if: always() && (startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: run-state-${{ inputs.suite }}-${{ steps.cache-inputs.outputs.packages }}.tar.gz
+        run: |
+          set -euo pipefail
+          changed=$(node -e 'import("./scripts/ci-suite-state.mjs").then(state => console.log(state.suiteStateChanged(process.cwd())))')
+          [ "$changed" = true ] || { echo 'State unchanged; nothing to publish.'; exit 0; }
+          paths=$(ls -d apps/*/node_modules/.cache/tsc apps/*/node_modules/.cache/eslint \
+            packages/*/node_modules/.cache/tsc packages/*/node_modules/.cache/eslint 2>/dev/null || true)
+          [ -n "$paths" ] || exit 0
+          tar -czf "$RUNNER_TEMP/$ASSET" $paths
+          gh release view ci-state -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create ci-state -R "$GITHUB_REPOSITORY" \
+            --title 'CI state' --notes 'Typecheck and lint state for CI jobs.' --latest=false || true
+          gh release upload ci-state -R "$GITHUB_REPOSITORY" "$RUNNER_TEMP/$ASSET" --clobber
       # Measured durations and structured test results, which Main reads back with the ticket.
       - if: always()
         uses: actions/upload-artifact@v4
@@ -202,16 +233,6 @@ jobs:
           path: .logs/test-integration/
           retention-days: 2
           if-no-files-found: ignore
-      - name: Save suite caches
-        if: always() && steps.suite-cache.conclusion == 'success' && steps.suite-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            node_modules/.vitest-cache
-            apps/*/node_modules/.cache
-            packages/*/node_modules/.cache
-            !apps/web/node_modules/.cache/tsc
-          key: ${{ steps.suite-cache.outputs.cache-primary-key }}
       - name: Save API build cache
         if: success() && steps.api-build.outputs.cache-hit != 'true' && steps.api-build.conclusion == 'success'
         uses: actions/cache/save@v4

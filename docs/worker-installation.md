@@ -103,6 +103,50 @@ read-only.
 
 ## Build and approve an artifact
 
+Published Worker releases include Ubuntu 24.04 x64 (`glibc-2.39`) and Ubuntu
+26.04 x64 (`glibc-2.43`), with the same reviewed Node version. Download the
+matching bundle from `worker-<commit>` and run `./install <manifest sha>` with
+that Node version installed. Updates select the exact host target; another
+Ubuntu release or libc does not select a nearby target.
+
+On Ubuntu 24.04/26.04 with the default AppArmor user-namespace restriction,
+Chromium needs the scoped profile shipped at
+`runtime/browser/apparmor/foreman-browser-runtime` in the bundle. The Worker
+runs without root and never loads this profile itself. If it is missing,
+setup, doctor and browser-runtime status report the exact `sudo install` and
+`sudo apparmor_parser -r` command using the retained installed profile. Run
+that command once as an administrator, then retry the browser runtime (or
+restart the Worker). Its existing retry installs and activates the browser
+from the selected release without reinstalling the Worker. Keep Chromium's
+sandbox and the system's user-namespace restriction enabled.
+
+Worker releases carry a small browser recipe and per-release glue. They contain no
+Python, wheel or Chromium payload. Packaging bundles the native host from the
+captured commit and includes `runtime/browser/runtime-lock.json` plus the committed
+`ubuntu-24.04-x64-resolved-lock.json` or `ubuntu-26.04-x64-resolved-lock.json`.
+Dependency resolution belongs only to a deliberate lock update on a matching
+runner; commit its resolved closure before packaging. Deploys need no browser
+artifact environment variable, native-host assembly, or artifact transfer.
+
+During explicit installation, staging or retry, the Worker downloads the pinned
+Python archive, every locked wheel, and Chromium from their official URLs. Each
+download must pass its SHA-256 check before extraction or installation. Wheels
+install offline with hashes and no dependency resolution. A private cache keyed
+by the input lock and target retains the normalized third-party files and their
+verified inventory across source commits. Downloads retry transient failures;
+`FOREMAN_BROWSER_ARTIFACT_CACHE` optionally retains checksum-verified archives.
+
+The release's `browserRuntime.recipeSha256` approves the complete recipe, including
+its installer and glue inventory. Installed units retain that identity and their
+own manifest hash. Bootstrap checks the selected release's recipe before loading
+the host, and rechecks selection after import. Full file inventory checks, private
+modes, readiness, staged activation, drain, profile checkpoint and rollback remain
+in force. AppArmor failures keep the recipe available for retry.
+
+The quota helper remains checked against each target's
+libc by `inspectQuotaHelperAbi`;
+newer symbol requirements fail packaging.
+
 Build on the source-pinned main checkout after the orchestrator integrates W07-A/B
 and the worker manifest. Use `corepack pnpm install --frozen-lockfile` with pnpm
 11.27.0 and the existing 48-hour policy. No laptop development-stack build or npm

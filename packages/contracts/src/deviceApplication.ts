@@ -62,6 +62,8 @@ export interface DeviceApplicationFailure extends Failure {
    * and idempotency checks. */
   retryable: boolean
   details?: import('./workerUpdate.js').WorkerBundleReadiness
+  /** A browser action the Worker refused (BROWSER_* code, 4xx), with the short message the owner should see. */
+  rejection?: { message: string; status: number }
 }
 
 /** Leaves room for the original receipt and physical readout in the same carrier. */

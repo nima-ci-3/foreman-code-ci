@@ -11,7 +11,7 @@ import { executionChatReadKey, executionChatScopeKey, executionChatSelectionKey,
   workflowExecutionChatClient, type WorkflowExecutionChatClient } from './client'
 import type { WorkflowExecutionChatSlotSelection, WorkflowExecutionChatViews } from './types'
 import { useBoardAuthoring } from '../../board-core'
-import { runReadErrorLabel, useRunSummaries } from '../../runs-selector'
+import { isRunAccessError, runReadErrorLabel, useRunSummaries } from '../../runs-selector'
 
 type Resolved=Extract<WorkflowExecutionChatResolution,{kind:'selected'}>
 function isPinned(selection:WorkflowExecutionChatSelection,resolved:Resolved) {
@@ -68,6 +68,9 @@ export function WorkflowExecutionChatAdapter({selection:raw,views}:{
     getNextPageParam:(page,_pages,_param,params)=>'nextCursor' in page&&page.nextCursor&&!params.includes(page.nextCursor)
       ?page.nextCursor:undefined,
     retry:false,staleTime:Infinity,refetchOnMount:'always',refetchOnWindowFocus:false,refetchOnReconnect:false,maxPages:10,
+    refetchInterval: query => !selection.executionId && !selection.waitingActivationId
+      && (selection.runId || query.state.data?.pages[0]?.kind === 'run_selection_required')
+      && !isRunAccessError(query.state.error) ? 3000 : false,
   })
   const blocked=useBlockingReadError(query)
   const first=blocked?undefined:query.data?.pages[0], resolved=first?.kind==='selected'?first:undefined
@@ -75,6 +78,17 @@ export function WorkflowExecutionChatAdapter({selection:raw,views}:{
   useEffect(()=>{
     if(selection.runId&&resolved&&!pinned) onSelectTarget(resolved.target,resolved.workflowVersionId)
   },[selection.runId,resolved,pinned,onSelectTarget])
+  // A Run opens each Agent's newest execution chat; once one was pinned for that Agent, "Other attempts" lists them all.
+  const openedRun=useRef<string | undefined>(undefined)
+  const openKey=selection.runId?`${selection.runId}:${nodeId}`:undefined
+  if(openKey&&(selection.executionId||selection.waitingActivationId)) openedRun.current=openKey
+  useEffect(()=>{
+    // The server lists a Run node's executions newest first.
+    const latest=first?.kind==='selection_required'?first.items[0]:undefined
+    if(!openKey||!latest||openedRun.current===openKey) return
+    openedRun.current=openKey
+    onSelectTarget(latest.target,latest.workflowVersionId)
+  },[openKey,first,onSelectTarget])
   const client=useMemo(()=>resolved?boundClient(cache,resolved):undefined,[cache,resolved])
   // A draft-only Agent (never saved) has no configuration to chat with yet: save only that Agent, never the
   // workflow graph, so chat opens even while an unrelated part of the workflow can't be saved.

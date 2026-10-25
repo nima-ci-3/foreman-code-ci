@@ -8,7 +8,7 @@ import { acquireWorkerLock } from './runtime.mjs';
 import { migratePinnedCompanionLauncher } from './companionLauncher.mjs';
 import { prepareBundledBrowserRuntime, activateBrowserRuntime, rollbackBrowserRuntime,
   offlineBrowserRuntimeLifecycle, readBrowserRuntimeActivation, readInstalledBrowserRuntime,
-  writeBrowserRuntimeStatus } from './browserRuntimeInstall.mjs';
+  writeBrowserRuntimeStatus, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const digest = /^[a-f0-9]{64}$/;
@@ -341,9 +341,14 @@ export async function rollbackVersion({ root, stateDirectory, approveStop, facts
       const retained = await readRetainedRelease(root);
       validateManifest(retained.manifest, facts, expected);
       const activation = await readBrowserRuntimeActivation(join(root, 'browser-runtime'));
-      const retainedRuntime = retained.manifest.browserRuntime?.manifestSha256;
+      let retainedRuntime = retained.manifest.browserRuntime?.manifestSha256;
       const currentRuntime = activation ? await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts }) : null;
-      if (currentRuntime?.manifestSha256 !== retainedRuntime && activation?.changed && activation.state !== 'rolled-back') {
+      if (retained.manifest.browserRuntime?.recipeSha256 && activation?.previousReference) {
+        const previous = await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts,
+          reference: activation.previousReference });
+        if (browserRuntimeMatchesRelease(retained.manifest, previous)) retainedRuntime = previous.manifestSha256;
+      }
+      if (!browserRuntimeMatchesRelease(retained.manifest, currentRuntime) && activation?.changed && activation.state !== 'rolled-back') {
         if (activation.previousReference !== (retainedRuntime ? `versions/${retainedRuntime}` : null)) {
           throw new WorkerError('browser_runtime_rollback_unavailable');
         }

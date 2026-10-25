@@ -83,7 +83,8 @@ function responseObservations(continuation: (frame: Record<string, unknown>) => 
     }
     if (frame.type === 'result') {
       for (const uuid of promptUuids ?? []) finished.add(uuid)
-      if (!promptUuids || isDeepStrictEqual(promptUuids, response)) {
+      // A steered turn's result also names the messages that joined it mid-turn.
+      if (!promptUuids || (response && response.every(uuid => promptUuids!.includes(uuid)))) {
         response = undefined
         stream = undefined
         streamMessageId = undefined
@@ -146,6 +147,7 @@ export function createClaudeSdkRunner(input: {
       throw new Error('Claude process-local callbacks require an explicit pending-request cleanup owner')
     }
     if (options.resume) assertClaudeSessionScope(options.resume, options.scope)
+    if (options.resume && options.newSessionId) throw new Error('A resumed Claude session cannot choose a new session ID')
     const abort = new AbortController()
     const inputQueue = new ClaudeBoundedQueue<ClaudeSdkUserMessage>(input.inputCapacity ?? 8)
     const outputQueue = new ClaudeBoundedQueue<ClaudeSdkOutput>(input.outputCapacity ?? 256)
@@ -193,7 +195,8 @@ export function createClaudeSdkRunner(input: {
         session.assertInputCapacity()
         offered.add(message.promptUuid)
         if (message.content === '/compact') compact = { promptUuid: message.promptUuid, boundary: false }
-        await inputQueue.offer({ type: 'user', message: { role: 'user', content: message.content }, parent_tool_use_id: null, uuid: message.promptUuid }, signal)
+        await inputQueue.offer({ type: 'user', message: { role: 'user', content: message.content }, parent_tool_use_id: null, uuid: message.promptUuid,
+          ...(message.priority ? { priority: message.priority } : {}) }, signal)
         abort.signal.throwIfAborted()
         return { state: 'queue-offered', promptUuid: message.promptUuid }
       },
@@ -238,6 +241,7 @@ export function createClaudeSdkRunner(input: {
         env: { ...(options.options.env as Record<string, string> | undefined),
           ...(configuredHome() ? { HOME: configuredHome()! } : {}), CLAUDE_CONFIG_DIR: options.scope.profilePath },
         ...(options.resume ? { resume: options.resume.nativeSessionId } : {}),
+        ...(options.newSessionId ? { sessionId: options.newSessionId } : {}),
       } }))
       query = await queryOpening
       queryDispatched = true
@@ -257,6 +261,7 @@ export function createClaudeSdkRunner(input: {
             if (typeof frame?.session_id === 'string') {
               if (nativeSessionId && nativeSessionId !== frame.session_id) throw new Error('Claude native session identity changed')
               if (options.resume && options.resume.nativeSessionId !== frame.session_id) throw new Error('Claude resumed a different native session')
+              if (options.newSessionId && options.newSessionId !== frame.session_id) throw new Error('Claude started another session than the one chosen for it')
               nativeSessionId = frame.session_id
             }
             if (compact && frame?.type === 'system' && frame.subtype === 'compact_boundary'

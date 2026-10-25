@@ -4,7 +4,6 @@ export { executionChatReadKey, readExecutionChat, resolveExecutionChat, workflow
 export { createWorkflowExecutionChatSlot } from './execution-chat/createWorkflowExecutionChatSlot'
 export type { WorkflowExecutionChatSlotSelection, WorkflowExecutionChatViewProps, WorkflowExecutionChatViews, WorkflowOutsideRunChatViewProps } from './execution-chat/types'
 export { HierarchyEditor } from './HierarchyEditor'
-export { MasterOverview } from './MasterOverview'
 export { hierarchyKey, useHierarchy } from './queries'
 export { RemoveHierarchyNodeDialog } from './RemoveHierarchyNodeDialog'
 export { WorkerParentField } from './WorkerParentField'

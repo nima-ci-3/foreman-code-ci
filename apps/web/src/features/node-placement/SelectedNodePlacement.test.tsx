@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'
+import { seedComputerNames } from '../../shared/api/computerNames.testSupport'
 import { ApiError } from '../../shared/api/client'
 import { beginSessionChange, finishSessionChange } from '../../shared/api/sessionBoundary'
 import type { SelectedRunState } from '../runs-selector'
@@ -102,4 +103,14 @@ it('does not attribute a delayed replacement Worker observation to the accepted 
   await screen.findByText('Laptop at acceptance')
   expect(screen.queryByText(/Execution observed on/)).toBeNull()
   expect(screen.getByText(/Awaiting worker acknowledgment/)).toBeInTheDocument()
+})
+it('names a computer that was accepted without a label by its current name', async () => {
+  const { labelAtAcceptance: _label, ...unlabeled } = placement
+  void _label
+  const wrapper = wrap()
+  seedComputerNames(clients.at(-1)!, placement.hostRef.mainId, [{ hostRef: placement.hostRef, name: 'Office laptop' }])
+  vi.spyOn(client, 'readNodePlacement').mockResolvedValue({ ...scope,
+    readback: { evidence: 'accepted' as const, placement: unlabeled, observations: [] } })
+  render(<SelectedNodePlacement selection={selection(1, () => true)} nodeId="node-a" />, { wrapper })
+  expect(await screen.findByText('Office laptop')).toBeInTheDocument()
 })

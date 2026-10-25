@@ -5,7 +5,9 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  # contents: write publishes main's typecheck and lint state as a mirror release asset for CircleCI.
+  contents: write
+  actions: write
 
 jobs:
   # GitHub makes default-branch caches available to every immutable snapshot ref. This job has no check result
@@ -69,3 +71,67 @@ jobs:
           key: contracts-build-${{ runner.os }}-${{ steps.cache-inputs.outputs.contracts }}
       - run: corepack pnpm --filter @foreman-code/contracts build
       - run: corepack pnpm --filter @foreman-code/contracts-node build
+      - name: Restore previous typecheck and lint state
+        id: suite-state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            apps/*/node_modules/.cache/tsc
+            apps/*/node_modules/.cache/eslint
+            packages/*/node_modules/.cache/tsc
+            packages/*/node_modules/.cache/eslint
+          key: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-${{ github.sha }}
+          restore-keys: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
+      - name: Record restored suite state
+        id: suite-state-before
+        run: node scripts/ci-suite-state.mjs record
+      # TypeScript build info and ESLint content caches for snapshot runs. Caches saved on the default branch are the
+      # only ones every immutable ci-snapshot ref can restore, so snapshot typecheck and lint start from main's state
+      # and re-check only what changed since. The checks' own result does not matter here.
+      - name: Typecheck and lint state for snapshot runs
+        # Every package runs to the end even when another fails, so each one's state is saved.
+        continue-on-error: true
+        run: |
+          corepack pnpm --filter @foreman-code/ci build || true
+          corepack pnpm -r --no-bail --no-sort --if-present typecheck || true
+          corepack pnpm -r --no-bail --no-sort --if-present lint || true
+      - name: Detect updated suite state
+        id: suite-state-after
+        if: always() && steps.suite-state-before.conclusion == 'success'
+        run: |
+          changed="$(node scripts/ci-suite-state.mjs changed)"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/save@v4
+        if: always() && steps.suite-state.conclusion == 'success' && steps.suite-state.outputs.cache-hit != 'true' && steps.suite-state-after.outputs.changed == 'true'
+        with:
+          path: |
+            apps/*/node_modules/.cache/tsc
+            apps/*/node_modules/.cache/eslint
+            packages/*/node_modules/.cache/tsc
+            packages/*/node_modules/.cache/eslint
+          key: ${{ steps.suite-state.outputs.cache-primary-key }}
+      - name: Retain three suite state generations
+        if: always() && steps.suite-state.conclusion == 'success'
+        run: node scripts/ci-suite-state.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # CircleCI cannot read GitHub's cache. The same state goes to one public release asset per package set, so
+      # CircleCI jobs also start from main's typecheck and lint state instead of their own last run (or nothing).
+      - name: Publish typecheck and lint state for CircleCI
+        if: always() && steps.suite-state.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES_KEY: ${{ steps.cache-inputs.outputs.packages }}
+        run: |
+          set -euo pipefail
+          asset="suite-state-${PACKAGES_KEY}.tar.gz"
+          paths=$(ls -d apps/*/node_modules/.cache/tsc apps/*/node_modules/.cache/eslint \
+            packages/*/node_modules/.cache/tsc packages/*/node_modules/.cache/eslint 2>/dev/null || true)
+          [ -n "$paths" ] || { echo 'No typecheck or lint state to publish.'; exit 0; }
+          tar -czf "$RUNNER_TEMP/$asset" $paths
+          gh release view ci-state >/dev/null 2>&1 \
+            || gh release create ci-state --title 'CI state' --notes 'Typecheck and lint state from main for CircleCI jobs.' --latest=false
+          gh release upload ci-state "$RUNNER_TEMP/$asset" --clobber
+          # Older package sets can no longer be restored by anything; keep only the current set's main and run states.
+          gh release view ci-state --json assets --jq '.assets[].name' | grep -v -e "-${PACKAGES_KEY}\.tar\.gz\$" \
+            | xargs -r -n1 gh release delete-asset ci-state -y

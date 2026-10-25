@@ -24,6 +24,21 @@ describe('browser control admission', () => {
     await controller.close()
   })
 
+  it('sends one release for repeated outside clicks while the first is still returning control', async () => {
+    const fake = browserPortFake(), pending = deferred<BrowserControl>()
+    const controller = new BrowserController(fake.port, browserRead(), browserRead().tabs[0]!, 'viewer', vi.fn())
+    await controller.start(); fake.observer!.frame(frame()); await controller.acquire()
+    vi.mocked(fake.port.release).mockReturnValue(pending.promise)
+    const first = controller.release(), second = controller.release()
+    fake.observer!.control({ sessionId: 'session', state: 'resuming', epoch: 2, controllingViewerId: 'viewer', reason: null })
+    const third = controller.release()
+    pending.resolve({ sessionId: 'session', state: 'agent', epoch: 2, controllingViewerId: null, reason: null })
+    await Promise.all([first, second, third])
+    expect(fake.port.release).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().notice).not.toBe('paused')
+    await controller.close()
+  })
+
   it('leaves a healthy agent-owned watcher alone when focus moves outside the view', async () => {
     const fake = browserPortFake()
     const controller = new BrowserController(fake.port, browserRead(), browserRead().tabs[0]!, 'watcher', vi.fn())
@@ -47,6 +62,19 @@ describe('browser control admission', () => {
     await input
     expect(fake.port.input).toHaveBeenCalledWith(expect.objectContaining({ id: 'session' }), expect.objectContaining({ tabId: 'tab' }),
       'viewer', 1, 1, [click], expect.any(AbortSignal))
+    await controller.close()
+  })
+
+  it('sends only the latest of the mouse moves that queued while waiting', async () => {
+    const fake = browserPortFake(), pending = deferred<BrowserControl>()
+    vi.mocked(fake.port.acquire).mockReturnValue(pending.promise)
+    const controller = new BrowserController(fake.port, browserRead(), browserRead().tabs[0]!, 'viewer', vi.fn())
+    await controller.start(); fake.observer!.frame(frame())
+    const move = (x: number) => ({ kind: 'pointer', phase: 'move', x, y: 10, button: 0, buttons: 1 } as const)
+    const sent = [controller.send(click), controller.send(move(30)), controller.send(move(40)), controller.send(move(50))]
+    pending.resolve({ sessionId: 'session', state: 'user', epoch: 1, controllingViewerId: 'viewer', reason: null })
+    await Promise.all(sent)
+    expect(vi.mocked(fake.port.input).mock.calls.flatMap(call => call[5])).toEqual([click, move(50)])
     await controller.close()
   })
 
