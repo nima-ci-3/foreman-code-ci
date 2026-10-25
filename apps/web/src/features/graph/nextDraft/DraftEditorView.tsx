@@ -24,11 +24,10 @@ import { WorkspaceExecutionLocationSettings } from '../../settings'
 
 const kindName = (kind: 'execution' | 'approval') => kind === 'approval' ? 'Approval' : 'Handoff'
 
-export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhere, controller }: {
+export function DraftEditorView({ draftKey, edit, updateFailures, controller }: {
   draftKey: string
   edit: NextDraftEdit
   updateFailures?: readonly BoardUpdateFailure[]
-  changedElsewhere?: boolean
   controller: ReturnType<typeof useDraftEditorController>
 }) {
   const [locationOpen, setLocationOpen] = useState(false)
@@ -42,8 +41,6 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
     affectedRuns, affectedWorkflows, stopBlocked, errorText, locationMessage, panelTitle } = controller.status
   // A Save with no affected Runs passes through "staged" for a moment; that is progress, not a Stop decision.
   const finishingSave = editIntent.mutation.isPending && !affectedRuns.length
-  const staleBase = !!managedWorkflow.data?.currentVersionId && !!edit.context.draft.baseWorkflowVersionId
-    && managedWorkflow.data.currentVersionId !== edit.context.draft.baseWorkflowVersionId
   const repeatOpen = panel === 'repeat', settingsOpen = !!panel && panel !== 'repeat'
   const repeatZ = useFloatingZ('board-repeat', repeatOpen), settingsZ = useFloatingZ('board-settings', settingsOpen)
   // While the Board's latest Run is live the workflow is not edited; its agents still open for chat and details.
@@ -51,7 +48,11 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
   const uncertainStart = !!pendingStart && !starting
   const runAction = <><Button size={board?.runActionHost ? 'sm' : undefined} variant="primary" leading={<Icon name="play" size={14} />} aria-label={uncertainStart ? 'Reconcile Start' : needsSave ? 'Save and run' : 'Start saved version'}
     title={startReason} disabled={startDisabled} loading={starting} onClick={() => void (pendingStart ? start() : prepare(() => needsSave ? startMutation.mutateAsync({ saveFirst: true }) : start())).catch(report)}>{starting ? 'Starting…' : uncertainStart ? 'Confirm start' : needsSave ? 'Save and run' : board?.authoringActive === false ? 'Run current workflow' : 'Run'}</Button>
-</>
+    {board?.authoringActive === false && !pendingStart ? <span aria-label="Start target"
+      style={{ maxWidth: '28rem', font: 'var(--type-caption)', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+      {needsSave ? 'Current draft, saved before Start.' : <>Current workflow · saved version <code>{preflight.data?.version?.id ?? context.draft.baseWorkflowVersionId}</code>.</>}
+      {' '}New input, without reusing the selected Run’s input.
+    </span> : null}</>
   const toolbar = <>
         <div className="board-title">
           <WorkflowName ref={workflowName} name={graph.name} disabled={saveBusy || starting || editLocked}
@@ -115,16 +116,6 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
           else openPanel('workflow')
         }} />
       <div className="board-notices" aria-live="polite">
-        {changedElsewhere && !staleBase ? <BoardNotice tone="warning" title="The shared draft changed elsewhere."
-          action={<Button size="sm" disabled={reloading || edit.busy} onClick={() => {
-            if (nextDraftDirty(edit)) setConfirm('reload'); else void reload()
-          }}>Reload</Button>}>Your edits are kept until you reload.</BoardNotice> : null}
-        {staleBase ? <BoardNotice tone="warning"
-          title="This draft is based on an older saved version of this workflow."
-          action={<Button size="sm" disabled={reloading || edit.busy} onClick={() => {
-            if (nextDraftDirty(edit)) setConfirm('reload'); else void reload()
-          }}>Open saved workflow</Button>}>
-          Runs use the saved workflow, so its Agents, computers and chats can differ from this draft. Your draft is kept.</BoardNotice> : null}
         {scheduleWrite.unconfirmed && scheduleWrite.command?.history ? <BoardNotice tone="warning"
           title="The schedule change may have gone through."
           action={<Button size="sm" disabled={scheduleWrite.pending || historyPending}

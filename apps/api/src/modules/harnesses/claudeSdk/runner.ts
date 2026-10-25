@@ -83,8 +83,7 @@ function responseObservations(continuation: (frame: Record<string, unknown>) => 
     }
     if (frame.type === 'result') {
       for (const uuid of promptUuids ?? []) finished.add(uuid)
-      // A steered turn's result also names the messages that joined it mid-turn.
-      if (!promptUuids || (response && response.every(uuid => promptUuids!.includes(uuid)))) {
+      if (!promptUuids || isDeepStrictEqual(promptUuids, response)) {
         response = undefined
         stream = undefined
         streamMessageId = undefined
@@ -195,8 +194,7 @@ export function createClaudeSdkRunner(input: {
         session.assertInputCapacity()
         offered.add(message.promptUuid)
         if (message.content === '/compact') compact = { promptUuid: message.promptUuid, boundary: false }
-        await inputQueue.offer({ type: 'user', message: { role: 'user', content: message.content }, parent_tool_use_id: null, uuid: message.promptUuid,
-          ...(message.priority ? { priority: message.priority } : {}) }, signal)
+        await inputQueue.offer({ type: 'user', message: { role: 'user', content: message.content }, parent_tool_use_id: null, uuid: message.promptUuid }, signal)
         abort.signal.throwIfAborted()
         return { state: 'queue-offered', promptUuid: message.promptUuid }
       },

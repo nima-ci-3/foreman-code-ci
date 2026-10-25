@@ -77,13 +77,6 @@ export const WorkerArtifactManifestSchema = z.object({
   identityFormat: z.literal(1),
   target: WorkerArtifactTargetSchema,
   browserRuntime: WorkerBrowserRuntimeApprovalSchema.optional(),
-  runtime: z.object({
-    metadataPath: z.literal('artifacts/node-runtime.json'),
-    archivePath: z.literal('artifacts/node-runtime.tar.xz').optional(),
-    version: z.string().regex(/^v\d+\.\d+\.\d+$/u),
-    archiveSha256: digest,
-    executableSha256: digest,
-  }).passthrough().optional(),
   files: z.array(z.object({
     path: artifactPath,
     sha256: digest,
@@ -131,8 +124,6 @@ export const WorkerArtifactIndexSchema = z.object({
     contentSha256: digest.optional(),
     /** Verified publication retained when this target's bundle is unchanged. */
     github: WorkerArtifactGitHubSchema.optional(),
-    /** A Node 22 transition carrier: published on demand when a Worker on Node 22 asks for its update. */
-    transition: z.literal(true).optional(),
   }).strict()).max(100),
 }).strict()
 

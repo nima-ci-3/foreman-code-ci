@@ -35,7 +35,7 @@ class Socket extends EventEmitter {
 }
 
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0' }
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2' }
 
 async function fixture() {
   const storage = join(homedir(), '.cache', 'foreman-tmp')

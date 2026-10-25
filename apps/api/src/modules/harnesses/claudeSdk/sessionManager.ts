@@ -57,7 +57,6 @@ export function createClaudeNativeSessionManager(options: ClaudeNativeSessionMan
     pending(session, signal) { return turns.pending(ctx, session, signal) },
     respond(session, requestId, option, signal) { return turns.respond(ctx, session, requestId, option, signal) },
     stopAutomaticResponses(session) { ctx.options.interactionPort?.stopAutomaticResponses?.(session); ctx.options.cancelPendingRequests?.() },
-    steerTurn(session, input, signal) { return turns.steerTurn(ctx, session, input, signal) },
     cancel(session, signal, nativeMessageId) { return turns.cancel(ctx, session, signal, nativeMessageId) },
     subagentHistory(session, cursor, signal) { return turns.subagentHistory(ctx, session, cursor, signal) },
     history(session) { return turns.history(ctx, session) },

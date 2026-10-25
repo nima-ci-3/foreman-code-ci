@@ -23,7 +23,7 @@ it('makes the installed review Worker bundle ready for new work using its publis
       packageManager: 'pnpm@11.27.0',
       protocolVersion: 1,
       identityFormat: 1,
-      target: { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0' },
+      target: { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2' },
       files: [{ path: 'src/cli.mjs', sha256: createHash('sha256').update(content).digest('hex'), size: content.length }],
     })
     const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)

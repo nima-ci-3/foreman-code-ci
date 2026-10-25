@@ -23,7 +23,6 @@ import { ensurePairedManagedSetup } from './managedSetup.mjs';
 import { refreshWorkflowSelection } from './workflowSelection.mjs';
 
 import { readUpdateRecord } from './updateSupervisor.mjs';
-import { waitForConfirmedRuntime } from './runtimeBootstrap.mjs';
 import { WORKER_UPDATE_NAMESPACE } from '../../../packages/contracts/src/workerUpdate.ts';
 import { runWorkerStartupSmoke, workerCiStartupStatus, runCiInstallSmoke } from './ciInstallSmoke.mjs';
 // The Worker's CI context: the host services the API adapter implements, without Main's server ports.
@@ -227,16 +226,7 @@ export async function startConfiguredWorker({ stateDirectory, extensions = [], e
       readPairing,
       onBindingLost: bindingLost,
       onReady: () => {
-        browserStarting = (async () => {
-          if (manifest.runtime && manifest.runtime.version !== manifest.target.node
-            && (await readUpdateRecord(stateDirectory))?.status.state === 'restarting') {
-            // The old supervisor cannot restore a browser activated by the new Worker.
-            const directory = fileURLToPath(new URL('../', import.meta.url));
-            if (!await waitForConfirmedRuntime(directory, manifestSha256, stateDirectory,
-              { signal: startupLifetime.signal })) return;
-          }
-          await browser?.start();
-        })().catch(error => {
+        browserStarting = browser?.start().catch(error => {
           process.stderr.write(`Browser startup: ${error.code ?? 'browser_startup_failed'}\n`);
         });
         if (!startupCi.pending) { updater?.ready(); return; }

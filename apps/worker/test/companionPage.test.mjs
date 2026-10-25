@@ -9,7 +9,7 @@ import { createCompanionServer } from '../src/companionServer.mjs';
 async function pageFixture(t, outcome) {
   const directory = await mkdtemp(join(tmpdir(), 'companion-page-'));
   const manifestFile = join(directory, 'manifest.json');
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' };
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' };
   await writeFile(manifestFile, JSON.stringify({ target }));
   let enabled = false;
   const gui = await createCompanionServer({

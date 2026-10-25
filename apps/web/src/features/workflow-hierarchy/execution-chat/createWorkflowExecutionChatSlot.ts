@@ -4,6 +4,5 @@ import type { WorkflowExecutionChatSlotSelection, WorkflowExecutionChatViews } f
 
 export function createWorkflowExecutionChatSlot(views: WorkflowExecutionChatViews):
   (selection: WorkflowExecutionChatSlotSelection) => ReactNode {
-  return selection => createElement(WorkflowExecutionChatAdapter, { selection, views,
-    key: JSON.stringify([selection.workspaceId, selection.workflowId, selection.nodeId, selection.runId, selection.workflowVersionId]) })
+  return selection => createElement(WorkflowExecutionChatAdapter, { selection, views })
 }

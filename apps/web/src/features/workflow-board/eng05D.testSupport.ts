@@ -19,7 +19,6 @@ import { useInspectionPresentation } from './inspect/presentation'
 import { inspectionBoardFixture } from './inspect/inspectionFixtures'
 import { clearBoardStartStorage } from './startOutbox'
 import { clearBoardStopStorage } from './stopOutbox'
-import { CollaborationUIProvider, type CollaborationUISlots } from '../../shared/ui/collaborationSlots'
 
 export type InspectionFixture = Awaited<ReturnType<typeof inspectionBoardFixture>>
 export type BoardMock = InspectionFixture['mock']
@@ -116,13 +115,12 @@ export function newBoardQueryClient() {
   clients.push(cache)
   return cache
 }
-export async function mountMeasuredBoard(url: string, collaboration?: CollaborationUISlots) {
+export async function mountMeasuredBoard(url: string) {
   const cache = newBoardQueryClient()
   const history = createMemoryHistory({ initialEntries: [url] })
   const router = createRouter({ routeTree, history, defaultPendingMinMs: 0 })
   await router.load()
-  const view = render(createElement(QueryClientProvider, { client: cache },
-    createElement(CollaborationUIProvider, { value: collaboration }, createElement(RouterProvider, { router }))))
+  const view = render(createElement(QueryClientProvider, { client: cache }, createElement(RouterProvider, { router })))
   await screen.findByTestId('unified-workflow-board')
   return { ...view, cache, router, history }
 }

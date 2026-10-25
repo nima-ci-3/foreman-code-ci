@@ -17,7 +17,7 @@ it('retains cached Worker manifests through symlinked cache ancestors without ad
     await mkdir(cache, { mode: 0o700 })
     await symlink(cache, alias)
     const content = Buffer.from('export const worker = true\n')
-    const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
+    const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
     const manifest = {
       format: 1, version: '0.0.57', commit: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64),
       packageManager: 'pnpm@11.27.0', protocolVersion: 1, identityFormat: 1, target,
