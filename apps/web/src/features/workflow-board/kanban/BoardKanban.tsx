@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Handle, NodeResizer, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react'
+import { Handle, NodeResizer, Position, useInternalNode, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react'
 import { type MemoryBoardScope, type MemoryCard as Card, type WorkflowKanbanFrame } from '@foreman-code/contracts'
 import { Button, Icon } from '../../../shared/ui/nocturne'
 import '../dock/boardDock.css'
@@ -9,7 +9,7 @@ import {
   statusLabels, type MemoryBoardView, type MemoryChange, type MemoryNodeOption,
 } from '../../memory-boards'
 import { PulseFlight, type EdgePulse } from '../../graph/SignalEdgeShape'
-import { useFloatingCurve, useBoardSelection } from '../../board-core'
+import { floatingCurve, lineBend, useBoardSelection } from '../../board-core'
 import { kanbanScope, reportKanbanActivity, useKanbanActivity, type KanbanCardActivity } from './kanbanActivity'
 import './boardKanban.css'
 
@@ -81,8 +81,9 @@ function KanbanColumns({ workspaceId, workflowId }: { workspaceId: string; workf
   return <div className="board-kanban-columns" role="region" aria-label="Kanban columns">
     {(Object.keys(statusLabels) as Card['status'][]).map((status, index) => <KanbanColumn key={status} view={view}
       status={status} nodes={nodes} activity={byCard} onOpen={cardId => board?.openMemoryCard?.(cardId)} onFailure={reportFailure}
-      notice={index === 0 && retries.length ? <p className="board-kanban-error" role="alert">Couldn’t load cards.
-        <Button size="sm" variant="ghost" onClick={() => retries.forEach((retry) => retry())}>Retry</Button></p> : null} />)}
+      notice={index === 0 && (error || retries.length) ? <p className="board-kanban-error" role="alert">
+        {error ? 'Couldn’t refresh the memory board. Counts may be out of date.' : 'Couldn’t load cards.'}
+        <Button size="sm" variant="ghost" onClick={() => { void live.retry(); retries.forEach(retry => retry()) }}>Retry</Button></p> : null} />)}
   </div>
 }
 
@@ -110,10 +111,21 @@ function KanbanColumn({ view, status, nodes, activity, onOpen, onFailure, notice
   </section>
 }
 
-export type KanbanActivityFlowEdge = Edge<{ pulse: EdgePulse }, 'kanbanActivity'>
-/** The light from the Agent that changed a card to the Kanban; it exists only while it travels. */
+export type KanbanActivityFlowEdge = Edge<{ pulse: EdgePulse; cardId: string; status?: string }, 'kanbanActivity'>
+const columns = Object.keys(statusLabels)
+/** The light from the Agent that changed a card to that card's column; it exists only while it travels. */
 export const KanbanActivityEdge = memo(function KanbanActivityEdge({ source, target, data }: EdgeProps<KanbanActivityFlowEdge>) {
-  const curve = useFloatingCurve(source, target, 0)
-  if (!curve || !data) return null
+  const from = useInternalNode(source), to = useInternalNode(target)
+  if (!from || !to || !data) return null
+  // A change that did not move the card (an edit) lands where the card is shown.
+  const status = data.status ?? document.querySelector(`.board-kanban-card[data-card-id="${CSS.escape(data.cardId)}"]`)
+    ?.closest('[data-status]')?.getAttribute('data-status')
+  const size = (node: typeof from) => ({ width: node.measured.width ?? node.width ?? 0, height: node.measured.height ?? node.height ?? 0 })
+  const agent = size(from), board = size(to), column = Math.max(0, columns.indexOf(status ?? ''))
+  const start = { x: from.internals.positionAbsolute.x + agent.width / 2, y: from.internals.positionAbsolute.y + agent.height / 2 }
+  const end = status && columns.includes(status)
+    ? { x: to.internals.positionAbsolute.x + board.width * (column + 0.5) / columns.length, y: to.internals.positionAbsolute.y + 18 }
+    : { x: to.internals.positionAbsolute.x + board.width / 2, y: to.internals.positionAbsolute.y + board.height / 2 }
+  const curve = floatingCurve(start, end, lineBend(start, end), undefined, agent, { width: 2, height: 2, box: true })
   return <g className="board-kanban-flight" aria-hidden="true"><PulseFlight path={curve.path} pulse={data.pulse} /></g>
 })

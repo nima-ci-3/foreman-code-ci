@@ -1,22 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CiActivity, ExecutionQueueEntry } from '@foreman-code/contracts'
 import type { RunBoardEdgeSnapshot } from '@foreman-code/contracts/run-snapshots'
-import type { RepeatGraphScopeCurrent } from '@foreman-code/contracts/current'
+import type { RepeatGraphScopeCurrent, RunHandoffsRead } from '@foreman-code/contracts/current'
 import { relationshipLines, RunLiveNodes, RunLivePulses, type RunLiveNodeView } from '../board-core'
 import type { EdgePulse } from '../graph'
 import { useInteractionsQuery } from '../../shared/api/query'
 import { useProtectedAccessError } from '../../shared/api/useProtectedAccessError'
+import { sessionGeneration } from '../../shared/api/sessionBoundary'
 import {
   useCurrentRunQuery, useRunHandoffsQuery, useRunChoreography, runningIntervalChecks, interactionWaits,
-  isActiveCi, liveNodeView, useRunDirectionWait, withDirectionWait,
+  liveNodeView, useRunDirectionWait, withDirectionWait,
 } from '../workflow-board'
-import { ciNodePresentation } from './ciPresentation'
 
 export { RunLiveNodes, RunLivePulses }
 export type { RunLiveNodeView }
 
 /** Each node's turn, queue, CI and pending-decision state from the Run's canonical current cut.
- * Reads only while the Board is shown; a denied or failed read leaves the saved presentation. */
+ * Reads only while the Board is shown; unavailable facts are never presented as draft nodes. */
 export function useRunLiveNodes(scope: RepeatGraphScopeCurrent, names: ReadonlyMap<string, string>,
   cis: ReadonlyMap<string, CiActivity>, visible: boolean, edges: readonly RunBoardEdgeSnapshot[], executionQueue?: readonly ExecutionQueueEntry[]) {
   const current = useCurrentRunQuery(visible ? scope : undefined, visible)
@@ -34,16 +34,26 @@ export function useRunLiveNodes(scope: RepeatGraphScopeCurrent, names: ReadonlyM
   const working = Boolean(visible && record?.state.executions.some((execution) => execution.workActivationId))
   const handoffs = useRunHandoffsQuery(scope, working)
   const { refetch } = handoffs
-  const scopeKey = JSON.stringify([scope.workspaceId, scope.workflowId, scope.runId, scope.workflowVersionId])
-  const [caughtUp, setCaughtUp] = useState({ scopeKey, record })
+  const scopeKey = JSON.stringify([sessionGeneration(), scope.workspaceId, scope.workflowId, scope.runId, scope.workflowVersionId])
+  const activeScope = useRef<string | undefined>(scopeKey)
+  activeScope.current = scopeKey
+  useEffect(() => {
+    activeScope.current = scopeKey
+    return () => { activeScope.current = undefined }
+  }, [scopeKey])
+  // Presentation holds the cut and its transfers together while the next hand-off read catches up.
+  const [caughtUp, setCaughtUp] = useState<{ scopeKey: string; record: typeof record; transfers?: RunHandoffsRead['transfers'] }>({ scopeKey, record: undefined })
   useEffect(() => {
     if (!working) return
-    let current = true
-    void refetch().then(() => { if (current) setCaughtUp({ scopeKey, record }) })
-    return () => { current = false }
-  }, [working, record, refetch, scopeKey])
-  const shown = working ? caughtUp.scopeKey === scopeKey ? caughtUp.record : undefined : record
-  const choreography = useRunChoreography(shown, edges, working ? handoffs.data?.transfers : undefined, scopeKey)
+    void refetch({ cancelRefetch: false }).then(result => {
+      if (activeScope.current !== scopeKey || !result.isSuccess) return
+      setCaughtUp(previous => previous.scopeKey === scopeKey && previous.record && record
+        && BigInt(previous.record.asOfSequence) > BigInt(record.asOfSequence) ? previous
+        : { scopeKey, record, transfers: result.data.transfers })
+    })
+  }, [working, record, refetch, scopeKey, handoffs.isError])
+  const shown = record && (working ? caughtUp.scopeKey === scopeKey ? caughtUp.record : undefined : record)
+  const choreography = useRunChoreography(shown, edges, working ? caughtUp.transfers : undefined, scopeKey)
   // One line per agent pair: an approval beside a handoff travels on the handoff's line.
   const lines = useMemo(() => relationshipLines(edges), [edges])
   const flights: [string, EdgePulse[]][] = []
@@ -61,16 +71,21 @@ export function useRunLiveNodes(scope: RepeatGraphScopeCurrent, names: ReadonlyM
   }, [flightKey])
   const queued = new Map(executionQueue?.map(entry => [entry.workflowNodeId, entry.reason]))
   const views: [string, RunLiveNodeView][] = []
-  for (const nodeId of names.keys()) {
+  for (const nodeId of visible ? names.keys() : []) {
     const ci = cis.get(nodeId)
     const base = shown ? choreography.nodes.get(nodeId) ?? { state: 'idle' as const, label: 'Not started' } : undefined
-    // Without the current cut a node still says it waits on its CI, or shows that CI's result.
-    if (!base) { if (ci) views.push([nodeId, isActiveCi(ci) ? liveNodeView(ciNodePresentation(ci), undefined, ci) : ciNodePresentation(ci)]); continue }
+    if (!base) {
+      views.push([nodeId, { state: 'unavailable', label: denied || current.isError || handoffs.isError ? 'Run state unavailable' : 'Loading Run state' }])
+      continue
+    }
     const view = liveNodeView(base, waits.get(nodeId), ci, undefined, checking.get(nodeId), live && base.state === 'queued' ? queued.get(nodeId) : undefined)
     views.push([nodeId, { state: view.state, label: view.label,
       ...(base.transition && view.state === base.state ? { transition: base.transition, transitionKey: base.transitionKey } : {}) }])
   }
   const key = views.length ? JSON.stringify(views) : undefined
   const nodes = useMemo(() => key ? new Map(JSON.parse(key) as [string, RunLiveNodeView][]) : undefined, [key])
-  return { nodes, pulses }
+  return { nodes, pulses, error: denied ?? current.error ?? (working ? handoffs.error : null), refresh: () => {
+    void current.refetch()
+    if (working) void handoffs.refetch()
+  } }
 }

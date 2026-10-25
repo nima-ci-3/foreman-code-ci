@@ -1,30 +1,44 @@
 .board-kanban {
   box-sizing: border-box;
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
   color: var(--text);
-  box-shadow: var(--kanban-shadow);
-  overflow: hidden;
 }
+/* Only the five columns show; the bar (move, Memory, close) appears above them on hover or focus. */
 .board-kanban-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 6px 6px 6px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 4px 4px 4px 10px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--kanban-shadow);
   cursor: grab;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-duration) var(--motion-ease);
+}
+.board-kanban:hover .board-kanban-bar, .board-kanban:focus-within .board-kanban-bar, .board-kanban-bar:has(.board-kanban-error) {
+  opacity: 1;
+  pointer-events: auto;
 }
 .board-kanban-bar:active { cursor: grabbing; }
-.board-kanban-bar h2 { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin: 0; font-size: 0.9rem; flex: 1 1 auto; }
+/* Bridges the gap to the columns, so moving up to the bar keeps it shown. */
+.board-kanban-bar::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 6px; }
+.board-kanban-bar h2 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 0.85rem; flex: 1 1 auto; }
 .board-kanban-bar h2 span { display: flex; align-items: center; gap: 6px; }
 .board-kanban-bar h2 small { font-size: 0.7rem; font-weight: 400; color: var(--text-muted); }
 .board-kanban-error { color: var(--danger); font-size: 0.8rem; }
-.board-kanban-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px; cursor: default; }
+.board-kanban-body { flex: 1 1 auto; min-height: 0; overflow: auto; cursor: default; }
 .board-kanban-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; height: 100%; }
 /* Each column is its own colored card; all five sit side by side, empty or not. */
 .board-kanban-column { --col: var(--accent); display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; overflow: auto;
@@ -44,7 +58,7 @@
 .board-kanban-updated { margin: 4px 2px 0; font-size: 0.78rem; color: var(--accent); }
 .board-kanban-target { opacity: 0; pointer-events: none; }
 .board-kanban-resize { width: 10px; height: 10px; border-radius: 3px; }
-@media (prefers-reduced-motion: reduce) { .board-kanban-card { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .board-kanban-card, .board-kanban-bar { transition: none; } }
 .board-kanban-column.is-placeholder h3 { color: var(--text-muted); }
 .board-kanban-error { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .board-kanban-toggle[aria-pressed='true'] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised)); color: var(--accent); }

@@ -5,6 +5,8 @@ import { useOutsidePress } from '../../shared/ui/useOutsidePress'
 import { BrowserController } from './controller'
 import { BrowserViewer } from './BrowserViewer'
 import { BrowserSessionActions } from './BrowserSessionActions'
+import { BrowserEmptySession } from './BrowserEmptySession'
+import { BrowserTransfers } from './BrowserTransfers'
 import { BrowserPreparation, type BrowserPreparationRead } from './BrowserPreparation'
 import type { BrowserFilesPort } from './transferTypes'
 import { shownUrl, tabLabel } from './tabLabel'
@@ -47,6 +49,8 @@ function SelectedBrowser(props: AgentBrowserPanelProps & { keepControlOnTabChang
   const [denied, setDenied] = useState(false)
   const selection = { ...props.selection, enabled: props.selection.enabled && !denied }
   const read = useBrowserSession(props.port, selection)
+  const generation = useRef<number | undefined>(undefined)
+  generation.current = read.data?.session.browserGeneration
   const sessions = useBrowserSessions(props.port, selection)
   const [viewerId] = useState(() => crypto.randomUUID())
   const [connectionVisit, setConnectionVisit] = useState(0)
@@ -64,7 +68,7 @@ function SelectedBrowser(props: AgentBrowserPanelProps & { keepControlOnTabChang
     validateBrowserRead(await props.port.reconnect(request.session, request.commandId), props.selection), retry: false,
     onSuccess: (result, request) => {
       if (activeVisit.current !== request.visitKey) return
-      if (result.session.id !== request.session.id || result.session.browserGeneration !== request.session.browserGeneration) {
+      if (result.session.id !== request.session.id) {
         deny(); return
       }
       recoveryCommand.current = null
@@ -105,13 +109,22 @@ function SelectedBrowser(props: AgentBrowserPanelProps & { keepControlOnTabChang
           <SessionChoices {...props} sessions={sessions.data} loading={sessions.isPending} />
         </>
           : read.isPending ? <p role="status">Loading browser…</p>
-            : data?.session.state === 'closed' || data?.session.state === 'failed' ? <p>No live browser remains for this selected session.</p>
+            : data?.session.state === 'closed' || data?.session.state === 'failed' ? <>
+              <p>This browser session has ended.</p>
+              <BrowserTransfers port={props.files} session={data.session} downloads={data.files}
+                onChanged={() => { void read.refetch() }} onDenied={deny} />
+            </>
               : data && tab ? <BrowserSessionPanel key={`${data.session.id}:${data.session.browserGeneration}:${tab.tabId}`}
                 {...props} initial={data} tab={tab} viewerId={viewerId} onDenied={deny} connectionVisit={connectionVisit}
                 onRead={result => queryClient.setQueryData(browserSessionKey(props.selection), validateBrowserRead(result, props.selection))}
+                currentGeneration={() => generation.current}
                 onRefresh={() => { void read.refetch() }}
                 onReconnect={recover} reconnectAttempts={reconnectAttempts} />
-                : <p>{props.selection.tabId ? 'The selected tab is no longer available. Choose a tab from this session.' : 'No browser tab is available yet.'}</p>}
+                : data && !data.tabs.length ? <BrowserEmptySession key={`${data.session.id}:${data.session.browserGeneration}`}
+                  port={props.port} initial={data} selection={props.selection} readOnly={props.readOnly}
+                  onRead={result => queryClient.setQueryData(browserSessionKey(props.selection), result)}
+                  onSelectTab={props.onSelectTab} onDenied={deny} onCleanupError={props.onCleanupError} />
+                  : <p>{props.selection.tabId ? 'The selected tab is no longer available. Choose a tab from this session.' : 'No browser tab is available yet.'}</p>}
     {!rejected && data && !tab ? <div className="agent-browser-actions">{data.tabs.map(item =>
       <Button key={item.tabId} onClick={() => props.onSelectTab(item.tabId)}>{item.title || 'Untitled tab'}</Button>)}</div> : null}
     {recovery.isPending ? <p role="status">Reconnecting the owned browser…</p> : null}
@@ -125,12 +138,10 @@ function SessionChoices({ sessions, loading, selection, onSelectSession, compact
   onSelectSession(sessionId: string): void; compact?: boolean
 }) {
   if (loading) return <p role="status">Loading browser sessions…</p>
-  // The sidebar shows live browsers only; ended ones are history, not choices.
-  if (compact) sessions = sessions?.filter(session => session.state !== 'closed' && session.state !== 'failed')
   if (!sessions?.length) return <p>{selection.historical ? 'No live browser remains for this historical selection.' : 'No live browser yet.'}</p>
   return <div><p>{sessions.length > 1 ? 'Choose the exact browser session to watch.' : 'Browser session for the selected agent.'}</p>
     {sessions.map((session, index) => <Button key={session.id} onClick={() => onSelectSession(session.id)}>
-      {compact ? `Open browser${sessions.length > 1 ? ` ${index + 1}` : ''} · ${session.state === 'closed' || session.state === 'failed' ? 'ended' : session.state}`
+      {compact ? `${session.state === 'closed' || session.state === 'failed' ? 'Downloads' : 'Open browser'}${sessions.length > 1 ? ` ${index + 1}` : ''} · ${session.state === 'closed' || session.state === 'failed' ? 'ended' : session.state}`
         : <>Open browser · {session.state} · {session.id.slice(0, 8)}</>}
     </Button>)}</div>
 }
@@ -143,6 +154,7 @@ export interface BrowserSessionPanelProps {
   onRefresh(): void
   reconnectAttempts: RefObject<number>
   connectionVisit: number
+  currentGeneration?(): number | undefined
 }
 
 type ViewerMutation = {
@@ -163,8 +175,8 @@ export function BrowserSessionPanel(props: BrowserSessionPanelProps) {
   const retiringForTab = useRef(false)
   const effectVisit = useRef(0)
   const mounted = useRef(false)
-  const lifecycle = useRef({ keepControlOnTabChange: props.keepControlOnTabChange, onCleanupError: props.onCleanupError })
-  lifecycle.current = { keepControlOnTabChange: props.keepControlOnTabChange, onCleanupError: props.onCleanupError }
+  const lifecycle = useRef({ keepControlOnTabChange: props.keepControlOnTabChange, onCleanupError: props.onCleanupError, currentGeneration: props.currentGeneration })
+  lifecycle.current = { keepControlOnTabChange: props.keepControlOnTabChange, onCleanupError: props.onCleanupError, currentGeneration: props.currentGeneration }
   const [url, setUrl] = useState(shownUrl(props.tab.url))
   // The address follows the agent's page, except while the person is typing one.
   const typing = useRef(false)
@@ -187,7 +199,7 @@ export function BrowserSessionPanel(props: BrowserSessionPanelProps) {
       queueMicrotask(() => {
         if (effectVisit.current !== retiringVisit && view.current?.controller === controller) return
         const release = !retiringTab || !lifecycle.current.keepControlOnTabChange()
-        void controller.close(release).catch(failure => lifecycle.current.onCleanupError(browserErrorMessage(failure)))
+        void controller.close(release, lifecycle.current.currentGeneration?.()).catch(failure => lifecycle.current.onCleanupError(browserErrorMessage(failure)))
       })
     }
   }, [controller])

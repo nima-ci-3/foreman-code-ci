@@ -291,7 +291,7 @@ export class BrowserController {
     } catch (error) { if (!this.closed) this.pause(error) }
   }
 
-  async close(deliberate = true): Promise<void> {
+  async close(deliberate = true, currentGeneration = this.initial.session.browserGeneration): Promise<void> {
     if (this.closed) return
     this.deliberateClose = deliberate
     this.operation += 1
@@ -300,14 +300,15 @@ export class BrowserController {
     this.closed = true
     this.publish({ notice: 'closed', frame: null })
     let failure: unknown
-    try {
+    // A verified replacement process cannot hold the retired process's input or viewer control.
+    try { if (currentGeneration === this.initial.session.browserGeneration) {
       if (this.taking) await this.taking
       await this.settlePause()
       const control = this.snapshot.control
       if (deliberate && control.controllingViewerId === this.viewerId) {
         await this.port.release(this.initial.session, this.viewerId, control.epoch, crypto.randomUUID())
       } else await this.port.releasePressed(this.initial.session, this.viewerId, control.epoch)
-    } catch (error) { failure = error }
+    } } catch (error) { failure = error }
     this.viewAbort.abort()
     try { await this.view?.close() } catch (error) { failure ??= error }
     if (deliberate) inputSequences.delete(`${encodeURIComponent(this.viewerId)}:${encodeURIComponent(this.initial.session.id)}:${this.initial.session.browserGeneration}`)

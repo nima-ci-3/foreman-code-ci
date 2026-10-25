@@ -13,7 +13,7 @@ import { createWorkerArtifactExtension, readWorkerContentSha256s, readWorkerMani
   readWorkerReleasePublication } from './workerArtifacts.js'
 
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()

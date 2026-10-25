@@ -120,7 +120,7 @@
     "build": "node ../../scripts/heavy-job.mjs --build ci -- tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "node ../../scripts/ci-remote.mjs typecheck -- node ../../scripts/heavy-job.mjs -- tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/typecheck.tsbuildinfo",
-    "lint": "node ../../scripts/ci-remote.mjs lint -- node ../../scripts/heavy-job.mjs -- eslint . --max-warnings 0 --cache --cache-strategy content --cache-location node_modules/.cache/eslint/",
+    "lint": "node ../../scripts/ci-remote.mjs lint -- node ../../scripts/heavy-job.mjs -- node ../../scripts/eslint-closure-cache.mjs --max-warnings 0",
     "test": "node ../../scripts/ci-remote.mjs unit -- node ../../scripts/heavy-job.mjs -- vitest run"
   },
   "dependencies": {
