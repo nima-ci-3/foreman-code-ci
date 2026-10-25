@@ -270,10 +270,17 @@ export function allocateInstalledWorkflowClaude(input: {
   }
   const readHistory = manager.history.bind(manager)
   manager.history = (native, signal) => remoteHistory(native, () => readHistory(native, signal))
+  // Main streams the execution's session as one contiguous sequence; Claude's reconcile keeps only the turn's events.
+  const wholeSession = async (native: NativeSessionReference, history: NativeHistory, signal?: AbortSignal): Promise<NativeHistory> => {
+    const { events, firstRetainedSequence = 0, nextSequence = events.length } = await readHistory(native, signal)
+    return { ...history, events, firstRetainedSequence, nextSequence }
+  }
   const reconcile = manager.reconcile.bind(manager)
-  manager.reconcile = (native, correlationId, signal) => remoteHistory(native, () => reconcile(native, correlationId, signal))
+  manager.reconcile = (native, correlationId, signal) => remoteHistory(native,
+    async () => wholeSession(native, await reconcile(native, correlationId, signal), signal))
   const reconcileResponse = manager.reconcileResponse!.bind(manager)
-  manager.reconcileResponse = (native, response, signal) => remoteHistory(native, () => reconcileResponse(native, response, signal))
+  manager.reconcileResponse = (native, response, signal) => remoteHistory(native,
+    async () => wholeSession(native, await reconcileResponse(native, response, signal), signal))
   const contextSnapshot = manager.contextSnapshot?.bind(manager)
   if (contextSnapshot) manager.contextSnapshot = native => beforeInit(native) ? null : contextSnapshot(native)
   const cancel = manager.cancel.bind(manager)
