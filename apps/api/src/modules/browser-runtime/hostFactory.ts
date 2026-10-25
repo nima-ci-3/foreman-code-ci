@@ -164,11 +164,12 @@ export async function createBrowserHost(options: BrowserHostOptions) {
   const close = async () => {
     hostClosing = true
     broker.stopAdmission()
-    await broker.suspend()
-    const retired = await Promise.allSettled(broker.list().filter(session => session.state !== 'closed')
-      .flatMap(session => [media.closeSession(session.id), files.suspendSession(session.id)]))
-    const failed = retired.find(result => result.status === 'rejected')
-    if (failed) throw failed.reason
+    for (const session of broker.list()) {
+      const result = session.subject ? await broker.release({ sessionId: session.id, subject: session.subject,
+        commandId: `shutdown:${session.id}`, reason: 'runtime_update' }) : await broker.closeSetup(session.id)
+      if (result.state === 'pending') throw new DomainError('BROWSER_RUNTIME_BUSY', result.reason ?? 'Browser cleanup is pending.', 409)
+    }
+    if (broker.activeSessionCount()) throw new DomainError('BROWSER_RUNTIME_BUSY', 'Browser preparation is still settling.', 409)
     try { await closeOwnedProfiles() } finally { await driver.closeVirtualDisplay() }
     await runtimeControl.close()
   }
