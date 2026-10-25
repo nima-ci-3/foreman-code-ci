@@ -17,8 +17,8 @@ function fleet(builder = true): HostCiEndpoint {
   }
 }
 
-const unitFiles = ['apps/api/src', 'apps/web/src'].flatMap((directory, index) =>
-  Array.from({ length: index === 0 ? 24 : 8 }, (_, file) => `${directory}/feature-${file}.test.ts`))
+// Enough measured unit work to give every cloud slot a check before integration starts.
+const unitFiles = Array.from({ length: 32 }, (_, file) => `apps/api/src/feature-${file}.test.ts`)
 const unit = { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000]))}
 
 it.each([0, 2])('balances a second integration wave after checks with %i reserved slots', async reserved => {

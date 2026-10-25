@@ -88,6 +88,10 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
       + " const result = spawnSync(command, args, { stdio: 'inherit' }); process.exit(result.status ?? 1);\n")
   const unitFiles = ['apps/api/test/first.test.ts', 'apps/api/test/second.test.ts']
   for (const file of unitFiles) await writeFile(join(origin, file), '')
+  // ci-files.mjs and ci-unit-files.mjs read the shared test inventory.
+  await mkdir(join(origin, 'packages/contracts/src'), { recursive: true })
+  await copyFile(new URL('../../../packages/contracts/src/ciTestInventory.mjs', import.meta.url),
+    join(origin, 'packages/contracts/src/ciTestInventory.mjs'))
   if (options.selector) {
     await copyFile(new URL('../../../scripts/ci-affected.mjs', import.meta.url),
       join(origin, 'scripts/ci-affected.mjs'))
@@ -97,7 +101,7 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
     await copyFile(new URL('../../../packages/verification-runner/runtime-files.mjs', import.meta.url),
       join(origin, 'packages/verification-runner/runtime-files.mjs'))
     await mkdir(join(origin, 'packages/contracts/src'), { recursive: true })
-    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs', 'ciTestInventory.mjs']) {
+    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs']) {
       await copyFile(new URL(`../../../packages/contracts/src/${file}`, import.meta.url),
         join(origin, 'packages/contracts/src', file))
     }

@@ -8,7 +8,7 @@ import { useNativeHarnessOptions } from '../../shared/api/harnessSettings'
 import { OperatorMessages } from './OperatorMessages'
 import { OperatorHistory } from './OperatorHistory'
 import { HistoryWindowNotice, useChatTurnCompleted } from '../chat-core'
-import { ConversationViewport } from '../conversations/ConversationViewport'
+import { ConversationViewport } from '../conversations'
 import type { OperatorTextProjection } from './operatorTextProjection'
 
 function AcceptedModelMessages(props: ComponentProps<typeof OperatorMessages>) {

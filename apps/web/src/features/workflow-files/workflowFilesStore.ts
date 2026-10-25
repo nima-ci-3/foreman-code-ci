@@ -2,7 +2,7 @@ import { createStore } from 'zustand/vanilla'
 import type { FileWithRevision } from '@foreman-code/contracts/files'
 import type { SelectionIssue } from '../attachments'
 
-interface RemovalSelection { row: FileWithRevision; commandId: string }
+interface RemovalSelection { row: FileWithRevision }
 interface WorkflowFilesPresentation {
   open: boolean
   removal: RemovalSelection | null

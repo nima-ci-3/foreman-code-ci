@@ -1,5 +1,3 @@
-import * as PACKAGE_POLICY from './packagePolicy.mjs'
-
 /**
  * Deployed installation and saved wire names. This is the frozen boundary for the
  * code rename, not a compatibility/alias map. Change these values only during an
@@ -177,15 +175,18 @@ export const INSTALLATION_NAMES = /** @type {const} */ ({
 /** Embed the frozen names when shipping a standalone launcher or Worker script.
  * @param {string} source
  */
-/** Constants a standalone installed file may import; the installer inlines them, since it has no node_modules. */
-const STANDALONE_CONSTANTS = [
-  { module: /(?:installationNames\.mjs|installation-names)/, values: { INSTALLATION_NAMES } },
-  { module: /(?:packagePolicy\.mjs|package-policy)/, values: { ...PACKAGE_POLICY } },
-]
+/** Constants a standalone installed file may import from a dependency-free contracts module; the installer inlines
+ * them, since installed copies have no node_modules. */
+export const STANDALONE_INSTALLATION_NAMES = { module: /(?:installationNames\.mjs|installation-names)/, values: { INSTALLATION_NAMES } }
 
-export function standaloneInstallationSource(source) {
+/**
+ * @param {string} source
+ * @param {readonly { module: RegExp; values: Record<string, unknown> }[]} [modules] Further constant modules to inline
+ *   (the package policy for Worker files).
+ */
+export function standaloneInstallationSource(source, modules = []) {
   let result = source
-  for (const { module, values } of STANDALONE_CONSTANTS) {
+  for (const { module, values } of [STANDALONE_INSTALLATION_NAMES, ...modules]) {
     result = result.replace(new RegExp(`^import \\{ ([\\w$, ]+) \\} from ['"][^'"\\n]*${module.source}['"];?\\r?\\n`, 'm'),
       (line, names) => {
         const imported = names.split(',').map(name => name.trim()).filter(Boolean)

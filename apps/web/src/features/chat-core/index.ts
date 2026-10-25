@@ -31,3 +31,4 @@ export type { ComposerSessionControls } from './sessionControls/useSessionContro
 export { useSlashCommandMenu } from './sessionControls/useSlashCommandMenu'
 export { pendingControl, reservePendingControl, clearPendingControl, recoverPendingControl } from './sessionControls/controlRequest'
 export type { PendingControl } from './sessionControls/controlRequest'
+export { useChatReconnect } from './useChatReconnect'
