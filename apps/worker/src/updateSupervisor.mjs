@@ -13,6 +13,9 @@ import { WORKER_UPDATE_STARTUP_TIMEOUT_MS } from './ciSmokeTiming.mjs';
 import { waitForUpdateOperation } from './updateOperation.mjs';
 import { offlineBrowserRuntimeLifecycle, rollbackBrowserRuntime, readInstalledBrowserRuntime,
   pruneBrowserRuntimeVersions } from './browserRuntimeInstall.mjs';
+import { readUpdateRecord } from './updateRecord.mjs';
+
+export { readUpdateRecord };
 
 const execute = promisify(execFile);
 const services = [INSTALLATION_NAMES.services.worker, 'foreman-ci-worker.service'];
@@ -41,23 +44,6 @@ export async function writeUpdateRecord(stateDirectory, record) {
 async function syncDirectory(directory) {
   const handle = await open(directory, 'r');
   try { await handle.sync(); } finally { await handle.close(); }
-}
-
-export async function readUpdateRecord(stateDirectory) {
-  await requirePrivateDirectory(stateDirectory);
-  const path = join(stateDirectory, 'worker-update.json');
-  try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o077)) {
-      throw new WorkerError('worker_update_state_invalid');
-    }
-    const record = JSON.parse(await readFile(path, 'utf8'));
-    if (record.format !== 1) throw new WorkerError('worker_update_state_invalid');
-    return record;
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
 }
 
 export async function locateWorkerLaunch({ stateDirectory, releaseDirectory, home = process.env.HOME,

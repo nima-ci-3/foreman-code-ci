@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as wait } from 'node:timers/promises';
 import { readInstalledRelease } from './installation.mjs';
-import { readUpdateRecord } from './updateSupervisor.mjs';
+import { readUpdateRecord } from './updateRecord.mjs';
 import { readInstalledBrowserRuntime, readBrowserRuntimeStatus, writeBrowserRuntimeStatus,
   stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
 
