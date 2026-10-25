@@ -1,5 +1,3 @@
-import * as PACKAGE_POLICY from './packagePolicy.mjs'
-
 /**
  * Deployed installation and saved wire names. This is the frozen boundary for the
  * code rename, not a compatibility/alias map. Change these values only during an
@@ -177,22 +175,7 @@ export const INSTALLATION_NAMES = /** @type {const} */ ({
 /** Embed the frozen names when shipping a standalone launcher or Worker script.
  * @param {string} source
  */
-/** Constants a standalone installed file may import; the installer inlines them, since it has no node_modules. */
-const STANDALONE_CONSTANTS = [
-  { module: /(?:installationNames\.mjs|installation-names)/, values: { INSTALLATION_NAMES } },
-  { module: /(?:packagePolicy\.mjs|package-policy)/, values: { ...PACKAGE_POLICY } },
-]
-
 export function standaloneInstallationSource(source) {
-  let result = source
-  for (const { module, values } of STANDALONE_CONSTANTS) {
-    result = result.replace(new RegExp(`^import \\{ ([\\w$, ]+) \\} from ['"][^'"\\n]*${module.source}['"];?\\r?\\n`, 'm'),
-      (line, names) => {
-        const imported = names.split(',').map(name => name.trim()).filter(Boolean)
-        // Only constants inline; an import that also names a function stays as written.
-        if (!imported.every(name => Object.hasOwn(values, name))) return line
-        return imported.map(name => `const ${name} = ${JSON.stringify(values[name])}\n`).join('')
-      })
-  }
-  return result
+  return source.replace(/^import \{ INSTALLATION_NAMES \} from ['"][^'"\n]*(?:installationNames\.mjs|installation-names)['"]\r?\n/m,
+    `const INSTALLATION_NAMES = ${JSON.stringify(INSTALLATION_NAMES)}\n`)
 }

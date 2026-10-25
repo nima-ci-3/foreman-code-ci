@@ -1,4 +1,3 @@
-// ci-key-inputs: apps/worker runtime/browser scripts/build-worker-artifact.mjs scripts/worker-snapshot-policy.mjs
 /* global process, setInterval, clearInterval */
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'

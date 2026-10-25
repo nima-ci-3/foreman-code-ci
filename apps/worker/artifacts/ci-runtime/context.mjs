@@ -1,4 +1,3 @@
-import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, RELEASE_AGE_MINUTES } from '@foreman-code/contracts/package-policy'
 import { verificationRuntimeFiles, verificationArtifactPath } from '../../../../packages/verification-runner/runtime-files.mjs';
 import { INSTALLATION_NAMES, standaloneInstallationSource } from '@foreman-code/contracts/installation-names'
 import { execFileSync } from 'node:child_process';
@@ -80,8 +79,8 @@ export async function buildCiRuntimeContext({ repository, commit = 'HEAD', outpu
     const lock = parse(snapshots.get('pnpm-lock.yaml').bytes.toString('utf8'));
     const policy = parse(snapshots.get('pnpm-workspace.yaml').bytes.toString('utf8'));
     const manifest = JSON.parse(snapshots.get('package.json').bytes.toString('utf8'));
-    if (manifest.packageManager !== PACKAGE_MANAGER
-      || Object.entries(PACKAGE_RELEASE_POLICY).some(([key, value]) => policy[key] !== value)
+    if (manifest.packageManager !== 'pnpm@11.27.0' || policy.minimumReleaseAge !== 2880
+      || policy.minimumReleaseAgeStrict !== true || policy.minimumReleaseAgeIgnoreMissingTime !== false
       || policy.minimumReleaseAgeExclude?.length) throw new Error('Committed strict 48-hour package policy required.');
     const packages = Object.entries(lock.packages ?? {}).map(([key, pkg]) => {
       const separator = key.lastIndexOf('@');
@@ -135,7 +134,7 @@ export async function buildCiRuntimeContext({ repository, commit = 'HEAD', outpu
     await writeFile(join(output, 'seed-receipt.json'), seedBytes, { mode: 0o644, flag: 'wx' });
     receipt.offlineSeed = { receiptSha256: hash(seedBytes), ...seedUsage, platform: seed.platform,
       packageManager: seed.packageManager, provenanceDigest: seed.provenanceDigest,
-      releaseAge: { minimumMinutes: RELEASE_AGE_MINUTES, strict: true, rejectMissingTime: true, packages: seed.packages.length } };
+      releaseAge: { minimumMinutes: 2880, strict: true, rejectMissingTime: true, packages: seed.packages.length } };
   }
   if (unitCodex) receipt.unitCodex = { version: unitCodex.tool.version, binarySha256: unitCodex.tool.binarySha256,
     executable: INSTALLATION_NAMES.paths.ciCodex, review: unitCodex.tool.review };

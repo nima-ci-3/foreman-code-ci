@@ -4,9 +4,8 @@ import { open, readdir, realpath } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PACKAGE_MANAGER, RELEASE_AGE_MINUTES } from '@foreman-code/contracts/package-policy';
-
-export { PACKAGE_MANAGER, RELEASE_AGE_MINUTES };
+export const PACKAGE_MANAGER = 'pnpm@11.27.0';
+export const RELEASE_AGE_MINUTES = 2880;
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const safePath = value => typeof value === 'string' && !value.includes('\\') && !value.includes('\0')

@@ -28,7 +28,6 @@ export const workerSnapshotFiles = [
   'packages/contracts-node/package.json',
   'packages/contracts/src/productEnvironment.mjs',
   'packages/contracts/src/installationNames.mjs',
-  'packages/contracts/src/packagePolicy.mjs',
   'packages/contracts/src/verificationEnvironment.mjs',
   'packages/contracts/src/integrationScheduling.mjs',
   'packages/ci-protocol/src/testResults.mjs',

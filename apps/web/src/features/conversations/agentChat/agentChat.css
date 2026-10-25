@@ -108,6 +108,19 @@
 .agent-chat-answer { border: 1px solid var(--border); background: var(--surface-raised); border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg); padding: .7rem .85rem; }
 .agent-chat-message .n-message time { opacity: 0; }
 .agent-chat-message:hover .n-message time, .agent-chat-message:focus-within .n-message time { opacity: 1; }
+.agent-chat-message--agent .conversation-message-content { white-space: normal; line-height: 1.65; }
+.agent-chat-message--agent .conversation-message-content > * + * { margin-top: var(--space-3); }
+.agent-chat-message--agent :is(h1, h2, h3, h4, h5, h6) { margin: 0; color: var(--text-strong); font: var(--type-heading); }
+.agent-chat-message--agent :is(ul, ol) { padding-left: var(--space-6); margin-bottom: 0; }
+.agent-chat-message--agent li + li { margin-top: var(--space-1); }
+.agent-chat-message--agent a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.agent-chat-message--agent :not(pre) > code {
+  background: var(--surface-hover);
+  padding: var(--space-0-5) var(--space-1);
+  border-radius: var(--radius-sm);
+  font: var(--type-mono);
+}
+.agent-chat-message--agent blockquote { margin: 0; padding: var(--space-3); background: var(--surface-raised); border-radius: var(--radius-md); }
 .agent-chat-delivery { display: inline-flex; align-items: center; }
 .agent-chat-delivery[data-delivery='failed'], .agent-chat-delivery[data-delivery='unknown'] { color: var(--danger); }
 .agent-chat-delivery[data-delivery='queued'], .agent-chat-delivery[data-delivery='submitting'] { color: var(--text-muted); }

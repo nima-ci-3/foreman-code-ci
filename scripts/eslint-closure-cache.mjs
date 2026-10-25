@@ -5,10 +5,9 @@
 // Usage, from a package directory: node ../../scripts/eslint-closure-cache.mjs [eslint args...]
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import { ciModuleCandidates } from '../packages/contracts/src/ciImportGraph.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const project = process.cwd()
@@ -88,7 +87,10 @@ function packageHash(directory) {
 }
 
 function resolveRelative(from, specifier) {
-  for (const candidate of ciModuleCandidates(resolve(dirname(from), specifier))) {
+  const base = resolve(dirname(from), specifier)
+  const stem = base.replace(/\.(?:[cm]?js|jsx)$/, '')
+  for (const candidate of [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${stem}.cts`, `${stem}.js`, `${stem}.mjs`,
+    join(base, 'index.ts'), join(base, 'index.tsx'), join(base, 'index.js')]) {
     if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
   }
   return undefined
@@ -160,46 +162,17 @@ catch (error) { if (error.code !== 'ENOENT') console.warn(`Lint pass cache unrea
 const stale = Object.keys(keys).filter(file => passed[file] !== keys[file])
 console.log(`Lint closure cache: ${targets.length - stale.length} of ${targets.length} files unchanged since they passed; linting ${stale.length}.`)
 let status = 0
-// Each file proves itself: a file with no lint message passes and is recorded even when other files fail, so a fix
-// commit relints only the failed files and the files whose inputs changed.
-const failedFiles = new Set()
-const reports = join(dirname(cacheFile), `eslint-report-${process.pid}.json`)
-mkdirSync(dirname(cacheFile), { recursive: true })
 // Bounded argument lists; ESLint still applies its ignores to every path it is given.
-for (let start = 0; start < stale.length; start += 400) {
-  const batch = stale.slice(start, start + 400)
+for (let start = 0; start < stale.length && status === 0; start += 400) {
   const result = spawnSync(process.execPath, ['--max-old-space-size=8192', './node_modules/eslint/bin/eslint.js',
-    ...process.argv.slice(2), '--no-cache', '--no-warn-ignored', '--format', 'json', '--output-file', reports, ...batch],
-  { stdio: 'inherit' })
+    ...process.argv.slice(2), '--no-cache', '--no-warn-ignored', ...stale.slice(start, start + 400)], { stdio: 'inherit' })
   if (result.error) console.error('ESLint could not start:', result.error)
-  let report
-  try { report = JSON.parse(readFileSync(reports, 'utf8')) }
-  catch (error) {
-    // Without a report no file in the batch is proven.
-    console.error(`ESLint report unreadable: ${error.message}`)
-    for (const file of batch) failedFiles.add(file)
-    status ||= result.status || 1
-    continue
-  }
-  const before = failedFiles.size
-  for (const entry of report) {
-    if (!entry.messages.length) continue
-    const file = relative(project, entry.filePath)
-    failedFiles.add(file)
-    for (const message of entry.messages) {
-      console.log(`${file}:${message.line ?? 0}:${message.column ?? 0}  ${message.severity === 2 ? 'error' : 'warning'}  `
-        + `${message.message}  ${message.ruleId ?? ''}`)
-    }
-  }
-  // A failing exit without messages (a crash or a configuration error) proves nothing in the batch.
-  if (result.status !== 0 && failedFiles.size === before) for (const file of batch) failedFiles.add(file)
-  status ||= result.status ?? 1
+  status = result.status ?? 1
 }
-try { rmSync(reports, { force: true }) } catch (error) { console.warn(`ignore: report cleanup failed: ${error.message}`) }
-// Keys of files that passed, now or earlier; failed and unchecked files keep no pass.
-const proven = Object.fromEntries(Object.entries(keys).filter(([file]) => !failedFiles.has(file)))
-const temporary = `${cacheFile}.${process.pid}.tmp`
-writeFileSync(temporary, JSON.stringify({ files: proven }))
-renameSync(temporary, cacheFile)
-if (failedFiles.size) console.log(`Lint: ${failedFiles.size} file(s) failed; ${Object.keys(proven).length} proven files are recorded.`)
+if (status === 0) {
+  mkdirSync(dirname(cacheFile), { recursive: true })
+  const temporary = `${cacheFile}.${process.pid}.tmp`
+  writeFileSync(temporary, JSON.stringify({ files: keys }))
+  renameSync(temporary, cacheFile)
+}
 process.exit(status)

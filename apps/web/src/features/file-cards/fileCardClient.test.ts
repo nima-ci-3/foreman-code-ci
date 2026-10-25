@@ -4,8 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../mocks/server'
 import { beginSessionChange, finishSessionChange } from '../../shared/api/sessionBoundary'
 import { createFileCardHttpClient, fileDownloadPath } from './fileCardClient'
-import { fileCardKey, hasRasterSignature, resolveMessageFileCards } from './fileCardPresentation'
-import { formatFileSize } from '../../shared/ui/formatters'
+import { fileCardKey, formatFileSize, hasRasterSignature, resolveMessageFileCards } from './fileCardPresentation'
 import { fixture, fixtureBytes, MIME_CASES, TEST_AGENT_DOWNLOAD_PATH, TEST_DOWNLOAD_PATH, TEST_HANDLER_PATH } from './testFixtures'
 
 const client = createFileCardHttpClient({ download: TEST_DOWNLOAD_PATH })

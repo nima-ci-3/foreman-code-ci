@@ -1,6 +1,4 @@
 import { INSTALLATION_NAMES } from '../../contracts/src/installationNames.mjs'
-import { integrationTestFile } from '../../contracts/src/ciTestInventory.mjs'
-import { PACKAGE_MANAGER, PACKAGE_RELEASE_POLICY, PNPM_VERSION, RELEASE_AGE_MINUTES } from '../../contracts/src/packagePolicy.mjs'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statfsSync } from 'node:fs'
@@ -80,10 +78,10 @@ export function verificationCommand(context, root = process.cwd()) {
 
 export function verifyOfflinePreseed(root, receipt) {
   const lockfileSha256 = createHash('sha256').update(readFileSync(join(root, 'pnpm-lock.yaml'))).digest('hex')
-  if (receipt.lockfileSha256 !== lockfileSha256 || receipt.pnpmVersion !== PNPM_VERSION
+  if (receipt.lockfileSha256 !== lockfileSha256 || receipt.pnpmVersion !== '11.27.0'
     || receipt.platform !== process.platform || receipt.architecture !== process.arch
     || !/^[a-f0-9]{64}$/.test(receipt.provenanceDigest)
-    || receipt.minimumReleaseAgeMinutes !== RELEASE_AGE_MINUTES || receipt.releaseAgeVerified !== true) {
+    || receipt.minimumReleaseAgeMinutes !== 2880 || receipt.releaseAgeVerified !== true) {
     throw new Error('Preseed receipt does not cover the frozen lockfile, platform and 48-hour policy')
   }
 }
@@ -91,9 +89,10 @@ export function verifyOfflinePreseed(root, receipt) {
 export function verifyEffectivePackagePolicy(root, environment) {
   const run = (args) => execFileSync('corepack', ['pnpm', ...args], { cwd: root, env: environment,
     encoding: 'utf8', timeout: 10_000, maxBuffer: 64 * 1024 }).trim()
-  if (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).packageManager !== PACKAGE_MANAGER
-    || run(['--version']) !== PNPM_VERSION) throw new Error(`Verification requires pinned pnpm ${PNPM_VERSION}`)
-  for (const [key, required] of Object.entries(PACKAGE_RELEASE_POLICY).map(([key, value]) => [key, String(value)])) {
+  if (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).packageManager !== 'pnpm@11.27.0'
+    || run(['--version']) !== '11.27.0') throw new Error('Verification requires pinned pnpm 11.27.0')
+  for (const [key, required] of [['minimumReleaseAge', '2880'], ['minimumReleaseAgeStrict', 'true'],
+    ['minimumReleaseAgeIgnoreMissingTime', 'false']]) {
     if (run(['config', 'get', key]) !== required) throw new Error(`Effective pnpm policy is unsafe: ${key}`)
   }
   const exclusions = run(['config', 'get', 'minimumReleaseAgeExclude'])
@@ -175,34 +174,31 @@ export function integrationPartition(files, durations, partition) {
   }
   return files.filter(file => owner.get(file) === partition.index)
 }
-/** Repository-relative files under `directory`, skipping build output and dependencies. */
-function repositoryFiles(root, directory = '') {
-  const files = []
-  const visit = path => {
-    if (!existsSync(path)) return
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
-      if (['node_modules', 'dist', '.git', '.logs'].includes(entry.name)) continue
-      const child = join(path, entry.name)
-      if (entry.isDirectory()) visit(child)
-      else if (entry.isFile()) files.push(relative(root, child).split(sep).join('/'))
-    }
-  }
-  visit(join(root, directory))
-  return files
-}
-const integrationTestFiles = root => repositoryFiles(root, 'apps/api').filter(integrationTestFile).sort()
+const integrationTestFiles = root => existsSync(join(root, 'apps/api/test'))
+  ? readdirSync(join(root, 'apps/api/test')).filter(name => name.endsWith('.integration.test.ts'))
+    .map(name => `apps/api/test/${name}`).sort()
+  : []
 
 /** `qualification` selects the commit's committed integration smoke subset when it has one: qualification proves
  * the computer's runtime (PostgreSQL startup and isolation, migrations, MCP, sources, Jobs), not the whole suite. */
 export function captureVerificationInventory(root, suite, { qualification = false, partition } = {}) {
   const portions = expectedPortions(root, suite)
   if (portions.every(portion => ['command', 'bootstrap'].includes(portion.kind))) return portions
-  const files = suite === 'unit' || suite === 'integration' ? repositoryFiles(root) : []
+  const files = []
+  const visit = directory => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (['node_modules', 'dist', '.git', '.logs'].includes(entry.name)) continue
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) visit(path)
+      else if (entry.isFile()) files.push(relative(root, path).split(sep).join('/'))
+    }
+  }
+  if (suite === 'unit' || suite === 'integration') visit(root)
   return portions.map(portion => {
     if (!['vitest', 'node', 'integration'].includes(portion.kind)) return portion
     let selected
     if (portion.kind === 'integration') {
-      selected = files.filter(integrationTestFile)
+      selected = files.filter(path => /^apps\/api\/test\/.*\.integration\.test\.ts$/.test(path))
       if (qualification && existsSync(join(root, QUALIFICATION_SUBSET))) {
         const subset = JSON.parse(readFileSync(join(root, QUALIFICATION_SUBSET), 'utf8')).files
         if (!Array.isArray(subset) || !subset.length || subset.some(path => !selected.includes(path))) {

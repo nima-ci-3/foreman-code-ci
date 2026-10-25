@@ -31,7 +31,6 @@ import {
   hostCiRunsMigration,
   ciActivityEventsMigration,
   ciPassedSuiteIndexMigration,
-  ciTestFailuresMigration,
 } from '../modules/ci/migrations.js'
 import { ciActivityConsumerMigration } from '../modules/runs/ciActivityConsumerMigration.js'
 import { memoryRepeatDecisionMigration } from './memoryRepeatDecisionMigration.js'
@@ -1069,7 +1068,6 @@ export const migrations = [
   removeGroupChatMigration,
   plainNativePlacementMigration,
   ciPassedSuiteIndexMigration,
-  ciTestFailuresMigration,
 ] as const
 
 /**

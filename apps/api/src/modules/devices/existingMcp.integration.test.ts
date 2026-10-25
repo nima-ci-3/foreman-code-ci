@@ -5,14 +5,14 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { expect, it } from 'vitest'
 import { DeviceListResultSchema, DevicePairingGrantResultSchema, MainDeviceIdentityPublicSchema } from '@foreman-code/contracts/device-identity'
 import { publicKeyFingerprint, pairingProof } from '@foreman-code/contracts-node/device-identity-node'
-import type { OperatorServices } from '../src/mcp/operator/types.js'
-import { buildApp } from '../src/app.js'
-import { applyApplicationMigrations } from '../src/infrastructure/migrations.js'
-import { PostgresAccessService } from '../src/modules/access/postgres.js'
-import { PostgresCommandCoordinator } from '../src/modules/commands/postgres.js'
-import { PostgresDeviceAccessService } from '../src/modules/devices/access.js'
-import { loadOrCreateMainDeviceIdentity, mainDeviceIdentityMigration } from '../src/modules/devices/mainIdentity.js'
-import { deviceIdentityMigration } from '../src/infrastructure/deviceIdentityMigration.js'
+import type { OperatorServices } from '../../mcp/operator/types.js'
+import { buildApp } from '../../app.js'
+import { applyApplicationMigrations } from '../../infrastructure/migrations.js'
+import { PostgresAccessService } from '../access/postgres.js'
+import { PostgresCommandCoordinator } from '../commands/postgres.js'
+import { PostgresDeviceAccessService } from './access.js'
+import { loadOrCreateMainDeviceIdentity, mainDeviceIdentityMigration } from './mainIdentity.js'
+import { deviceIdentityMigration } from '../../infrastructure/deviceIdentityMigration.js'
 
 /** Root runs this fixture after applying the real /mcp and management-route composition patch. */
 it('serves device management through the existing authenticated API/MCP with denial audit and persisted readback', async () => {
@@ -47,15 +47,12 @@ it('serves device management through the existing authenticated API/MCP with den
     }
     const ownerClient = await connect(owner.token), readerClient = await connect(reader.token), scopedClient = await connect(scoped.token)
     const toolNames = ['device_main_identity_get', 'devices_list', 'device_pairing_grant_create', 'device_revoke']
-    // Device tools are reachable through discovery, not the always-loaded core list.
-    const discoverable = async (client: Client) => (decodeMcpToolResult(await client.callTool({ name: 'tools_find',
-      arguments: { query: 'device' } })) as { tools: { name: string }[] }).tools.map(tool => tool.name)
-    expect(await discoverable(ownerClient)).toEqual(expect.arrayContaining(toolNames))
+    expect((await ownerClient.listTools()).tools.map(tool => tool.name)).toEqual(expect.arrayContaining(toolNames))
     const capability = decodeMcpToolResult((await ownerClient.callTool({ name: 'operator_get_capabilities', arguments: { detail: 'full' } }))) as { tools: string[]; requirements: Array<{ name: string; actions: string[] }> }
     expect(capability.tools).toEqual(expect.arrayContaining(toolNames))
     expect(capability.requirements.find(item => item.name === 'device_revoke')?.actions).toEqual(['settings:update'])
-    expect(await discoverable(readerClient)).not.toContain('device_revoke')
-    expect(await discoverable(scopedClient)).not.toContain('devices_list')
+    expect((await readerClient.listTools()).tools.map(tool => tool.name)).not.toContain('device_revoke')
+    expect((await scopedClient.listTools()).tools.map(tool => tool.name)).not.toContain('devices_list')
     const denied = await readerClient.callTool({ name: 'device_revoke', arguments: { deviceId: randomUUID(), expectedRevision: 1, commandId: randomUUID() } })
     expect(denied.isError).toBe(true)
     expect((await pool.query("select count(*)::int as count from management_audit where principal_id=$1 and source='mcp' and action='device_revoke' and outcome='denied'", [reader.principal.id])).rows[0].count).toBe(1)

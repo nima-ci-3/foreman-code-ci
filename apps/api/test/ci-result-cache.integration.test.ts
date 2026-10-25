@@ -37,8 +37,7 @@ const BASE: Record<string, string> = {
   [LABEL]: "import { expect, it } from 'vitest'\nimport { label } from '../src/lib/label.js'\n"
     + "it('labels', () => { expect(label(' a ')).toBe('[a]') })\n",
   [PLAIN]: "import { expect, it } from 'vitest'\nit('adds', () => { expect(1 + 1).toBe(2) })\n",
-  // A module named at run time: no key can prove what it loads.
-  [DYNAMIC]: "import { expect, it } from 'vitest'\nconst name = process.env.FIXTURE_MODULE ?? '../src/lib/format.js'\n"
+  [DYNAMIC]: "import { expect, it } from 'vitest'\nconst name = '../src/lib/format.js'\n"
     + "it('loads', async () => { expect(await import(name)).toBeTruthy() })\n",
 }
 const commit = (digit: string) => digit.repeat(40)
@@ -336,23 +335,11 @@ it('starts no job for a check whose selector finds nothing affected', async () =
   try {
     f.selections.set(commit('2'), [])
     const startsBefore = f.starts.length
-    // Measured against a commit this check passed on; without one every package is checked (next case).
     const started = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'typecheck', commit: commit('2'), scope: 'affected',
-      baseCommit: commit('1'), commandId: randomUUID() }))
+      commandId: randomUUID() }))
     expect((await f.read(started.ticketId)).run).toMatchObject({ state: 'passed', selectedOnMain: true, files: [] })
     expect(await f.sent(started.ticketId)).toBeNull()
     expect(f.starts).toHaveLength(startsBefore)
-  } finally { await f.close() }
-})
-
-it('checks every package when typecheck has no commit it passed on, since a diff proves nothing about the rest', async () => {
-  // A docs-only change on a branch whose default-branch base failed typecheck passed at once without checking anything.
-  const f = await fixture()
-  try {
-    f.selections.set(commit('2'), [])
-    const started = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'typecheck', commit: commit('2'), scope: 'affected',
-      commandId: randomUUID() }))
-    expect((await f.read(started.ticketId)).run).toMatchObject({ state: 'queued', scope: 'full' })
   } finally { await f.close() }
 })
 

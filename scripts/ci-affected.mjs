@@ -5,12 +5,12 @@ import { join } from 'node:path'
 import { ciCodeFile as codeFile, ciInfrastructureFile, importSpecifiers as imports, resolveImport, runtimeDependencies,
   workspacePackageExports } from '../packages/contracts/src/ciImportGraph.mjs'
 import { usableIntegrationCoverage } from '../packages/contracts/src/ciCoverage.mjs'
-import { integrationTestFile, unitTestFile } from '../packages/contracts/src/ciTestInventory.mjs'
 import { workerEntryPoints, rsyncWriterEntrypoint, schemaWorkerEntrypoint, verificationScripts, workerSnapshotFiles }
   from './worker-snapshot-policy.mjs'
 
 const projects = ['apps/api', 'apps/ci', 'apps/web', 'apps/worker', 'packages/contracts', 'packages/contracts-node']
 const testFile = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/
+const integrationFile = /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/
 
 /** Bundled/copied sources run under generated paths in child processes, outside repository V8 coverage. */
 function changedWorkerBundleInput(changedFiles, dependencies) {
@@ -61,11 +61,11 @@ export function selectAffectedFiles({ suite, changedFiles, sources, exports = {}
   let staticFallbackFiles = []
   let missingRecords = []
   if (suite === 'integration') {
-    files = [...affected].filter(file => sources.has(file) && integrationTestFile(file))
+    files = [...affected].filter(file => sources.has(file) && integrationFile.test(file))
     if (useCoverage) {
       const changed = new Set(changedFiles)
       const inventory = new Set(coverageMap.testFiles)
-      missingRecords = [...sources.keys()].filter(file => integrationTestFile(file)
+      missingRecords = [...sources.keys()].filter(file => integrationFile.test(file)
         && inventory.has(file) && !Object.hasOwn(coverageMap.coverage, file))
       const staticTests = new Set([...coverageMap.staticTests ?? [], ...missingRecords])
       const staticSelection = staticTests.size ? selectAffectedFiles({ suite, changedFiles, sources, exports }) : undefined
@@ -73,14 +73,15 @@ export function selectAffectedFiles({ suite, changedFiles, sources, exports = {}
       const staticAffected = new Set(staticSelection?.files ?? [])
       staticFallbackFiles = missingRecords.filter(file => staticAffected.has(file)).sort()
       for (const file of sources.keys()) {
-        if (integrationTestFile(file) && (changed.has(file) || !inventory.has(file)
+        if (integrationFile.test(file) && (changed.has(file) || !inventory.has(file)
           || staticTests.has(file) && staticAffected.has(file)
           || coverageMap.coverage[file]?.some(path => changed.has(path)))) files.push(file)
       }
     }
   }
   else if (suite === 'unit') {
-    files = [...affected].filter(file => sources.has(file) && unitTestFile(file)
+    files = [...affected].filter(file => sources.has(file) && testFile.test(file)
+      && !(file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file))
       && (projects.some(project => file.startsWith(`${project}/`)) || file.startsWith('scripts/')))
   } else if (suite === 'lint') {
     files = [...affected].filter(file => sources.has(file) && /\.[cm]?[jt]sx?$/.test(file)

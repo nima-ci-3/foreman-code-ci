@@ -2,8 +2,7 @@ import { useRef } from 'react'
 import type { DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
 import type { TelemetryStorage } from '@foreman-code/contracts/resource-telemetry'
 import { useComputerUtilization } from '../../shared/api/computerActivity'
-import { useMonotonicElapsed } from '../resource-telemetry'
-import { readComputerSample, storageUsedPercent } from './computerSampleReadings'
+import { metricView, sampleClock, useMonotonicElapsed } from '../resource-telemetry'
 
 /** How long the last current reading may stand in, dimmed, for a late refresh. */
 const LAST_KNOWN_MS = 60_000
@@ -31,7 +30,13 @@ export function useComputerReadings(target: DeviceProvisioningTarget, online: bo
   const result = received?.result
   const sample = result?.kind === 'sample' ? result.sample : undefined
   const age = elapsed + (received?.requestDurationMs ?? 0)
-  const { cpuPercent, memoryPercent, storage, cpuLabel, memoryLabel } = readComputerSample(sample, age)
+  const cpu = sample && metricView('CPU', sample, age)
+  const memory = sample && metricView('RAM', sample, age)
+  const cpuPercent = cpu?.status === 'fresh' && sample?.cpu.state === 'fresh' ? sample.cpu.value.hostCapacityPercent : null
+  const memoryPercent = memory?.status === 'fresh' && sample?.memory.state === 'fresh'
+    && sample.memory.value.totalBytes ? sample.memory.value.bytes / sample.memory.value.totalBytes * 100 : null
+  const storage = sample?.storage && sample.presence === 'online'
+    && sampleClock(sample, age).freshRemainingMs > 0 ? sample.storage : null
   // Between readings each metric holds its own last current value, marked stale, rather than flickering to empty.
   const now = Date.now(), last = useRef<{ cpu: Held<number>; memory: Held<number>; storage: Held<TelemetryStorage> }>({ cpu: null, memory: null, storage: null })
   if (cpuPercent !== null) last.current.cpu = { value: cpuPercent, at: now }
@@ -43,9 +48,10 @@ export function useComputerReadings(target: DeviceProvisioningTarget, online: bo
     cpu: cpuPercent ?? hold(last.current.cpu),
     memory: memoryPercent ?? hold(last.current.memory),
     storage: shownStorage,
-    storageUsedPercent: storageUsedPercent(shownStorage),
+    storageUsedPercent: shownStorage?.totalBytes
+      ? (shownStorage.totalBytes - shownStorage.availableBytes) / shownStorage.totalBytes * 100 : null,
     stale: { cpu: cpuPercent === null, memory: memoryPercent === null, storage: !storage },
-    reasons: { cpu: cpuLabel, memory: memoryLabel },
+    reasons: { cpu: cpu?.statusLabel ?? 'Unavailable', memory: memory?.statusLabel ?? 'Unavailable' },
     pending: online && query.isPending,
   }
 }

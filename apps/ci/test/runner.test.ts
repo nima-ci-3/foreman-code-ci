@@ -100,7 +100,7 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
     await copyFile(new URL('../../../packages/verification-runner/runtime-files.mjs', import.meta.url),
       join(origin, 'packages/verification-runner/runtime-files.mjs'))
     await mkdir(join(origin, 'packages/contracts/src'), { recursive: true })
-    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs', 'ciTestInventory.mjs']) {
+    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs']) {
       await copyFile(new URL(`../../../packages/contracts/src/${file}`, import.meta.url),
         join(origin, 'packages/contracts/src', file))
     }
@@ -504,7 +504,7 @@ describe('host CI runner', () => {
     expect((await f.settle(runId)).run).toMatchObject({ state: 'passed', step: 'unit-api' })
     const result = await f.runner.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1, testResults: true })
     expect(result.operation === 'read' && result.testResults).toEqual({ summary: { passed: 2, failed: 0, skipped: 0 },
-      proven: ['apps/api/test/first.test.ts', 'apps/api/test/second.test.ts'], truncated: false, files: ['first', 'second'].map(name => ({ file: `apps/api/test/${name}.test.ts`, status: 'passed',
+      truncated: false, files: ['first', 'second'].map(name => ({ file: `apps/api/test/${name}.test.ts`, status: 'passed',
         durationMs: 5, tests: [{ name: `${name}.test.ts works`, status: 'passed', durationMs: 4 }] })) })
     // A Main from before test results asks only for durations and gets the reply shape it knows.
     const durations = await f.runner.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1, durations: true })

@@ -1,7 +1,6 @@
 import { InfoHint } from '../../shared/ui/InfoHint'
 import { CLAUDE_FULL_ACCESS_REQUIRED, ClaudeEffortSchema, type ClaudeHarnessConfiguration } from '@foreman-code/contracts/claude'
 import { claudeAccessOptions } from './claudeAccess'
-import { claudeEffortForModel, claudeEfforts } from './harnessModelSelection'
 import type { HarnessOptions } from '@foreman-code/contracts/management'
 import { Alert, Combobox, Select, TextField } from '../../shared/ui/nocturne'
 import { fieldMessage, type FieldIssue } from './fieldValidation'
@@ -27,13 +26,13 @@ export function ClaudeConfigurationFields({ value, onChange, models, qualified, 
   const managedAccount = Boolean(value.accountId)
   const options = models.map((model) => ({ value: model.id, label: model.name ?? model.id, description: model.id, disabled: false }))
   const selected = models.find(model => model.id === value.model)
-  const efforts: readonly string[] = claudeEfforts(selected)
+  const efforts = selected?.reasoningEfforts?.filter(effort => ClaudeEffortSchema.safeParse(effort).success) ?? []
   if (!options.some((option) => option.value === value.model)) options.unshift({ value: value.model, label: value.model, description: 'Saved model · awaiting native qualification', disabled: true })
   return <div className="harness-basic-fields">
     <div className="harness-model-settings"><div className="harness-model-fields">
     {models.length ? <Combobox label="Model" value={value.model} options={options} error={fieldMessage(issues, 'model')}
       onValueChange={(model) => { const chosen = models.find(item => item.id === model); if (chosen) onChange({ ...value, model,
-        effort: claudeEffortForModel(chosen, value.effort) }) }} />
+        ...(chosen.reasoningEfforts?.includes(value.effort ?? '') ? {} : chosen.reasoningEfforts?.includes('medium') ? { effort: 'medium' } : { effort: undefined }) }) }} />
       : <TextField label="Model" value={value.model} error={fieldMessage(issues, 'model')} labelHint={<InfoHint label="Model">An explicit model choice; saving it does not prove native model availability.</InfoHint>}
         onChange={event => onChange({ ...value, model: event.target.value })} />}
     <Select label="Effort" value={value.effort ?? ''} error={fieldMessage(issues, 'effort')}
