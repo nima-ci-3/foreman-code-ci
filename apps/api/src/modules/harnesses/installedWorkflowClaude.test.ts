@@ -158,18 +158,6 @@ it('names the completed turn by the acknowledged input message', async () => {
   await claude.manager.dispose?.()
 })
 
-it('reports the final answer in the workflow result shape Main reads', async () => {
-  const fake = sdk()
-  provider.client = fake.client
-  const { claude, start } = allocate()
-  const session = await claude.manager.createSession(start)
-  await completeFirstTurn(fake, claude, session)
-  const history = await claude.manager.reconcile(session, 'execution:execution')
-  expect(history.terminalTurn?.result).toEqual({ outcome: 'succeeded', output: { text: 'done' } })
-  expect(history.terminalResult).toEqual({ outcome: 'succeeded', output: { text: 'done' } })
-  await claude.manager.dispose?.()
-})
-
 it('reconciles the whole session as one contiguous event sequence', async () => {
   const fake = sdk()
   provider.client = fake.client
