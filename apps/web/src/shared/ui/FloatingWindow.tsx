@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent, type ReactNode, type RefCallback, type RefObject } from 'react'
+import { useMovableWindow, windowResizeEdges } from './useMovableWindow'
 import { Icon, IconButton } from './nocturne'
 import { raiseFloating, useFloatingZ } from './floatingStack'
 import { placeBeside } from './floatingWindow'
@@ -28,7 +29,9 @@ export function FloatingWindow({ active = true, modalOpen = false, opener, label
   closeLabel: string; onClose(): void; header?: ReactNode; hint?: ReactNode; footer?: ReactNode
   bodyRef?: RefCallback<HTMLDivElement>; className?: string; children?: ReactNode
 }) {
-  const panelRef = useRef<HTMLElement>(null)
+  // Moving and resizing (pointer and arrow keys, kept inside the viewport) are the shared window behavior.
+  const movable = useMovableWindow({ name: label.toLowerCase(), minWidth: 280, minHeight: 220, narrow: () => false })
+  const { panelRef, placeAt } = movable
   const heldFocus = useRef(false)
   const stackId = useId()
   const zIndex = useFloatingZ(stackId, active && !modalOpen)
@@ -39,52 +42,14 @@ export function FloatingWindow({ active = true, modalOpen = false, opener, label
     if (!panel.contains(document.activeElement)) panel.focus({ preventScroll: true })
     if (panel.dataset.placed) return
     const { left, top } = placeNear(panel.offsetWidth, panel.offsetHeight, opener.current)
-    panel.style.left = `${left}px`
-    panel.style.top = `${top}px`
+    placeAt(left, top)
     panel.dataset.placed = 'true'
-  }, [active, modalOpen, opener])
-  useEffect(() => { if (!active) delete panelRef.current?.dataset.placed }, [active])
+  }, [active, modalOpen, opener, placeAt, panelRef])
+  useEffect(() => { if (!active) delete panelRef.current?.dataset.placed }, [active, panelRef])
+  // The header drags the window; its buttons keep their own clicks.
   const drag = (event: ReactPointerEvent<HTMLElement>) => {
-    const panel = panelRef.current
-    if (!panel || event.button !== 0 || (event.target as Element).closest('button')) return
-    const startX = event.clientX - panel.offsetLeft, startY = event.clientY - panel.offsetTop
-    const move = (e: PointerEvent) => {
-      panel.style.left = `${Math.max(0, Math.min(e.clientX - startX, window.innerWidth - 80))}px`
-      panel.style.top = `${Math.max(0, Math.min(e.clientY - startY, window.innerHeight - 40))}px`
-    }
-    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop) }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop)
-    event.preventDefault()
-  }
-  const resize = (event: ReactPointerEvent<HTMLElement>) => {
-    const panel = panelRef.current
-    const edge = event.currentTarget.dataset.edge ?? ''
-    if (!panel || event.button !== 0) return
-    const start = { x: event.clientX, y: event.clientY, left: panel.offsetLeft, top: panel.offsetTop,
-      width: panel.offsetWidth, height: panel.offsetHeight }
-    const style = getComputedStyle(panel)
-    const minW = parseFloat(style.minWidth) || 280, minH = parseFloat(style.minHeight) || 220
-    const move = (e: PointerEvent) => {
-      const dx = e.clientX - start.x, dy = e.clientY - start.y
-      if (edge.includes('e')) panel.style.width = `${Math.max(minW, start.width + dx)}px`
-      if (edge.includes('s')) panel.style.height = `${Math.max(minH, start.height + dy)}px`
-      if (edge.includes('w')) {
-        const width = Math.max(minW, start.width - dx)
-        panel.style.width = `${width}px`
-        panel.style.left = `${start.left + start.width - width}px`
-      }
-      if (edge.includes('n')) {
-        const height = Math.max(minH, start.height - dy)
-        panel.style.height = `${height}px`
-        panel.style.top = `${start.top + start.height - height}px`
-      }
-    }
-    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop) }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop)
-    event.preventDefault()
-    event.stopPropagation()
+    if ((event.target as Element).closest('button')) return
+    movable.moveGrip.onPointerDown(event)
   }
   useEffect(() => {
     const panel = panelRef.current
@@ -116,23 +81,24 @@ export function FloatingWindow({ active = true, modalOpen = false, opener, label
       document.removeEventListener('keydown', close)
       document.removeEventListener('focusin', rememberFocus)
     }
-  }, [active, modalOpen, onClose])
+  }, [active, modalOpen, onClose, panelRef])
   useEffect(() => {
     if (!active) return
     const openedFrom = opener.current
     return () => { if (openedFrom?.isConnected) openedFrom.focus() }
   }, [active, opener])
   return <aside ref={panelRef} tabIndex={-1} className={`workflow-floating-panel ${className}`} aria-label={label}
-    hidden={!active || modalOpen} inert={!active || modalOpen} style={{ zIndex }}
+    hidden={!active || modalOpen} inert={!active || modalOpen} style={{ ...movable.style, zIndex }}
     onPointerDownCapture={() => raiseFloating(stackId)} onFocusCapture={() => raiseFloating(stackId)}>
-    <header onPointerDown={drag}>
+    <header onPointerDown={drag} onPointerMove={movable.moveGrip.onPointerMove} onPointerUp={movable.moveGrip.onPointerUp}
+      onPointerCancel={movable.moveGrip.onPointerCancel}>
       <h2>{title}</h2>
       {header}
       <IconButton label={closeLabel} variant="ghost" onClick={onClose}><Icon name="close" size={16} /></IconButton>
     </header>
     {hint}
-    {(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const).map(edge =>
-      <span key={edge} className="workflow-panel-resize" data-edge={edge} aria-hidden="true" onPointerDown={resize} />)}
+    {windowResizeEdges.map(edge =>
+      <button key={edge} type="button" className="workflow-panel-resize" data-edge={edge} {...movable.grip(edge)} />)}
     <div className="workflow-floating-panel-body" ref={bodyRef}>{children}</div>
     {footer}
   </aside>

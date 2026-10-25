@@ -133,6 +133,7 @@ it('uses an unused eligible GitHub slot before a faster free builder', async () 
     { files: [file], durations: { [file]: 300_000 } }, unit, {}, fleet('github'),
     new Map([['builder', 0.5], ['cloud:github', 3]]))
   expect(parts.filter(part => part.suite === 'integration')).toEqual([
-    expect.objectContaining({ plannedHostKey: 'github:9', files: [file], expectedDurationMs: 1_170_000 }),
+    // The six checks take github:0 to github:5; the first unused slot follows them.
+    expect.objectContaining({ plannedHostKey: 'github:6', files: [file], expectedDurationMs: 1_170_000 }),
   ])
 })

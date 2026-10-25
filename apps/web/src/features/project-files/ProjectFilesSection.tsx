@@ -4,13 +4,13 @@ import { useMutation } from '@tanstack/react-query'
 import { createStore, useStore } from 'zustand'
 import { Download, File as FileIcon, RotateCcw, Trash2, Upload } from 'lucide-react'
 import type { FileRow } from '@foreman-code/contracts/files'
-import { CommandAttempt } from '../../shared/api/commandAttempt'
 import { assertSession, sessionGeneration } from '../../shared/api/sessionBoundary'
-import { Button, ConfirmDialog, IconButton, TextField } from '../../shared/ui/nocturne'
+import { Button, IconButton, TextField } from '../../shared/ui/nocturne'
 import { useFileDrop } from '../../shared/ui/useFileDrop'
 import { formatFileSize } from '../../shared/ui/formatters'
 import { ATTACHMENT_ACCEPT, inspectAttachment } from '../attachments'
-import { projectFilesClient, type ProjectFileRemoveInput } from './projectFilesClient'
+import { FileRemovalDialog } from '../file-cards'
+import { projectFilesClient } from './projectFilesClient'
 import { useProjectFileRemove, useProjectFilesQuery, useProjectFileUpload } from './projectFilesQueries'
 import './projectFiles.css'
 
@@ -155,28 +155,8 @@ function ProjectFileRemoval({ workspaceId, row, onClose, onRemoved }: ProjectFil
   row: FileRow; onClose: () => void; onRemoved: () => void
 }) {
   const mutation = useProjectFileRemove(workspaceId)
-  const attempt = useRef(new CommandAttempt<Omit<ProjectFileRemoveInput, 'commandId'>>())
-  const inFlight = useRef(false)
-  const locked = mutation.isPending || attempt.current.unresolved
-  const close = () => { if (!locked) onClose() }
-  const remove = async () => {
-    if (inFlight.current) return
-    inFlight.current = true
-    const generation = sessionGeneration()
-    try {
-      await mutation.mutateAsync({ ...attempt.current.input({ workspaceId, row }), generation })
-      assertSession(generation)
-      attempt.current.succeeded()
-      onRemoved()
-      onClose()
-    } catch (error) {
-      attempt.current.failed(error)
-    } finally { inFlight.current = false }
-  }
-  return <ConfirmDialog open title={`Remove ${row.revision.filename}?`}
+  return <FileRemovalDialog filename={row.revision.filename}
     description="It’s removed from the project files. Runs that already used it keep their copy."
-    dismissalReason={attempt.current.unresolved ? 'Removal is unconfirmed. Retry checks the original removal before you can close this dialog.' : undefined}
-      pending={mutation.isPending} confirmLabel={mutation.isError ? 'Retry' : 'Remove'}
-    error={mutation.isError ? 'Couldn’t remove the file.' : undefined}
-    onOpenChange={(open) => { if (!open) close() }} onConfirm={() => { void remove() }} />
+    remove={(commandId) => mutation.mutateAsync({ workspaceId, row, commandId, generation: sessionGeneration() })}
+    onRemoved={onRemoved} onClose={onClose} />
 }

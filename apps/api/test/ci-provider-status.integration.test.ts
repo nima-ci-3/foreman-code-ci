@@ -189,8 +189,7 @@ it('persists a large gate split across CircleCI slots through authenticated MCP 
 })
 
 it('persists a second GitHub integration wave through MCP while CircleCI orgs remain credit-exhausted', async () => {
-  const unitFiles = ['apps/api/src', 'apps/web/src'].flatMap((directory, index) =>
-    Array.from({ length: index === 0 ? 24 : 8 }, (_, file) => `${directory}/feature-${file}.test.ts`))
+  const unitFiles = Array.from({ length: 32 }, (_, file) => `apps/api/src/feature-${file}.test.ts`)
   const f = await fixture({ creditsRemaining: 0, creditRefused: true,
     unitInventory: { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000]))} })
   try {
