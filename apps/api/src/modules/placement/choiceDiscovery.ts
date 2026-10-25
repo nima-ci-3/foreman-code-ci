@@ -76,9 +76,10 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
       return this.listFolders(services, principal, input, configuration, source)
     }
     const sourceFailures = await this.refreshSources(services, principal, input.workspaceId, source)
+    // A paired computer needs its harness profile before its project root can be provisioned.
+    const preparation = await this.prepareWorkerProfiles(services, principal, input.workspaceId, configuration, source)
     let pending = await provisionPairedAgentRoots(this.pool, services, principal, input.workspaceId, configuration,
       matchesConfiguration, source)
-    const preparation = await this.prepareWorkerProfiles(services, principal, input.workspaceId, configuration, source)
     pending ||= [...preparation.values()].some(value => value.pending)
     const profiles = await withTransaction(this.pool, async sql => {
       const roots = await this.sourceRoots(sql, input.workspaceId)
@@ -197,9 +198,11 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
     const driver = configuration.harness.harness
     if (!harnessInstances || (driver !== 'codex' && driver !== 'claude') || configuration.harnessProfileSelection
       || !isAuthorized(principal, 'harnesses:update')) return results
-    const roots = policies ? policies.map(policy => ({ selection: { hostRef: policy.hostRef },
+    const roots = [...policies ? policies.map(policy => ({ selection: { hostRef: policy.hostRef },
       binding: { workerInstallationId: policy.registration?.workerInstallationId ?? null } }))
-      : await withTransaction(this.pool, sql => this.sourceRoots(sql, workspaceId))
+      : await withTransaction(this.pool, sql => this.sourceRoots(sql, workspaceId)),
+    // A freshly paired computer with this harness installed has no project root yet; set its profile up too.
+    ...await withTransaction(this.pool, sql => this.pairedHarnessHosts(sql, services, driver))]
     for (const root of roots) {
       const host = root.selection.hostRef
       const key = commandInputHash(host)
@@ -224,6 +227,18 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
         })) : computer)
     }
     return results
+  }
+
+  private async pairedHarnessHosts(sql: pg.PoolClient, services: DiscoveryServices, driver: string) {
+    const hosts = []
+    for (const installation of services.registry.installations.list()) {
+      if (!installation.installed || installation.driverId !== driver || installation.hostRef.kind !== 'device') continue
+      const device = (await sql.query<{ worker_installation_id: string }>(`select worker_installation_id from device_registrations
+        where id=$1 and main_id=$2 and record->>'status'='paired'`, [installation.hostRef.deviceId, installation.hostRef.mainId])).rows[0]
+      if (device) hosts.push({ selection: { hostRef: installation.hostRef },
+        binding: { workerInstallationId: device.worker_installation_id } })
+    }
+    return hosts
   }
 
   /** Every paired computer stays offered: one with no choice above says in plain words why it can't run this Agent.
