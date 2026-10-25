@@ -86,8 +86,7 @@ export interface ClaudeSdkSession {
   readonly output: AsyncIterable<ClaudeSdkOutput>
   readonly nativeSessionId: string | undefined
   assertInputCapacity(): void
-  /** priority 'next' joins the running turn at its next step (mid-turn steering); omitted, it waits for the turn to end. */
-  offer(input: { promptUuid: string; content: string; priority?: 'next' }, signal?: AbortSignal): Promise<{ state: 'queue-offered'; promptUuid: string }>
+  offer(input: { promptUuid: string; content: string }, signal?: AbortSignal): Promise<{ state: 'queue-offered'; promptUuid: string }>
   setPermissionMode?(mode: 'default' | 'plan'): Promise<void>
   getContextUsage?(options: { detail: 'summary' }): Promise<unknown>
   interrupt(): Promise<unknown>

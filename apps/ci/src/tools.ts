@@ -67,7 +67,7 @@ export const CI_TOOL_DESCRIPTIONS = {
     + 'Repositories without affected test selection must rerun with scope=full and no files. '
     + 'Integration splits into parts of about four minutes of measured test time; omit '
     + 'partitions to let CI size them (2\u201364 caps the count). Slow integration files start after the fast tier passes. '
-    + 'Affected unit/integration runs reuse matching results from earlier passed tickets (cachedFiles), '
+    + 'Affected unit/integration runs with explicit files reuse matching results from earlier passed tickets (cachedFiles), '
     + 'including unchanged files on the same commit; full runs bypass this cache. '
     + 'gate=true (Operators only; integration, scope full, no files or partitions) runs typecheck, lint, unit and '
     + 'integration across every computer; one gate runs at a time. priority is normal or high. A newer descendant commit '

@@ -45,16 +45,8 @@ export class NodePlacementChoicesService {
       if (!row) throw new DomainError('WORKFLOW_NOT_SAVED', 'Placement choices require a saved workflow.', 409)
       const version = WorkflowVersionCurrentSchema.parse(row.record)
       const node = version.definition.nodes.find(n => n.id === input.nodeId)
-      if (node?.kind === 'job') throw new DomainError('PLACEMENT_CONFIGURATION_CONFLICT', 'Jobs have no computer choices.', 409)
-      // A node only in the draft, or an Agent edited since the last save, chooses with its own saved configuration;
-      // choices depend only on that configuration, and the next save pins the computer with it.
-      if (!node || version.agentConfigurationVersionIds[node.agentId] !== input.agentConfigurationVersionId) {
-        const configuration = (await client.query<{ agent_id: string }>(
-          'select agent_id from agent_configuration_versions where id=$1 and workspace_id=$2',
-          [input.agentConfigurationVersionId, input.workspaceId])).rows[0]
-        if (!configuration || (node && configuration.agent_id !== node.agentId)) throw new DomainError(
-          'PLACEMENT_CONFIGURATION_CONFLICT', 'Placement choices require a saved configuration of this Agent.', 409)
-      }
+      if (!node || node.kind === 'job' || version.agentConfigurationVersionIds[node.agentId] !== input.agentConfigurationVersionId) throw new DomainError(
+        'PLACEMENT_CONFIGURATION_CONFLICT', 'Placement choices require the saved node configuration.', 409)
       authorize(principal)
       authorize(live)
       return { mainId: main.id }

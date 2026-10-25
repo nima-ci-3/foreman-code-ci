@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { RunBoardNodeSnapshot } from '@foreman-code/contracts/run-snapshots'
 import { type SelectedRunState, isRunAccessError, runReadErrorLabel, useSelectedRunSnapshot } from '../runs-selector'
 import { Button, EmptyState, ErrorState } from '../../shared/ui/nocturne'
 import { ApiError } from '../../shared/api/client'
+import { SelectedNodePlacement } from '../node-placement'
 import { RunNodeInspector } from './RunNodeInspector'
 import { SavedAgentSettings } from './SavedAgentSettings'
 import { useRunNodeInspectionNavigation } from './inspectionNavigation'
@@ -71,8 +74,11 @@ function RunBoardContents({ selection, snapshot, inspection, activitySnapshot, e
   const settings = panel?.kind === 'agent' && panel.tab === 'settings' && !board?.memoryOpen
     ? <SavedAgentSettings snapshot={snapshot} definition={definition} nodeId={panel.nodeId} /> : null
   // Inside the Board the caption sits in its floating toolbar, so the two never cover each other.
-  // Only a workflow with its own worktree names it; computers show on each Agent's Details.
-  const caption = <RunDefaultWorktree selection={selection} workflowVersionId={snapshot.workflowVersionId} />
+  const caption = <>
+    <RunDefaultWorktree selection={selection} workflowVersionId={snapshot.workflowVersionId} />
+    {visible ? <SelectedRunComputers key={`placement:${selection.generation.id}`} selection={selection} nodes={snapshot.nodes} /> : null}
+    <span className="run-board-label">Read only</span>
+  </>
   return <>
     {board?.runCaptionHost ? createPortal(caption, board.runCaptionHost) : <header className="run-board-header">{caption}</header>}
     {/* Drawn once the saved version is read, so nodes appear at their saved places and never jump there. */}
@@ -90,7 +96,17 @@ function RunDefaultWorktree({ selection, workflowVersionId }: {
     executionSemanticsVersion: 3 as const }
   const version = useRunVersionQuery(scope)
   if (!selection.isCurrent(selection.generation)) return null
-  if (!version.data?.version.definition.defaultWorktree) return null
+  if (version.isError) return <p className="saved-workflow-worktree is-compact" role="status">Worktree: <em>unavailable</em></p>
+  if (!version.data) return <p className="saved-workflow-worktree is-compact" role="status">Worktree: <span>Loading…</span></p>
   return <SavedWorkflowWorktree compact workspaceId={scope.workspaceId} value={version.data.version.definition.defaultWorktree} />
 }
 
+function SelectedRunComputers({ selection, nodes }: { selection: SelectedRunState; nodes: readonly RunBoardNodeSnapshot[] }) {
+  const [open, setOpen] = useState(false)
+  return <details className="run-board-computers" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>Computers</summary>
+    {open ? nodes.map((node) => <section key={node.id} aria-label={`Computer evidence for ${node.name}`}>
+      <h3>{node.name}</h3><SelectedNodePlacement selection={selection} nodeId={node.id} />
+    </section>) : null}
+  </details>
+}

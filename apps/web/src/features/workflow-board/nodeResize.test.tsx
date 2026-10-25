@@ -31,10 +31,9 @@ it('resizes a node on the draft through layout Save while the active Run’s sav
   const { history } = await mountMeasuredBoard(boardHref(scope))
   const label = fixture.first.name ?? fixture.first.label ?? fixture.first.id
   const runBoard = await screen.findByRole('region', { name: 'Selected Run board' })
-  await within(runBoard).findByRole('button', { name: `Open ${label} information` })
+  await within(runBoard).findByRole('button', { name: `Inspect ${label}` })
   expect(within(runBoard).queryByRole('slider', { name: `Resize ${label}` })).not.toBeInTheDocument()
   const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: 'Runs' }))
   await user.click(screen.getByRole('button', { name: 'Return to workflow' }))
   const ring = await screen.findByRole('slider', { name: `Resize ${label}` })
   expect(ring).toHaveAttribute('tabindex', '0')
@@ -70,7 +69,7 @@ it('moves an active Run’s node under a pointer drag like the draft Board, savi
   const wire = measureBoardWire(fixture.mock)
   const { container } = await mountMeasuredBoard(boardHref(scope))
   const label = fixture.first.name ?? fixture.first.label ?? fixture.first.id
-  await screen.findByRole('button', { name: `Open ${label} information` })
+  await screen.findByRole('button', { name: `Inspect ${label}` })
   expect(observed.flow?.nodesDraggable).toBe(false)
   expect(observed.flow?.nodesConnectable).toBe(false)
   const node = container.querySelector<HTMLElement>(`.run-board-canvas .react-flow__node[data-id="${fixture.first.id}"]`)!

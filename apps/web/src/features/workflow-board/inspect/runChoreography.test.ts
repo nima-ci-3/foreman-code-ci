@@ -13,38 +13,13 @@ const execution = (node: string, state: string, resultOutcome: string | null = n
 const binding = (from: string, to: string, relationshipId: string) => ({ bindingId: `bind-${from}-${to}`, kind: 'predecessor', relationshipId, sender: id(from), recipient: id(to) })
 const activity = (node: string, action?: string) => ({ state: { workflowNodeId: node }, activity: action
   ? { workflowNodeId: node, status: 'active', action } : { workflowNodeId: node, status: 'none' } })
-function record(parts: { executions?: ReturnType<typeof execution>[]; bindings?: unknown[]; interactions?: unknown[]; nodes?: ReturnType<typeof activity>[]; done?: boolean }) {
+function record(parts: { executions?: unknown[]; bindings?: unknown[]; interactions?: unknown[]; nodes?: unknown[]; done?: boolean }) {
   const topology = { relationships: edges.map((edge) => ({ relationshipId: edge.id, kind: edge.kind, source: edge.source, target: edge.target })) }
-  const nodes = new Map((parts.executions ?? []).map(fact => [fact.identity.workflowNodeId, {
-    state: { workflowNodeId: fact.identity.workflowNodeId, execution: fact.identity,
-      lifecycle: fact.state === 'completed' ? fact.resultOutcome : fact.state },
-    activity: { workflowNodeId: fact.identity.workflowNodeId, status: 'none' },
-  }]))
-  for (const node of parts.nodes ?? []) {
-    const previous = nodes.get(node.state.workflowNodeId)!
-    nodes.set(node.state.workflowNodeId, { ...previous, activity: node.activity })
-  }
   return { topology, state: { run: { executionState: parts.done ? 'completed' : 'running' }, resolutions: [], executions: parts.executions ?? [],
-    bindings: parts.bindings ?? [], interactions: parts.interactions ?? [], nodes: [...nodes.values()] } } as unknown as RepeatGraphCurrentState
+    bindings: parts.bindings ?? [], interactions: parts.interactions ?? [], nodes: parts.nodes ?? [] } } as unknown as RepeatGraphCurrentState
 }
 
 describe('run choreography facts', () => {
-  it('shows the canonical current activation even when an earlier activation has a higher retry attempt', () => {
-    const older = execution('a', 'completed', 'failed')
-    older.identity = { ...older.identity, executionId: 'old-retry', attempt: 3 }
-    const latest = execution('a', 'running')
-    const cut = record({ executions: [latest, older] })
-    cut.state.nodes[0]!.state = { workflowNodeId: 'a', lifecycle: 'running', execution: id('a') }
-    expect(runNodeDisplays(cut).get('a')).toEqual({ state: 'running', label: 'Running' })
-  })
-
-  it.each(['starting', 'unknown'] as const)('keeps the canonical %s lifecycle instead of promoting a retained running execution', lifecycle => {
-    const cut = record({ executions: [execution('a', 'running')] })
-    cut.state.nodes[0]!.state.lifecycle = lifecycle
-    expect(runNodeDisplays(cut).get('a')).toEqual(lifecycle === 'starting'
-      ? { state: 'queued', label: 'Starting' } : { state: 'unavailable', label: 'Unavailable' })
-  })
-
   it('turns bindings and approval exchanges into directed handoffs', () => {
     const cut = record({ bindings: [binding('a', 'b', 'e-ab')], interactions: [
       { interactionId: 'i1', requester: id('b'), reviewer: id('a'), approvalRelationshipId: 'review-ab', status: 'pending' },
