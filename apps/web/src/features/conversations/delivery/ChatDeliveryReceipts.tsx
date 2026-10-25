@@ -1,6 +1,6 @@
 import type { ChatDeliveryReceipt } from '@foreman-code/contracts'
 import { deliveryTargetLabel } from './deliveryTargetLabel'
-import { Button } from '../../../shared/ui/nocturne'
+import { Button, Icon, IconButton } from '../../../shared/ui/nocturne'
 
 const intentLabels: Record<ChatDeliveryReceipt['requestedIntent'], string> = {
   auto: 'Automatic', steer: 'Steer now', next_turn: 'Next turn', interrupt_and_send: 'Interrupt and send',
@@ -21,14 +21,16 @@ export function ChatDeliveryReceipts({ receipts, onCancel, onRefresh, onRecover,
   return <ul className="chat-delivery-receipts" aria-label="Delivery receipts">
     {receipts.map(receipt => <li key={receipt.id} title={receipt.errorCode && receipt.errorCode !== 'TARGET_SETTLED' ? receipt.errorCode : undefined}>
       <p><strong>{receipt.errorCode === 'TARGET_SETTLED' ? 'Not sent — selected turn ended' : stateLabels[receipt.state]}</strong>
-        {' · '}{deliveryTargetLabel(receipt.target)}</p>
+        {' · '}{receipt.state === 'queued' ? 'sends after the current turn' : deliveryTargetLabel(receipt.target)}</p>
       {receipt.requestedIntent !== receipt.appliedIntent && receipt.requestedIntent !== 'auto'
         ? <p>Requested: {intentLabels[receipt.requestedIntent]} · Applied: {intentLabels[receipt.appliedIntent]}</p> : null}
       {receipt.consultationId ? <p>Delegated work continues while it replies.</p> : null}
       {receipt.continuationId && !receipt.continuationExecution ? <p>Changing direction · Waiting for the continuing execution.</p> : null}
       {receipt.continuationExecution ? <p>Continuing task · A new execution is available.</p> : null}
       <div className="n-actions">
-        {receipt.state === 'queued' && onCancel ? <Button size="sm" disabled={!!controlsReason} title={controlsReason} onClick={() => onCancel(receipt)}>Cancel queued message</Button> : null}
+        {receipt.state === 'queued' && onCancel ? <IconButton size="sm" variant="ghost" label="Cancel queued message" className="chat-delivery-cancel"
+          disabled={!!controlsReason} title={controlsReason ?? 'Cancel · ↑ in the empty composer edits it'}
+          onClick={() => onCancel(receipt)}><Icon name="close" size={12} /></IconButton> : null}
         {receipt.state === 'unknown' && onRefresh ? <Button size="sm" onClick={onRefresh}>Check status</Button> : null}
         {receipt.errorCode === 'TARGET_SETTLED' && onRecover ? <>
           <Button size="sm" onClick={() => onRecover(receipt, 'outside_run')}>Send outside run</Button>

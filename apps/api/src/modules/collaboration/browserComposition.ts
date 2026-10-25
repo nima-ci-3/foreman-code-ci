@@ -171,6 +171,7 @@ export function createProductionBrowser(options: BrowserCompositionOptions) {
       await runtime.start()
       router = createBrowserSessionRouter({ localComputerId: id, local: localProxy, pairing, locations,
         transport: remote.sessions, authority, runtimeStatus: computerId => computerId === id ? Promise.resolve(runtime.status()) : remote.status(computerId),
+        onActivity: (principal, sessionId) => chat.viewerActivity(principal, sessionId),
         computers: async principal => (await computers(principal)).map(computer => computer.id),
         subjectComputer: async (_principal, subject: AgentSubject) => (await authority.details(subject)).computerId,
         media: binding => binding.computerId === id ? localBrowserMediaSource(localService()) : remote.media(binding) })
@@ -184,7 +185,11 @@ export function createProductionBrowser(options: BrowserCompositionOptions) {
       const binding = await pairing.current(saved.session.computerId)
       await pairing.assertInstallation(binding.computerId, saved.installationId)
       const source = binding.computerId === identity() ? localBrowserMediaSource(localService()) : remote.media(binding)
-      return source.open(principal, sessionId, viewId, changed)
+      const view = await source.open(principal, sessionId, viewId, changed)
+      const stopWatching = chat.watchBrowser(principal, sessionId)
+      return { ...view, async close(disconnected: boolean) {
+        try { await view.close(disconnected) } finally { stopWatching() }
+      } }
     } },
     stopAdmission: () => runtime.stopAdmission(),
     async stop() { chat.stop(); await profiles.stop(); await runtime.stop() },

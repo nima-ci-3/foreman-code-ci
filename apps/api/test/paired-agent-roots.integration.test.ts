@@ -10,6 +10,7 @@ import { WorkspaceRootListResultSchema } from '@foreman-code/contracts/workspace
 import { WorkspaceBoundLocationSetResultSchema } from '@foreman-code/contracts/workspace-bound-location'
 import { describe, expect, it } from 'vitest'
 import { sourceSha256 } from '../src/modules/sources/manifest.js'
+import { DomainError } from '../src/modules/errors.js'
 import { postgresEnabled } from './helpers/database.js'
 import { pairedAgentRootsFixture } from './helpers/pairedAgentRootsFixture.js'
 
@@ -71,6 +72,25 @@ describe.skipIf(!postgresEnabled)('paired Agent workspace roots', () => {
       expect(NodePlacementChoicesResultSchema.parse(decodeMcpToolResult(again))).toEqual(result)
       expect(await readRoots()).toEqual(roots)
       expect(f.prepared).toHaveLength(1)
+    } finally { await f.close() }
+  }, 120_000)
+
+  it('sets up the harness on a paired computer that has it installed but no project or profile yet', async () => {
+    const preparedHosts: unknown[] = []
+    const f = await pairedAgentRootsFixture({ harnessInstances: { prepareWorkerConfiguration: async (_principal, _source, _harness, target) => {
+      preparedHosts.push(target.hostRef)
+      throw new DomainError('HARNESS_PROFILE_CHECK_PENDING', 'Checking the harness on this computer.', 409)
+    } } })
+    try {
+      // A freshly paired Worker: the harness is installed there, but no profile or project root exists yet.
+      await f.base.db.pool.query(`delete from harness_instance_profile_evidence where (instance_id,instance_revision) in
+        (select instance_id,revision from harness_instance_settings where record#>>'{target,hostRef,kind}'='device')`)
+      await f.base.db.pool.query(`delete from harness_instance_settings where record#>>'{target,hostRef,kind}'='device'`)
+      const owner = await f.connect()
+      const result = NodePlacementChoicesResultSchema.parse(decodeMcpToolResult(
+        await owner.callTool({ name: 'workflow_node_placement_choices', arguments: f.input })))
+      expect(preparedHosts).toContainEqual(f.device.hostRef)
+      expect(result.pending).toBe(true)
     } finally { await f.close() }
   }, 120_000)
 

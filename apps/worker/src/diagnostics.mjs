@@ -94,7 +94,7 @@ export function executableAvailability(path) {
 }
 
 // Explicit projection: errors, credentials, process arguments and arbitrary metadata never cross this boundary.
-export function doctorReport({ facts, identity, connection, service, executables, errors = [] }) {
+export function doctorReport({ facts, identity, connection, service, executables, browserRuntime, errors = [] }) {
   return {
     inspectionErrors: [...(facts.inspectionErrors ?? []), ...(executables.inspectionErrors ?? [])],
     versions: { os: facts.os, osRelease: facts.osRelease, arch: facts.arch, libc: facts.libc, node: facts.node,
@@ -106,6 +106,8 @@ export function doctorReport({ facts, identity, connection, service, executables
     persistentRoot: facts.rootPersistent, persistentHome: facts.homePersistent, persistentState: facts.storagePersistent ?? null,
     executables: Object.fromEntries(['node', 'git', 'codex', 'claude', 'systemctl'].map((key) => [key, executables[key] === true])),
     service: { active: service.active === true, userManagerAvailable: service.userManagerAvailable === true },
+    browserRuntime: browserRuntime ? { state: browserRuntime.state, retryable: browserRuntime.retryable === true,
+      manifestSha256: browserRuntime.manifestSha256, reason: browserRuntime.reason } : null,
     identity: { installationId: identity?.workerInstallationId ?? null, selectedMainId: identity?.mainId ?? null, selectedMainFingerprint: identity?.mainPublicKeyFingerprint ?? null },
     pairing: identity?.deviceId ? 'paired' : 'unpaired',
     connection: ['connected', 'connecting', 'backoff', 'blocked', 'offline', 'stopped'].includes(connection?.state) ? connection.state : 'offline',

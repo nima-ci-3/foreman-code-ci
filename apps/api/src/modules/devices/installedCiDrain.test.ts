@@ -85,7 +85,7 @@ async function fixture() {
 async function updater(f: Awaited<ReturnType<typeof fixture>>) {
   // The shipped updater runs its normal download and staging sequence against a fixture release.
   const { WorkerUpdater } = await import(new URL('../../../../worker/src/update.mjs', import.meta.url).href)
-  const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0',
+  const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2',
     rootPersistent: true, homePersistent: true, storagePersistent: true }
   const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
   const bytes = Buffer.from('fixture')

@@ -11,6 +11,13 @@ export const RunsSelectorSearchSchema = WorkspaceBoardSearchSchema.safeExtend({
   selectedRunId: runIdSchema.optional(),
 })
 
+const workspaceSearchKeys = new Set(Object.keys(RunsSelectorSearchSchema.shape))
+/** A mistyped or outdated query key in a shared link is dropped instead of failing the workspace page. */
+export function knownWorkspaceSearch(rawSearch: unknown): Record<string, unknown> {
+  if (!rawSearch || typeof rawSearch !== 'object') return {}
+  return Object.fromEntries(Object.entries(rawSearch).filter(([key]) => workspaceSearchKeys.has(key)))
+}
+
 export function withoutRunsSelectorSearch<T extends object>(search: T) {
   const { selectedRunId: _selectedRun, ...boardSearch } = search as T & { selectedRunId?: unknown }
   void _selectedRun
@@ -67,7 +74,7 @@ export function searchForSelectedRun(
   const next: Record<string, unknown> = { ...previous, workflowId: scope.workflowId }
   // Never leave another Run's graph/inspector pins beneath a new history selection.
   for (const key of ['runId', 'workflowVersionId', 'executionSemanticsVersion', 'runNodeId',
-    'runRelationshipId', 'runExchangeKey', 'activityKind', 'activityAgentId', 'boardRunId', 'boardCiTicketId', 'boardExecutionId', 'boardWaitingActivationId', SELECTED_RUN_PARAM]) delete next[key]
+    'runRelationshipId', 'runExchangeKey', 'activityKind', 'activityAgentId', 'boardChatTarget', 'boardRunId', 'boardCiTicketId', 'boardExecutionId', 'boardWaitingActivationId', SELECTED_RUN_PARAM]) delete next[key]
   if (runId !== null) next[SELECTED_RUN_PARAM] = runIdSchema.parse(runId)
   return next
 }

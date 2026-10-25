@@ -4,18 +4,18 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { packBrowserRuntime, assembleBrowserRuntime } from '../../../scripts/browser-runtime-install.mjs';
+import { packBrowserRuntime, assembleBrowserRuntime, collectBrowserRuntimeArtifacts } from '../../../scripts/browser-runtime-install.mjs';
 import { stageBrowserRuntime, activateBrowserRuntime, rollbackBrowserRuntime, readInstalledBrowserRuntime,
   checkBrowserRuntimeReadiness, validateBrowserRuntimeManifest, copyBuiltBrowserRuntime, readBrowserRuntimeStatus } from '../src/browserRuntimeInstall.mjs';
 import { installVersion, readInstalledRelease } from '../src/installation.mjs';
-import { superviseWorkerUpdate, writeUpdateRecord } from '../src/updateSupervisor.mjs';
+import { superviseWorkerUpdate } from '../src/updateSupervisor.mjs';
 import { runReleaseCutover, waitForProductionBrowserDrain, stageProductionBrowserRuntime,
   productionBrowserRuntimeLifecycle } from '../../../scripts/local-production-runtime.mjs';
 import { browserHostTarget } from './fixtures/browserTarget.mjs';
 import { createWorkerBrowserRuntime } from '../src/browserRuntime.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const target = { os: 'ubuntu', osRelease: '26.04', arch: 'x64', libc: 'glibc-2.43', node: 'v24.22.0' };
+const target = { os: 'ubuntu', osRelease: '26.04', arch: 'x64', libc: 'glibc-2.43', node: 'v22.23.2' };
 const expected = { protocolVersion: 1, identityFormat: 1 };
 const ready = async () => ({ ready: true });
 
@@ -27,7 +27,7 @@ async function fixture(t) {
   return directory;
 }
 
-async function artifact(directory, name, version = '1.0.0') {
+async function artifact(directory, name, version = '1.0.0', nativeTarget = target) {
   const unit = join(directory, `${name}-unit`), output = join(directory, name);
   const lock = JSON.stringify({ fixture: true, version });
   const files = {
@@ -42,7 +42,7 @@ async function artifact(directory, name, version = '1.0.0') {
     await writeFile(join(unit, path), bytes, { mode: path === 'python/bin/python3' || path === 'chromium/chrome' ? 0o700 : 0o600 });
   }
   const result = await packBrowserRuntime({ unit, output, manifest: { format: 1, kind: 'foreman-browser-runtime',
-    runtimeVersion: version, foremanVersion: version, sourceCommit: 'a'.repeat(40), profileFormat: 1, target,
+    runtimeVersion: version, foremanVersion: version, sourceCommit: 'a'.repeat(40), profileFormat: 1, target: nativeTarget,
     sourceInputs: [], pythonVersion: '3.13.16', browserUseVersion: '0.13.11', browserHarnessVersion: '0.1.13',
     chromiumVersion: '153.0.8010.12', resolvedLockSha256: hash(lock), pythonExecutable: 'python/bin/python3',
     chromiumExecutable: 'chromium/chrome', bridgeScript: 'bridge.py', nativeHostModule: 'native-host.mjs', skill: 'browser-use.md' } });
@@ -107,7 +107,7 @@ test('a verified browser unit accepts a compatible Node patch without accepting 
   const directory = await fixture(t);
   const packed = await artifact(directory, 'runtime');
   const installed = await stageBrowserRuntime({ runtimeRoot: join(directory, 'runtime-root'), artifact: packed.output,
-    expectedSha256: packed.descriptorSha256, target: { ...target, node: 'v24.22.1' }, readiness: ready, activate: false });
+    expectedSha256: packed.descriptorSha256, target: { ...target, node: 'v22.23.3' }, readiness: ready, activate: false });
   assert.equal(installed.runtimeVersion, '1.0.0');
   for (const incompatible of [{ ...target, arch: 'arm64' }, { ...target, libc: 'glibc-2.35' }, { ...target, node: 'v20.0.0' }]) {
     assert.throws(() => validateBrowserRuntimeManifest(packed.manifest, incompatible), /target mismatch/);
@@ -120,7 +120,7 @@ test('consumes runner artifacts by source and native target and rejects corrupt 
   await writeFile(join(packed.output, 'index.json'), JSON.stringify({ format: 1, sourceCommit: commit,
     artifacts: [{ directory: '.', target, descriptorSha256: packed.descriptorSha256 }] }));
   const output = join(directory, 'consumed');
-  const copied = await copyBuiltBrowserRuntime({ directory: packed.output, output, target: { ...target, node: 'v24.22.1' }, commit });
+  const copied = await copyBuiltBrowserRuntime({ directory: packed.output, output, target: { ...target, node: 'v22.23.3' }, commit });
   assert.equal(copied.descriptorSha256, packed.descriptorSha256);
   assert.equal((await stage(join(directory, 'installed'), { output, ...copied })).runtimeVersion, '1.0.0');
   await assert.rejects(copyBuiltBrowserRuntime({ directory: packed.output, output: join(directory, 'wrong-source'),
@@ -129,6 +129,43 @@ test('consumes runner artifacts by source and native target and rejects corrupt 
     target: { ...target, osRelease: '24.04' }, commit }), /matching target runner/);
   await writeFile(join(packed.output, packed.descriptor.chunks[0].path), 'corrupt');
   await assert.rejects(copyBuiltBrowserRuntime({ directory: packed.output, output: join(directory, 'corrupt'), target, commit }), /checksum mismatch/);
+});
+
+test('collects native Ubuntu browser artifacts for Main and selects each without a target fallback', async t => {
+  const directory = await fixture(t), commit = 'a'.repeat(40);
+  const targets = [{ ...target, osRelease: '24.04', libc: 'glibc-2.39' }, target];
+  const runners = [];
+  for (const nativeTarget of targets) {
+    const packed = await artifact(directory, `runner-${nativeTarget.osRelease}`, '1.0.0', nativeTarget);
+    await writeFile(join(packed.output, 'index.json'), JSON.stringify({ format: 1, sourceCommit: commit,
+      artifacts: [{ directory: '.', target: nativeTarget, descriptorSha256: packed.descriptorSha256 }] }));
+    runners.push(packed);
+  }
+  const output = join(directory, 'collected');
+  const collected = await collectBrowserRuntimeArtifacts({ directories: runners.map(runner => runner.output), output, commit });
+  assert.deepEqual(collected.artifacts.map(artifact => artifact.target), targets);
+  for (const [index, nativeTarget] of targets.entries()) {
+    const consumed = join(directory, `worker-${nativeTarget.osRelease}`);
+    const copied = await copyBuiltBrowserRuntime({ directory: output, output: consumed, target: nativeTarget, commit });
+    assert.equal(copied.descriptorSha256, runners[index].descriptorSha256);
+    const staged = await stageBrowserRuntime({ runtimeRoot: join(directory, `installed-${index}`), artifact: consumed,
+      expectedSha256: copied.descriptorSha256, target: nativeTarget, readiness: ready, activate: false });
+    assert.deepEqual(JSON.parse(await readFile(join(staged.rootDirectory, 'manifest.json'))).target, nativeTarget);
+  }
+  await assert.rejects(copyBuiltBrowserRuntime({ directory: output, output: join(directory, 'unsupported'),
+    target: { ...target, osRelease: '22.04', libc: 'glibc-2.35' }, commit }), /matching target runner/);
+  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[0].output, runners[0].output],
+    output: join(directory, 'duplicate'), commit }), /duplicate native browser target/);
+  await assert.rejects(readdir(join(directory, 'duplicate')), { code: 'ENOENT' });
+  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[0].output],
+    output: join(directory, 'wrong-commit'), commit: 'b'.repeat(40) }), /source mismatch/);
+  await writeFile(join(runners[0].output, runners[0].descriptor.chunks[0].path), 'corrupt');
+  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[0].output],
+    output: join(directory, 'corrupt'), commit }), /checksum mismatch/);
+  await assert.rejects(readdir(join(directory, 'corrupt')), { code: 'ENOENT' });
+  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [], output, commit }), /artifacts required/);
+  await assert.rejects(collectBrowserRuntimeArtifacts({ directories: [runners[1].output], output, commit }), { code: 'EEXIST' });
+  assert.deepEqual(JSON.parse(await readFile(join(output, 'index.json'))), collected);
 });
 
 test('staging stays inactive, activation drains before selection, and rollback restores profiles before selecting older Chromium', async t => {
@@ -230,33 +267,6 @@ test('Main stages its core release with visible browser failure and can retry th
   const staged = { rootDirectory: join(directory, 'runtime'), manifestSha256: 'c'.repeat(64), target };
   assert.deepEqual(await stageProductionBrowserRuntime({ release, appRoot, stage: async () => staged }), staged);
   assert.equal(JSON.parse(await readFile(join(release, 'browser-runtime.json'), 'utf8')).state, 'ready');
-});
-
-test('Main stages the selected Node runtime browser when its installer runs on another Node major', async t => {
-  const directory = await fixture(t), release = join(directory, 'release'), appRoot = join(directory, 'app');
-  const target = { ...await browserHostTarget(), node: 'v24.22.1' };
-  const bytes = Buffer.from(JSON.stringify({ target, files: [] }));
-  const manifestSha256 = hash(bytes);
-  const artifacts = join(release, 'worker-artifacts');
-  await mkdir(join(artifacts, manifestSha256), { recursive: true, mode: 0o700 });
-  await writeFile(join(artifacts, manifestSha256, 'manifest.json'), bytes);
-  await writeFile(join(artifacts, 'index.json'), JSON.stringify({ artifacts: [{ target, manifestSha256 }] }));
-  const versionDescriptor = Object.getOwnPropertyDescriptor(process, 'version');
-  Object.defineProperty(process, 'version', { value: 'v26.5.1' });
-  t.after(() => Object.defineProperty(process, 'version', versionDescriptor));
-  const staged = { rootDirectory: join(directory, 'runtime'), manifestSha256: 'c'.repeat(64), target };
-  let stages = 0;
-  const result = await stageProductionBrowserRuntime({ release, appRoot, nodeVersion: target.node,
-    stage: async input => {
-      stages++;
-      assert.deepEqual(input.target, target);
-      return staged;
-    } });
-  assert.deepEqual(result, staged);
-  assert.equal(stages, 1);
-  const receipt = JSON.parse(await readFile(join(release, 'browser-runtime.json'), 'utf8'));
-  assert.equal(receipt.state, 'ready');
-  assert.deepEqual(receipt.staged, staged);
 });
 
 test('supervisor stops a failed new host and restores browser profiles before restarting the previous Worker', async () => {
@@ -386,36 +396,6 @@ test('the running Worker owner reports the retained browser failure and repairs 
   assert.equal(owner.getHost(), f.host);
 });
 
-
-test('a transition browser cannot activate before the old supervisor confirms the Worker runtime', async t => {
-  const directory = await fixture(t), root = join(directory, 'app'), stateDirectory = join(directory, 'state');
-  await mkdir(root, { mode: 0o700 }); await mkdir(stateDirectory, { mode: 0o700 });
-  const carrier = await workerCarrier(directory, await artifact(directory, 'runtime'));
-  const bytes = await readFile(join(carrier.artifact, 'manifest.json'));
-  const manifest = JSON.parse(bytes);
-  manifest.target = { ...target, node: 'v22.23.3' };
-  manifest.runtime = { version: 'v24.22.1' };
-  const updated = Buffer.from(JSON.stringify(manifest));
-  await writeFile(join(carrier.artifact, 'manifest.json'), updated);
-  carrier.approvedManifestSha256 = hash(updated);
-  const facts = { ...target, node: manifest.runtime.version, rootPersistent: true, homePersistent: true };
-  const installed = await installVersion({ root, stateDirectory, ...carrier, facts, expected,
-    browserRuntimeReadiness: async () => { throw new Error('The old updater cannot prepare the Node 24 browser'); } });
-  const record = { format: 1, status: { state: 'restarting' }, restart: { directory: installed.directory } };
-  await writeUpdateRecord(stateDirectory, record);
-  const f = bootstrapFixture();
-  const owner = createWorkerBrowserRuntime({ ...f.options, root, stateDirectory, facts,
-    readSelectedRelease: readInstalledRelease, readInstalled: readInstalledBrowserRuntime,
-    browserRuntimeReadiness: ready, loadModule: async () => ({ ...f.module, createBrowserHost: async () => f.host }) });
-  t.after(() => owner.close());
-  await assert.rejects(owner.retry(), /Worker runtime update must finish/);
-  await assert.rejects(readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime') }), /BROWSER_RUNTIME_MISSING/);
-  assert.equal(owner.getHost(), null);
-  record.status = { state: 'current', manifestSha256: carrier.approvedManifestSha256 };
-  await writeUpdateRecord(stateDirectory, record);
-  assert.equal((await owner.retry()).ready, true);
-  assert.equal((await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts })).runtimeVersion, '1.0.0');
-});
 
 test('Worker startup retries a failed retryable install once and a later restart can recover it', async t => {
   const directory = await fixture(t), root = join(directory, 'app'), stateDirectory = join(directory, 'state');

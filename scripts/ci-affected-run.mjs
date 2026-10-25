@@ -23,10 +23,13 @@ export function affectedCommands(suite, files) {
   for (const [project, selected] of groups) {
     if (suite === 'typecheck') {
       if (project !== 'scripts' && project !== 'apps/worker') commands.push(['corepack', 'pnpm', '--dir', project, 'typecheck'])
+      if (project === 'apps/api') commands.push(['corepack', 'pnpm', '--dir', project, 'exec', 'tsc',
+        '-p', 'tsconfig.build.json', '--noEmit', '--isolatedModules',
+        '--tsBuildInfoFile', 'node_modules/.cache/tsc/production-check.tsbuildinfo'])
     } else if (suite === 'lint') {
       if (project === 'scripts') throw new Error('Scripts have no package lint command.')
-      commands.push(['corepack', 'pnpm', '--dir', project, 'exec', 'eslint',
-        ...selected.map(file => file.slice(project.length + 1)), '--max-warnings', '0'])
+      // Package lint includes structural checks and typed rules whose inputs extend beyond changed files.
+      commands.push(['corepack', 'pnpm', '--dir', project, 'lint'])
     } else if (suite === 'unit') {
       if (selected.some(file => !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
         || (file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file)))) {

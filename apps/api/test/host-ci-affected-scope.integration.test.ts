@@ -352,3 +352,33 @@ it('persists large selections outside repository-specific roots through authenti
     expect(stored.rows[0]!.record).toEqual(read.run)
   } finally { await f.close() }
 })
+
+it('diffs a runner-selected run against the newest ancestor where the same suite passed, not against main', async () => {
+  const [older, passed, hand, current] = ['1', '2', '3', '4'].map(digit => digit.repeat(40))
+  const f = await fixture({ ancestors: { [current!]: [hand!, passed!, older!] } })
+  try {
+    const run = async (commit: string, commandId: string, extra: Record<string, unknown> = {}) => {
+      const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', { suite: 'integration', scope: 'affected', commit, commandId, ...extra }))
+      await f.ci.dispatch()
+      return started
+    }
+    const first = await run(passed!, 'passed-ancestor')
+    f.finish(first.ticketId, 0, 'completed'); await f.ci.dispatch()
+    await ciRunReadback(input => f.value(f.operator, 'ci_get', input), first.ticketId, 'passed')
+    // A pass of hand-picked files proves nothing about the rest of the suite.
+    const picked = await run(hand!, 'hand-picked', { files: ['apps/api/test/example.integration.test.ts'] })
+    f.finish(picked.ticketId, 0, 'completed'); await f.ci.dispatch()
+    await ciRunReadback(input => f.value(f.operator, 'ci_get', input), picked.ticketId, 'passed')
+    const next = await run(current!, 'current')
+    expect(f.started.at(-1)!.request).toMatchObject({ commit: current, baseCommit: passed, scope: 'affected' })
+    expect(CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get', { ticketId: next.ticketId })).run).toMatchObject({ baseCommit: passed })
+  } finally { await f.close() }
+})
+
+it('keeps the default-branch comparison when no ancestor passed the suite', async () => {
+  const f = await fixture({ ancestors: { ['5'.repeat(40)]: ['6'.repeat(40)] } })
+  try {
+    const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', { suite: 'integration', scope: 'affected', commit: '5'.repeat(40), commandId: 'no-pass' }))
+    expect(CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get', { ticketId: started.ticketId })).run).not.toHaveProperty('baseCommit')
+  } finally { await f.close() }
+})

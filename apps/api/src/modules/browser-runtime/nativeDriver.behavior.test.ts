@@ -19,9 +19,16 @@ async function healthyBrowser(options: Partial<BrowserNativeDriverOptions>) {
     tabs: new Map([['tab', { id: 'tab', sessionId: 'session', title: '', url: '', keys: new Map(), buttons: new Set(), pointer: { x: 0, y: 0 }, dialog: null, frameIds: new Set(['frame']), chooser: null }]]) }
   ;(driver as unknown as { profiles: Map<string, unknown> }).profiles.set('profile', profile)
   connection.onEvent(event => (driver as unknown as { event(id: string, p: unknown, e: unknown): void }).event('profile', profile, event))
+  // The fixture browser accepts every command and records when it arrived.
+  const commands: { method: string; at: number }[] = []
+  browser.on('message', data => {
+    const { id, method } = JSON.parse(String(data)) as { id?: number; method: string }
+    commands.push({ method, at: performance.now() })
+    if (id !== undefined) browser.send(JSON.stringify({ id, result: {} }))
+  })
   const emit = (value: object) => browser.send(JSON.stringify(value))
   const settle = () => new Promise(done => setTimeout(done, 50))
-  return { onDisconnected, reportFailure, emit, settle }
+  return { onDisconnected, reportFailure, emit, settle, driver, commands }
 }
 
 describe('native driver bookkeeping failures', () => {
@@ -41,5 +48,31 @@ describe('native driver bookkeeping failures', () => {
     await settle()
     expect(onDisconnected).not.toHaveBeenCalled()
     expect(reportFailure).toHaveBeenCalledWith(failure)
+  })
+})
+
+describe('native driver screencast', () => {
+  it('shows a viewer that joins a running screencast its latest frame at once', async () => {
+    const { driver, emit, settle } = await healthyBrowser({})
+    const first: unknown[] = [], second: unknown[] = []
+    await driver.capture('profile', 1, 'tab', frame => first.push(frame))
+    emit({ method: 'Page.screencastFrame', sessionId: 'session',
+      params: { sessionId: 7, data: Buffer.from('static page').toString('base64'), metadata: { deviceWidth: 800, deviceHeight: 600 } } })
+    await settle()
+    expect(first).toHaveLength(1)
+    await driver.capture('profile', 1, 'tab', frame => second.push(frame))
+    expect(second).toEqual([expect.objectContaining({ data: Buffer.from('static page'), width: 800, height: 600 })])
+  })
+
+  it('acknowledges frames at no more than about 30 per second', async () => {
+    const { driver, emit, settle, commands } = await healthyBrowser({})
+    await driver.capture('profile', 1, 'tab', () => {})
+    const frameEvent = (id: number) => ({ method: 'Page.screencastFrame', sessionId: 'session',
+      params: { sessionId: id, data: Buffer.from('frame').toString('base64'), metadata: {} } })
+    emit(frameEvent(1)); emit(frameEvent(2))
+    await settle()
+    const acks = commands.filter(command => command.method === 'Page.screencastFrameAck')
+    expect(acks).toHaveLength(2)
+    expect(acks[1]!.at - acks[0]!.at).toBeGreaterThanOrEqual(25)
   })
 })

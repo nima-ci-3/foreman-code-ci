@@ -1,4 +1,4 @@
-import type pg from 'pg'
+import type { SqlQuery } from '../../../infrastructure/transaction.js'
 import { HarnessExecutionError } from '../errors.js'
 
 export interface ClaudeCallbackIdentity {
@@ -36,7 +36,7 @@ export interface ClaudeCallbackJournal {
 }
 
 export class PostgresClaudeCallbackJournal implements ClaudeCallbackJournal {
-  constructor(private readonly database: Pick<pg.Pool, 'query'>, private readonly owner: string) {}
+  constructor(private readonly database: SqlQuery, private readonly owner: string) {}
   async read(key: string): Promise<ClaudeCallbackRecord | undefined> {
     return (await this.database.query<{ record: ClaudeCallbackRecord }>(`select record from claude_callback_receipts
       where owner_key=$1 and callback_key=$2`, [this.owner, key])).rows[0]?.record

@@ -1,4 +1,4 @@
-import { INSTALLATION_NAMES } from '../../../packages/contracts/src/installationNames.mjs'
+import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
@@ -11,9 +11,11 @@ import { pruneWorkerVersions } from './installation.mjs';
 import { readWorkerStatus } from './runtime.mjs';
 import { WORKER_UPDATE_STARTUP_TIMEOUT_MS } from './ciSmokeTiming.mjs';
 import { waitForUpdateOperation } from './updateOperation.mjs';
-import { migratePinnedCompanionLauncher } from './companionLauncher.mjs';
 import { offlineBrowserRuntimeLifecycle, rollbackBrowserRuntime, readInstalledBrowserRuntime,
   pruneBrowserRuntimeVersions } from './browserRuntimeInstall.mjs';
+import { readUpdateRecord } from './updateRecord.mjs';
+
+export { readUpdateRecord };
 
 const execute = promisify(execFile);
 const services = [INSTALLATION_NAMES.services.worker, 'foreman-ci-worker.service'];
@@ -42,23 +44,6 @@ export async function writeUpdateRecord(stateDirectory, record) {
 async function syncDirectory(directory) {
   const handle = await open(directory, 'r');
   try { await handle.sync(); } finally { await handle.close(); }
-}
-
-export async function readUpdateRecord(stateDirectory) {
-  await requirePrivateDirectory(stateDirectory);
-  const path = join(stateDirectory, 'worker-update.json');
-  try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o077)) {
-      throw new WorkerError('worker_update_state_invalid');
-    }
-    const record = JSON.parse(await readFile(path, 'utf8'));
-    if (record.format !== 1) throw new WorkerError('worker_update_state_invalid');
-    return record;
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
 }
 
 export async function locateWorkerLaunch({ stateDirectory, releaseDirectory, home = process.env.HOME,
@@ -118,27 +103,24 @@ export async function migrateWorkerService(plan, { run = execute } = {}) {
     throw new WorkerError('worker_update_service_unsupported');
   }
   const [line, node, entrypoint] = starts[0];
-  plan.previousNode ??= node;
-  const selectedNode = plan.node ?? node;
   const stable = join(plan.root, 'current', 'src', 'cli.mjs');
-  if (entrypoint === stable && node === selectedNode) {
+  if (entrypoint === stable) {
     await run('/usr/bin/systemctl', ['--user', 'daemon-reload'], options);
     return;
   }
-  if (entrypoint !== stable && entrypoint !== join(plan.previousDirectory, 'src', 'cli.mjs')) {
+  if (entrypoint !== join(plan.previousDirectory, 'src', 'cli.mjs')) {
     throw new WorkerError('worker_update_service_unsupported');
   }
   const temporary = `${plan.unitPath}.${randomUUID()}`;
   const handle = await open(temporary, 'wx', 0o600);
   try {
-    await handle.writeFile(unit.replace(line, `ExecStart=${selectedNode} ${stable} run --state ${plan.stateDirectory}`));
+    await handle.writeFile(unit.replace(line, `ExecStart=${node} ${stable} run --state ${plan.stateDirectory}`));
     await handle.sync();
   } finally { await handle.close(); }
   try {
     await rename(temporary, plan.unitPath);
     await syncDirectory(dirname(plan.unitPath));
   } finally { await rm(temporary, { force: true }); }
-  if (plan.node) await migratePinnedCompanionLauncher(plan.root, { node: selectedNode });
   await run('/usr/bin/systemctl', ['--user', 'daemon-reload'], options);
 }
 
@@ -321,7 +303,6 @@ export async function superviseWorkerUpdate(record, ports = {}) {
         await persist(plan.stateDirectory, record);
       }
       await switchPointer(plan.pointer, plan.previousDirectory);
-      if (plan.previousNode) await prepareService({ ...plan, node: plan.previousNode });
       await restartWorker();
       await ready({ stateDirectory: plan.stateDirectory, version: plan.previousVersion,
         workerInstallationId: plan.workerInstallationId });
@@ -361,6 +342,8 @@ export async function launchUpdateSupervisor(stateDirectory, { run = execute } =
     await run('/usr/bin/systemd-run', ['--user', '--collect', '--unit', unit, '--property=Type=exec',
       '--property=Restart=on-failure', '--property=RestartSec=1',
       ...(process.env.FOREMAN_INSTALL_SKIP_CI_SMOKE === '1' ? ['--setenv=FOREMAN_INSTALL_SKIP_CI_SMOKE=1'] : []),
+      // A transient unit starts with systemd's default PATH; its CI smoke runs corepack, which needs this Node.
+      `--setenv=PATH=${dirname(process.execPath)}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
       process.execPath, helper, stateDirectory], { timeout: 10_000, maxBuffer: 4096, env: environment() });
   } catch (error) {
     if (error.killed || error.signal || error.code === 'ETIMEDOUT') {

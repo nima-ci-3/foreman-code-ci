@@ -94,3 +94,20 @@ it('does not open a chat when an Agent or its connection handle is clicked, only
   expect(selectSidePanel).toHaveBeenCalledOnce()
   expect(selectSidePanel).toHaveBeenCalledWith({ kind: 'agent', nodeId: 'node-1', tab: 'chat' })
 })
+
+it('connects two Agents when one is selected and then the other', async () => {
+  const { change, selectSidePanel } = mount()
+  fireEvent.click(await screen.findByRole('button', { name: /^Node 0, / }))
+  fireEvent.click(screen.getByRole('button', { name: /^Node 1, / }))
+  await waitFor(() => expect(connected(change).map(edge => `${edge.source}>${edge.target}`)).toEqual(['node-0>node-1']))
+  expect(selectSidePanel).not.toHaveBeenCalled()
+})
+
+it('does not connect an Agent whose chat was opened to the next Agent selected', async () => {
+  const { change } = mount()
+  fireEvent.click(await screen.findByRole('button', { name: /^Node 0, / }))
+  fireEvent.click(screen.getByRole('button', { name: 'Open Node 0 chat' }))
+  fireEvent.click(screen.getByRole('button', { name: /^Node 1, / }))
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Node 1, / })).toHaveAttribute('aria-pressed', 'true'))
+  expect(change).not.toHaveBeenCalled()
+})

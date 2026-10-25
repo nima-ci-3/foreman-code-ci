@@ -45,7 +45,8 @@ export async function provisionPairedAgentRoots(pool: pg.Pool, services: PairedR
   const visited = new Set<string>()
   let pending = false
   for (const installation of services.registry.installations.list()) {
-    if (!installation.installed || installation.driverId !== 'codex' || installation.hostRef.kind !== 'device') continue
+    if (!installation.installed || installation.driverId !== configuration.harness.harness
+      || installation.hostRef.kind !== 'device') continue
     const host = installation.hostRef
     if (visited.has(host.deviceId)) continue
     const candidate = await withTransaction(pool, async sql => {
