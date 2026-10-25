@@ -44,6 +44,7 @@ import { CI_RETAINED_EXECUTORS, CiExecutorObservationError, CiRetainedExecutors,
   ciExecutorOutageLimit, ciTransportUnavailable, recordCiExecutorStatus } from './executorRecovery.js'
 import { CI_BUSY_TICKET, expireOverdueCiRuns } from './deadlines.js'
 import { ciCachedNotice, planCachedSelection, recordCiResultCache, type CachedSelection } from './resultCacheStore.js'
+import { CiResultKeys } from './resultCache.js'
 import { ciRequestKey, joinCiRequest, registerCiRequest, releaseCiRequester, releaseStoppedRun,
   spareSharedSupersession } from './requestSharing.js'
 import type { AgentSnapshots, CiCommits, CiMirrorInput, HostCiComputer, HostCiEndpoint, HostRef } from './serviceTypes.js'
@@ -99,6 +100,9 @@ export class HostCiService {
   private admitting = 0
   private readonly admissionQueue: (() => void)[] = []
   private dispatching: Promise<void> | undefined
+  private backfillingResults: Promise<void> | undefined
+  /** One result-key graph per recently finished commit, shared by its parts. */
+  private readonly keyGraphs = new Map<string, Promise<CiResultKeys>>()
   private dispatchRequested = false
   private cleaningTickets: Promise<void> | undefined
   private readonly observingRuns = new Map<string, Promise<void>>()
@@ -383,6 +387,43 @@ export class HostCiService {
     return outcome.value
   }
 
+  /** Records the passed files of unit and integration parts finished in the last two days (idempotent upserts), so
+   * results proved before per-file recording existed are reused. */
+  private async backfillResultCache() {
+    const rows = (await this.pool.query<{ record: unknown; state: string }>(
+      `select record, state from ci_runs where state in ('passed','failed') and test_results is not null
+        and created_at > now() - interval '2 days' and record->>'suite' in ('unit','integration')
+        order by created_at desc limit 3000`)).rows
+    let recorded = 0
+    for (const row of rows) {
+      const run = CiRunRecordSchema.parse(row.record)
+      await recordCiResultCache(this.pool, run, row.state, this.resultKeys(run))
+      recorded++
+    }
+    this.context.log.info({ parts: recorded }, 'CI result cache backfilled from finished parts')
+  }
+
+  /** Result cache keys for a finished part's files, computed from its commit's tree (memoized per commit and suite). */
+  private resultKeys(run: CiRunRecord) {
+    if (!this.commits.testTree || (run.suite !== 'unit' && run.suite !== 'integration')) return undefined
+    const testTree = this.commits.testTree.bind(this.commits)
+    return async (files: readonly string[]) => {
+      const id = `${run.repository}@${run.commit}`
+      let graph = this.keyGraphs.get(id)
+      if (!graph) {
+        graph = testTree(run.repository, run.commit, AbortSignal.timeout(30_000))
+          .then(tree => CiResultKeys.create(tree, AbortSignal.timeout(30_000)))
+        graph.catch(() => this.keyGraphs.delete(id))
+        this.keyGraphs.set(id, graph)
+        if (this.keyGraphs.size > 8) this.keyGraphs.delete(this.keyGraphs.keys().next().value!)
+      }
+      const keys = await graph
+      const part = run.part ?? run.suite
+      return Object.fromEntries((await Promise.all(files.map(async file => [file, (await keys.key(file, run.suite, part)).key] as const)))
+        .flatMap(([file, key]) => key ? [[file, key]] : []))
+    }
+  }
+
   /** The newest ancestor of commit on which every part of this suite passed, as a full or selector-chosen run (a run of
    * hand-picked files proves nothing about the rest; a selector run's cached files were proven by earlier passes). */
   private async passedAncestor(repository: string, suite: string, commit: string) {
@@ -522,6 +563,13 @@ export class HostCiService {
           ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}), ...(coverage ? { coverage } : {}),
           signal: AbortSignal.timeout(60_000) })
         if (picked.scope === 'affected') mainSelection = { files: picked.files, reason: picked.reason }
+        // A change that makes the selector pick everything (CI or lockfile changes) still skips test files that already
+        // passed with identical inputs: their result keys include those inputs.
+        const everyFile = input.suite === 'unit' ? inventory?.files : input.suite === 'integration' ? integration?.files : undefined
+        if (picked.scope === 'full' && everyFile?.length && this.commits.testTree) {
+          mainSelection = { files: [...everyFile], reason: `${picked.reason} Every file is selected; files that already passed `
+            + 'with identical inputs are skipped.' }
+        }
       } catch (error) {
         this.context.log.warn({ err: error, commit, suite: input.suite }, 'Main-side affected selection failed; the runner selects')
       }
@@ -1335,7 +1383,7 @@ export class HostCiService {
     }
     if (terminal && collected.run.collection === 'complete') {
       try {
-        await recordCiResultCache(this.pool, run, collected.run.state)
+        await recordCiResultCache(this.pool, run, collected.run.state, this.resultKeys(run))
       } catch (error) {
         collected.run = { ...collected.run, collection: 'pending' }
         observationError ??= error
@@ -1658,6 +1706,9 @@ export class HostCiService {
   }
 
   private async dispatchOnce() {
+    // Once per service start, in the background: record the files that finished parts already proved.
+    this.backfillingResults ??= this.context.platform.withoutCiDatabasePriority(() => this.backfillResultCache())
+      .catch(error => this.context.log.warn({ err: error }, 'CI result cache backfill failed'))
     const snapshots: PolicySnapshots = new Map()
     this.cleaningTickets ??= this.context.platform.withoutCiDatabasePriority(() => this.cancelObsoleteTickets())
       .catch(error => this.context.log.warn({ err: error }, 'CI ticket cleanup failed; retrying'))

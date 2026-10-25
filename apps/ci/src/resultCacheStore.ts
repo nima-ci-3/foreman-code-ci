@@ -82,22 +82,27 @@ export function ciCachedNotice(cached: readonly CiCachedFile[]): string {
   return lines.join('\n')
 }
 
-/** Records the files a finished, passed ticket proved: each reported passed with no skipped test, under the input key
- * it was sent with. Failed, skipped, unreported and unkeyed files are never recorded. */
-export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state: string) {
-  if (state !== 'passed' || run.gate) return
+/** Records every file a finished part proved: reported passed with no skipped test, under its input key. Only that
+ * file's own result matters, so files that passed in a failed part are recorded too; failed, skipped, unreported and
+ * unkeyed files never are. Keys come from admission or, for runs whose files the runner chose, from the commit. */
+export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state: string,
+  keysFor?: (files: readonly string[]) => Promise<Record<string, string>>) {
+  if (!['passed', 'failed'].includes(state)) return
   const row = (await pool.query<{ result_cache_keys: unknown; test_results: unknown }>(
     'select result_cache_keys,test_results from ci_runs where id=$1', [run.id])).rows[0]
-  const keys = CacheKeysSchema.safeParse(row?.result_cache_keys)
   const results = CiTestResultsSchema.safeParse(row?.test_results)
-  if (!keys.success || !results.success) return
+  if (!results.success) return
   // Results keep failed, then skipped, then passed tests: within this bound every skipped test is listed.
   const skippedListed = results.data.summary.failed + results.data.summary.skipped <= CI_TEST_RESULT_LIMITS.tests
-  const proven = Object.entries(keys.data).filter(([file]) => {
-    const reported = results.data.files.find(entry => entry.file === file)
-    if (!reported || reported.status !== 'passed' || reported.tests.some(test => test.status !== 'passed')) return false
-    return results.data.truncated ? skippedListed : reported.tests.length > 0
-  })
+  const passedFiles = results.data.files.filter(reported => reported.status === 'passed'
+    && reported.tests.every(test => test.status === 'passed')
+    && (results.data.truncated ? skippedListed : reported.tests.length > 0)).map(reported => reported.file)
+  if (!passedFiles.length) return
+  const admitted = CacheKeysSchema.safeParse(row?.result_cache_keys)
+  const keys: Record<string, string> = { ...(admitted.success ? admitted.data : {}) }
+  const missing = passedFiles.filter(file => !keys[file])
+  if (missing.length && keysFor) Object.assign(keys, await keysFor(missing))
+  const proven = passedFiles.flatMap(file => keys[file] ? [[file, keys[file]!] as const] : [])
   if (!proven.length) return
   await pool.query(`insert into ci_test_result_cache(workspace_id,repository,cache_key,file,ticket_id,commit)
     select $1,$2,proven.cache_key,proven.file,$3,$4 from unnest($5::text[],$6::text[]) as proven(file,cache_key)

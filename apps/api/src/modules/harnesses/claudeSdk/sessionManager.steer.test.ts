@@ -36,7 +36,8 @@ describe('Claude mid-turn steering', () => {
   it('refuses a steer for a turn that is not the active one', async () => {
     const { f, first, result, session } = await activeTurn()
     await expect.poll(() => f.manager.steerTurn!(session(), { prompt: 'late', clientCorrelationId: 'operator:late',
-      expectedTurnId: 'another-turn' }).then(() => 'accepted', (error: { code?: string }) => error.code))
+      expectedTurnId: 'another-turn' }).then(() => 'accepted',
+      (error: { result?: { error?: { code?: string } } }) => error.result?.error?.code))
       .toBe('CLAUDE_STEER_TURN_MISMATCH')
     void f.frames.offer({ type: 'result', session_id: 'native-session', uuid: 'result-1', user_message_uuid: first.uuid,
       subtype: 'success', is_error: false, result: 'done' })

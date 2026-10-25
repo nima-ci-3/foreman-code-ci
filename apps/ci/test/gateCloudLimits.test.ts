@@ -127,12 +127,12 @@ it('uses GitHub after checks when the unused CircleCI slots exceed a file job bu
   ])
 })
 
-it('keeps a faster free builder eligible while GitHub has an unused slot', async () => {
+it('uses an unused eligible GitHub slot before a faster free builder', async () => {
   const file = 'apps/api/test/feature.integration.test.ts'
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files: [file], durations: { [file]: 300_000 } }, unit, {}, fleet('github'),
     new Map([['builder', 0.5], ['cloud:github', 3]]))
   expect(parts.filter(part => part.suite === 'integration')).toEqual([
-    expect.objectContaining({ plannedHostKey: 'builder', files: [file], expectedDurationMs: 195_000 }),
+    expect.objectContaining({ plannedHostKey: 'github:9', files: [file], expectedDurationMs: 1_170_000 }),
   ])
 })
