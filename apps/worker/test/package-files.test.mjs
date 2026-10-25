@@ -33,10 +33,10 @@ test('reviewed build inputs must identify repository artifact JSON rather than a
 });
 
 test('packaging accepts Ubuntu x64 and rejects unqualified arm64 targets', () => {
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' };
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' };
   validateWorkerTarget(target);
   assert.throws(() => validateWorkerTarget({ ...target, arch: 'arm64' }), /qualified only for linux-x64/);
-  assert.throws(() => validateWorkerTarget({ ...target, node: 'v22.23.3' }), /Unsupported build target/);
+  assert.throws(() => validateWorkerTarget({ ...target, node: 'v24.0.0' }), /Unsupported build target/);
 });
 
 function fixture() {
@@ -69,7 +69,7 @@ test('recursive inventory retains scoped assets and licenses, excludes nested de
 });
 
 test('installer accepts scoped native paths while rejecting traversal and duplicate paths', () => {
-  const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1', rootPersistent: true, homePersistent: true };
+  const facts = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3', rootPersistent: true, homePersistent: true };
   const manifest = { format: 1, version: '0.1.0', commit: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64), protocolVersion: 1, identityFormat: 1, packageManager: 'pnpm@11.27.0', target: facts,
     files: ['src/cli.mjs', 'node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node'].map(path => ({ path, sha256: 'c'.repeat(64), size: 1 })) };
   const expected = { protocolVersion: 1, identityFormat: 1 };

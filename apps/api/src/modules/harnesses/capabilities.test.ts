@@ -8,9 +8,9 @@ const claude = ClaudeHarnessConfigurationSchema.parse({ harness: 'claude', model
   tools: [], permissionRules: [], instructions: '', mcpServers: {} })
 
 describe('harness capability descriptors', () => {
-  it('lets Codex and Claude steer the exact active turn', () => {
+  it('lets only Codex steer the exact active turn', () => {
     expect(supportsExpectedTurnSteer({ harness: 'codex' })).toBe(true)
-    expect(supportsExpectedTurnSteer({ harness: 'claude' })).toBe(true)
+    expect(supportsExpectedTurnSteer({ harness: 'claude' })).toBe(false)
     expect(supportsExpectedTurnSteer({ harness: 'opencode' })).toBe(false)
   })
 

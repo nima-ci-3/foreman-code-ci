@@ -2,10 +2,8 @@ import type { RepeatGraphCurrentState, WorkflowVersionCurrent } from '@foreman-c
 
 type ExecutionFact = RepeatGraphCurrentState['state']['executions'][number]
 type ResolutionFact = RepeatGraphCurrentState['state']['resolutions'][number]
-type NodeFact = RepeatGraphCurrentState['state']['nodes'][number]
 /** Display-only input. The current query validates the complete canonical cut. */
 export type PinnedNodeDisplayCut = { state: {
-  nodes: readonly { state: NodeFact['state']; resolution?: Pick<NonNullable<NodeFact['resolution']>, 'resolution'> }[]
   executions: readonly (Pick<ExecutionFact, 'identity' | 'state' | 'resultOutcome'> & Partial<Pick<ExecutionFact, 'tickIndex'>>)[]
   resolutions: readonly { ref: Pick<ResolutionFact['ref'], 'nodeId' | 'occurrence'>;
     value: Pick<ResolutionFact['value'], 'resolution'|'execution'|'outcome'> }[]
@@ -14,21 +12,23 @@ export type PinnedNodeDisplayCut = { state: {
 /** Linear in the bounded current cut; never scan all executions per canvas node.
  * This is only a display projection, not Run history or a scheduling decision. */
 export function pinnedNodeStates(record?: PinnedNodeDisplayCut) {
-  const states = new Map<string, { label: string; occurrenceIndex: number; attempt: number }>()
+  const states = new Map<string, { label: string; occurrenceIndex: number; attempt: number;jobOutcome?:string }>()
   if (!record) return states
-  const resolutions = new Map<string, number>()
   for (const resolution of record.state.resolutions) {
     const index = resolution.ref.occurrence?.occurrenceIndex ?? 0
-    resolutions.set(resolution.ref.nodeId, Math.max(resolutions.get(resolution.ref.nodeId) ?? 0, index))
+    const previous = states.get(resolution.ref.nodeId)
+    if (!previous || previous.occurrenceIndex <= index) states.set(resolution.ref.nodeId, {
+      label: resolution.value.resolution, occurrenceIndex: index, attempt: 0, ...('execution' in resolution.value && resolution.value.execution?.kind==='job'&&resolution.value.outcome?{jobOutcome:resolution.value.outcome}:{}),
+    })
   }
-  const executions = new Map(record.state.executions.filter(fact => !fact.tickIndex).map(fact => [fact.identity.executionId, fact]))
-  // The server selects the current activation and qualifies its native lifecycle. Attempt numbers alone
-  // cannot select it: they restart for every work activation of the same node.
-  for (const { state, resolution } of record.state.nodes) {
-    const execution = state.execution ? executions.get(state.execution.executionId) : undefined
-    states.set(state.workflowNodeId, { label: resolution?.resolution === 'excluded' ? 'excluded' : state.lifecycle,
-      occurrenceIndex: execution?.identity.occurrence?.occurrenceIndex ?? resolutions.get(state.workflowNodeId) ?? 0,
-      attempt: execution?.identity.attempt ?? 0 })
+  for (const fact of record.state.executions) {
+    if (fact.tickIndex) continue // An interval check is not the node's graph state.
+    const id = fact.identity, index = id.occurrence?.occurrenceIndex ?? 0
+    const previous = states.get(id.workflowNodeId)
+    if (!previous || index > previous.occurrenceIndex || index === previous.occurrenceIndex && id.attempt >= previous.attempt) {
+      states.set(id.workflowNodeId, { label: fact.state === 'completed' ? fact.resultOutcome ?? 'unknown' : fact.state,
+        occurrenceIndex: index, attempt: id.attempt,...(id.kind==='job'&&previous?.occurrenceIndex===index&&previous.jobOutcome?{jobOutcome:previous.jobOutcome}:{}) })
+    }
   }
   return states
 }

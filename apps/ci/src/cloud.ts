@@ -252,8 +252,7 @@ export class CloudCi {
     }
   }
 
-  // GitHub Actions is free, CircleCI spends credits: GitHub slots are offered first.
-  computers(priority = this.provider.id === 'github' ? 40 : 30): HostCiComputer[] {
+  computers(priority = 30): HostCiComputer[] {
     if (this.provider.recoveryOnly) return []
     // An org without a copy of any workspace mirror only finishes the runs it already has.
     if (this.provider.account && !this.provider.account.mirrorNames.size) return []

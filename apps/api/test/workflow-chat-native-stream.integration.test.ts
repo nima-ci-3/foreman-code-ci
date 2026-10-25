@@ -6,37 +6,8 @@ import { ControlledWorkflowProvider } from './helpers/controlledWorkflowProvider
 import { hierarchyRuntimeFixture, coordinationOutput } from './helpers/hierarchyRuntimeFixture.js'
 import { workflowChatTarget } from './helpers/workflowChatRequests.js'
 import { closeActivityReplay, eventStream } from './helpers/activityReplayFixture.js'
-import { createWorkflowExecutionChatService } from '../src/modules/collaboration/workflowChatProduction.js'
-import { workflowChatCall } from './helpers/workflowChatRequests.js'
 
 afterEach(closeActivityReplay)
-
-it('publishes an idle execution chat capability change when the remaining Run work completes', async () => {
-  const provider = new ControlledWorkflowProvider(['builder'], (node, request) => coordinationOutput(node, request,
-    node === 'master' ? { select: ['build'] } : {}))
-  const f = await currentOperatorIntegration({ executionChat: true, fixture: hierarchyRuntimeFixture(),
-    approvalNodeIds: [], collaborationPorts: {}, managerFactory: context => provider.connection(context) })
-  const drive = f.engine.start(f.f.run.id).catch(error => error)
-  let stream: Awaited<ReturnType<typeof eventStream>> | undefined
-  try {
-    await provider.entered('builder')
-    const master = (await f.runs.listRepeatExecutions(f.f.run.id)).find(row => row.execution.workflowNodeId === 'master')!.execution
-    const target = await workflowChatTarget(f, 'master', master.id)
-    expect(target.kind).toBe('workflow_execution')
-    const read = () => workflowChatCall(f, 'agent_chat_read', { target }).then(value => EngineChatReadbackSchema.parse(value))
-    expect(await read()).toMatchObject({ state: 'idle', capabilities: { queue: true } })
-    const service = createWorkflowExecutionChatService(f.db.pool, f.native)
-    const before = await service.changes(f.writer.principal, target)
-    const base = `/api/workspaces/${target.agent.workspaceId}/workflows/${target.agent.workflowId}/execution-chat`
-    stream = await eventStream(`${f.address}${base}/events?${new URLSearchParams({ target: JSON.stringify(target) })}`, f.writer.token)
-    const first = await stream.next(() => true)
-    provider.release('builder')
-    expect(await drive).not.toBeInstanceOf(Error)
-    await stream.next(event => event.cursor !== first.cursor)
-    expect((await service.changes(f.writer.principal, target)).stateCursor).not.toBe(before.stateCursor)
-    expect(await read()).toMatchObject({ state: 'idle', capabilities: { queue: false } })
-  } finally { await stream?.close(); provider.releaseAll(); await f.stop(); await drive; await f.close() }
-}, 60_000)
 
 it.each(['execution', 'consultation'] as const)('observes committed %s text while hierarchy work stays active', async kind => {
   const provider = new ControlledWorkflowProvider(['builder'], (node, request) => coordinationOutput(node, request,

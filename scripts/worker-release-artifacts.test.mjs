@@ -6,14 +6,14 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { buildWorkerReleaseArtifacts, publishInstalledWorkerArtifacts, publishTransitionArtifact, publishWorkerArtifactsToGitHub,
+import { buildWorkerReleaseArtifacts, publishInstalledWorkerArtifacts, publishWorkerArtifactsToGitHub,
   readCommittedWorkerTargets, runWorkerPublicationCommand, workerPublicationServiceTemplate } from './worker-release-artifacts.mjs'
 import { WorkerArtifactIndexSchema } from '../packages/contracts/src/workerUpdate.ts'
 import { packBrowserRuntime } from './browser-runtime-install.mjs'
 import { artifactFiles } from './worker-artifact-files.mjs'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
-const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.1' }
+const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' }
 
 test('the published release includes Ubuntu 24.04 and 26.04 with the same Node runtime', () => {
   const repository = new URL('../', import.meta.url).pathname
@@ -305,9 +305,9 @@ async function fixture(t, browserRuntimeStatus, reviewedTargets) {
   await writeFile(join(repository, 'scripts/build-worker-artifact.mjs'), '// artifact builder\n')
   await writeFile(join(repository, 'package.json'), JSON.stringify({ version: '0.0.57', packageManager: 'pnpm@11.27.0' }))
   await writeFile(join(repository, 'apps/api/package.json'), JSON.stringify({ version: '0.1.0' }))
-  const targets = reviewedTargets ?? [target, { ...target, node: 'v24.22.0' },
+  const targets = reviewedTargets ?? [target, { ...target, node: 'v22.23.2' },
     { ...target, osRelease: '26.04', libc: 'glibc-2.43' },
-    { ...target, osRelease: '26.04', libc: 'glibc-2.43', node: 'v24.22.0' }]
+    { ...target, osRelease: '26.04', libc: 'glibc-2.43', node: 'v22.23.2' }]
   for (const [index, value] of targets.entries()) {
     await writeFile(join(repository, `apps/worker/artifacts/ubuntu-${index}-target.json`), JSON.stringify(value))
   }
@@ -320,7 +320,6 @@ async function fixture(t, browserRuntimeStatus, reviewedTargets) {
   const calls = []
   const run = async (command, args, options) => {
     const selected = JSON.parse(git(['show', `${options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT}:${args[1]}`]))
-    if (args[4]) selected.node = args[4]
     calls.push({ command, args, target: selected, commit: options.env.FOREMAN_CODE_WORKER_BUILD_COMMIT })
     const output = args[2]
     await mkdir(join(output, 'src'), { recursive: true, mode: 0o700 })
@@ -403,54 +402,6 @@ test('refuses to publish an Ubuntu 24.04 Worker without a verified native browse
   }
   await assert.rejects(buildWorkerReleaseArtifacts({ ...f, run }), /Ubuntu 24.04 Worker publication requires a verified browser runtime/)
   await assert.rejects(stat(f.directory), { code: 'ENOENT' })
-
-test('publishes exact-target Node 22 transition bundles beside the current Node 24 bundle', async t => {
-  const f = await fixture(t)
-  await writeFile(join(f.repository, 'apps/worker/artifacts/node-24.22.1-linux-x64.json'), '{}')
-  execFileSync('git', ['add', 'apps/worker/artifacts/node-24.22.1-linux-x64.json'], { cwd: f.repository })
-  const commit = commitFixture(f.repository)
-  const index = await buildWorkerReleaseArtifacts({ ...f, expectedCommit: commit })
-  for (const current of index.artifacts.filter(entry => entry.target.node.startsWith('v24.'))) {
-    for (const node of ['v22.23.2', 'v22.23.3']) {
-      assert.ok(index.artifacts.some(entry => entry.target.node === node
-        && entry.target.osRelease === current.target.osRelease))
-    }
-  }
-  assert.ok(f.calls.some(call => call.args[4] === 'v22.23.3'))
-});
-
-test('publishes Node transition bundles with browsers verified against their execution runtime', async t => {
-  const f = await fixture(t)
-  await writeFile(join(f.repository, 'apps/worker/artifacts/node-24.22.1-linux-x64.json'), '{}')
-  execFileSync('git', ['add', 'apps/worker/artifacts/node-24.22.1-linux-x64.json'], { cwd: f.repository })
-  const commit = commitFixture(f.repository)
-  const index = await buildWorkerReleaseArtifacts({ ...f, expectedCommit: commit, run: async (command, args, options) => {
-    await f.run(command, args, options)
-    if (!args[4]) return
-    const output = args[2]
-    const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'))
-    const executionTarget = { ...manifest.target, node: 'v24.22.1' }
-    // The transport build made its browser for the bundle's Node 22 target; rebuild it for the execution runtime.
-    await rm(join(output, 'artifacts'), { recursive: true, force: true })
-    const browser = await browserFixture(output, executionTarget, manifest.version, commit)
-    const metadata = { format: 1, runtime: 'node', version: executionTarget.node, platform: 'linux', arch: 'x64',
-      archive: { url: 'https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz', sha256: 'a'.repeat(64), bytes: 1 },
-      nodeExecutable: { archivePath: 'node-v24.22.1-linux-x64/bin/node', sha256: 'b'.repeat(64), bytes: 1 } }
-    await writeFile(join(output, 'artifacts/node-runtime.json'), JSON.stringify(metadata))
-    manifest.runtime = { metadataPath: 'artifacts/node-runtime.json', version: metadata.version,
-      archiveSha256: metadata.archive.sha256, executableSha256: metadata.nodeExecutable.sha256 }
-    manifest.browserRuntime = browser
-    manifest.files = (await artifactFiles(output)).filter(file => file.path !== 'manifest.json')
-    await writeFile(join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  } })
-  const transitions = index.artifacts.filter(entry => entry.target.node.startsWith('v22.'))
-  assert.ok(transitions.length > 0)
-  for (const entry of transitions) {
-    const manifest = JSON.parse(await readFile(join(f.directory, entry.manifestSha256, 'manifest.json'), 'utf8'))
-    const browser = JSON.parse(await readFile(join(f.directory, entry.manifestSha256, manifest.browserRuntime.descriptorPath), 'utf8'))
-    assert.equal(browser.target.node, manifest.runtime.version)
-    assert.notEqual(browser.target.node, entry.target.node)
-  }
 })
 
 function commitFixture(repository) {
@@ -520,7 +471,7 @@ test('publishes only the changed target when other targets have verified GitHub 
   const github = { repository: 'example/worker', tag: `worker-${f.commit}` }
   const first = await buildWorkerReleaseArtifacts({ ...f, publish: async () => github })
   await writeFile(join(f.repository, 'apps/worker/artifacts/ubuntu-0-target.json'),
-    JSON.stringify({ ...target, node: 'v24.22.2' }))
+    JSON.stringify({ ...target, node: 'v22.23.4' }))
   const commit = commitFixture(f.repository)
   const calls = []
   const next = laterBuild(f)
@@ -530,7 +481,7 @@ test('publishes only the changed target when other targets have verified GitHub 
   } })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].artifacts.length, 1)
-  assert.equal(calls[0].artifacts[0].target.node, 'v24.22.2')
+  assert.equal(calls[0].artifacts[0].target.node, 'v22.23.4')
   for (let index = 1; index < second.artifacts.length; index++) {
     assert.equal(second.artifacts[index].manifestSha256, first.artifacts[index].manifestSha256)
     assert.deepEqual(second.artifacts[index].github, github)
@@ -571,13 +522,13 @@ test('a changed target rebuilds only that target and corrupted payloads are rebu
   const f = await fixture(t)
   const first = await buildWorkerReleaseArtifacts(f)
   await writeFile(join(f.repository, 'apps/worker/artifacts/ubuntu-0-target.json'),
-    JSON.stringify({ ...target, node: 'v24.22.2' }))
+    JSON.stringify({ ...target, node: 'v22.23.4' }))
   await writeFile(join(f.directory, first.artifacts[1].manifestSha256, 'src/cli.mjs'), 'corrupted')
   commitFixture(f.repository)
   const next = laterBuild(f)
   const second = await buildWorkerReleaseArtifacts(next)
   assert.equal(f.calls.length, 6)
-  assert.equal(second.artifacts[0].target.node, 'v24.22.2')
+  assert.equal(second.artifacts[0].target.node, 'v22.23.4')
   assert.equal(second.artifacts[1].contentSha256, first.artifacts[1].contentSha256)
 })
 
@@ -810,37 +761,4 @@ test('runs recovery when the service starts the script through the current relea
   const output = execFileSync(process.execPath, [join(root, 'current', 'scripts', 'worker-release-artifacts.mjs'),
     'recover', release], { encoding: 'utf8' })
   assert.match(output, /Worker artifacts published and verified on GitHub/)
-})
-
-test('publishes Node 22 transition carriers only when a Worker asks for one', async t => {
-  const f = await fixture(t)
-  await writeFile(join(f.repository, 'apps/worker/artifacts/node-24.22.1-linux-x64.json'), '{}')
-  execFileSync('git', ['add', 'apps/worker/artifacts/node-24.22.1-linux-x64.json'], { cwd: f.repository })
-  const commit = commitFixture(f.repository)
-  const index = await buildWorkerReleaseArtifacts({ ...f, expectedCommit: commit })
-  const transitions = index.artifacts.filter(entry => entry.transition)
-  assert.ok(transitions.length > 0)
-  assert.ok(transitions.every(entry => entry.target.node.startsWith('v22.')))
-  assert.ok(index.artifacts.filter(entry => !entry.transition).every(entry => entry.target.node.startsWith('v24.')))
-  const uploads = []
-  const publish = async ({ artifacts }) => {
-    uploads.push(artifacts.map(entry => entry.manifestSha256))
-    return { repository: 'example/worker', tag: `worker-${commit.slice(0, 12)}` }
-  }
-  // The release publish uploads only the bundles Workers on Node 24 use.
-  const published = await publishInstalledWorkerArtifacts({ directory: f.directory, repositoryName: 'example/worker', commit, publish })
-  assert.equal(published.publication.state, 'published')
-  assert.deepEqual(new Set(uploads[0]), new Set(index.artifacts.filter(entry => !entry.transition).map(entry => entry.manifestSha256)))
-  // A Worker on Node 22 asks for its carrier: exactly that one is uploaded and recorded as published.
-  await writeFile(join(f.repository, 'ci-smoke.json'), JSON.stringify({ repository: 'example/worker', commit }))
-  const wanted = transitions[0].manifestSha256
-  await publishTransitionArtifact({ release: f.repository, manifestSha256: wanted, publish })
-  assert.deepEqual(uploads[1], [wanted])
-  const after = JSON.parse(await readFile(join(f.directory, 'index.json'), 'utf8'))
-  WorkerArtifactIndexSchema.parse(after)
-  assert.ok(after.artifacts.find(entry => entry.manifestSha256 === wanted).github)
-  assert.ok(after.artifacts.filter(entry => entry.transition && entry.manifestSha256 !== wanted).every(entry => !entry.github))
-  // Asking again does not upload it twice.
-  await publishTransitionArtifact({ release: f.repository, manifestSha256: wanted, publish })
-  assert.equal(uploads.length, 2)
 })

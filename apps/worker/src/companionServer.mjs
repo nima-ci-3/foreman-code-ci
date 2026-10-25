@@ -64,10 +64,9 @@ export async function createCompanionServer({ stateDirectory, htmlFile = new URL
   let requiredTarget;
   let sessionManifestSha256;
   const manifestHash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-  const executionTarget = manifest => ({ ...manifest.target, node: manifest.runtime?.version ?? manifest.target?.node });
   try {
     const bytes = await readFile(manifestFile);
-    requiredTarget = executionTarget(JSON.parse(bytes));
+    requiredTarget = JSON.parse(bytes).target;
     sessionManifestSha256 = manifestHash(bytes);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
@@ -85,7 +84,7 @@ export async function createCompanionServer({ stateDirectory, htmlFile = new URL
     if (!trackInstallation) return { changed: false, target: requiredTarget };
     try {
       const bytes = await readFile(join(installationRoot, 'current/manifest.json'));
-      return { changed: manifestHash(bytes) !== sessionManifestSha256, target: executionTarget(JSON.parse(bytes)) };
+      return { changed: manifestHash(bytes) !== sessionManifestSha256, target: JSON.parse(bytes).target };
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       return { changed: true, target: undefined };

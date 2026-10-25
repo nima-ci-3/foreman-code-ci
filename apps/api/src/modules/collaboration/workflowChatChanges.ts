@@ -22,8 +22,7 @@ export async function readWorkflowChatChanges(pool: pg.Pool, owner: WorkflowChat
     const activity = (await sql.query<{ revision: string }>(`select coalesce(max(sequence),0)::text as revision
       from run_activity where run_id=$1`, [workflowTargetRunId(target)])).rows[0]!
     const observation = await owner.observe(target)
-    const stateCursor = controlDigest({ target, state: identity.state, nextTurn: identity.nextTurn ?? false,
-      runState: identity.run.execution_state, stopped: identity.run.stopped, commands, observation })
+    const stateCursor = controlDigest({ target, state: identity.state, commands, observation })
     const messages = afterRevision === undefined ? undefined : await readWorkflowNativeChat(sql, target,
       { afterRevision, limit: 100, bindings: [], messageBytes: 32 * 1024 })
     return { stateCursor, nativeRevision: native.revision, messages,

@@ -3,13 +3,6 @@ import type { CiCommits } from './service.js'
 import { ciRepositoryCapabilities } from './repository.js'
 import { onlyCiInfrastructure } from './priority.js'
 import type { CiTestTree } from './resultCache.js'
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { promisify } from 'node:util'
-import { CiSelectionSchema, type CiCoverageSelection } from '@foreman-code/contracts'
-
-const run = promisify(execFile)
 
 /** Main's clone resolves the exact source for admission; dispatch publishes it before a build computer needs it. */
 export class GitCiCommits implements CiCommits {
@@ -51,23 +44,13 @@ export class GitCiCommits implements CiCommits {
   }
 
   async coverageAncestors(repository: string, commit: string, candidates: string[]): Promise<string[]> {
-    const signal = AbortSignal.timeout(60_000)
+    const signal = AbortSignal.timeout(30_000)
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
-    const retained = new Set(candidates)
     // Date order keeps descendants ahead of parents, then orders independent branches by commit time.
-    const ancestors = async () => {
-      const result = await this.git.git(['rev-list', '--date-order', commit], { cwd: clone, signal })
-      if (result.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'rev-list')
-      return result.stdout.trim().split('\n').filter(ancestor => retained.has(ancestor))
-    }
-    const found = await ancestors()
-    if (found.length || !candidates.length) return found
-    // A just-fetched commit is a shallow boundary: deepen until the newest candidate's history connects, then read.
-    await this.context.platform.ensureCommit(this.git, repository, candidates[0]!, signal)
-    await this.context.platform.deepenUntilConnected(this.git, clone, [commit, candidates[0]!],
-      async () => (await this.git.git(['merge-base', '--is-ancestor', candidates[0]!, commit], { cwd: clone, signal })).code === 0,
-      signal)
-    return ancestors()
+    const result = await this.git.git(['rev-list', '--date-order', commit], { cwd: clone, signal })
+    if (result.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'rev-list')
+    const retained = new Set(candidates)
+    return result.stdout.trim().split('\n').filter(ancestor => retained.has(ancestor))
   }
 
   async capabilities(repository: string, commit: string) {
@@ -124,49 +107,6 @@ export class GitCiCommits implements CiCommits {
       if (blob.code !== 0) throw new Error(`Could not read ${path} from the CI commit.`)
       return blob.stdout
     } }
-  }
-
-  /** The files the commit's own affected selector picks, run here on Main so ci_run knows them before dispatch. */
-  async affectedSelection(repository: string, input: { commit: string; suite: string; defaultBranch: string
-    baseCommit?: string; coverage?: CiCoverageSelection; signal: AbortSignal }) {
-    const clone = await this.context.platform.ensureCommit(this.git, repository, input.commit, input.signal)
-    let defaultRef = input.defaultBranch
-    if (!input.baseCommit) {
-      defaultRef = await this.context.platform.fetchRepositoryBranch(this.git, clone, repository, input.defaultBranch, input.signal)
-      await this.context.platform.ensureCommit(this.git, repository, defaultRef, input.signal)
-    } else await this.context.platform.ensureCommit(this.git, repository, input.baseCommit, input.signal)
-    // Beside the clone on disk, not in /tmp (a RAM tmpfs on Main computers).
-    const directory = await mkdtemp(join(dirname(clone), '.ci-main-selection-'))
-    try {
-      // The selector and the import graph it reads come from the tested commit, as on a runner.
-      const code = join(directory, 'code')
-      await mkdir(code)
-      const archive = await this.git.git(['archive', '--format=tar', '-o', join(directory, 'code.tar'), input.commit,
-        // The selector's import graph: scripts and the workspace packages it reads (contracts, verification runner).
-        'scripts', 'packages'], { cwd: clone, signal: input.signal })
-      if (archive.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'archive')
-      await run('tar', ['-xf', join(directory, 'code.tar'), '-C', code], { signal: input.signal })
-      const coveragePath = join(directory, 'coverage.json')
-      await writeFile(coveragePath, JSON.stringify(input.coverage ?? null))
-      const script = [
-        "import { readFileSync } from 'node:fs'",
-        "import { gunzipSync } from 'node:zlib'",
-        'const [code, commit, suite, cwd, defaultRef, baseCommit, coveragePath] = process.argv.slice(1)',
-        "const { affectedSnapshot } = await import(`${code}/scripts/ci-affected.mjs`)",
-        "const { expandIntegrationCoverage } = await import(`${code}/packages/contracts/src/ciCoverage.mjs`)",
-        "const coverage = JSON.parse(readFileSync(coveragePath, 'utf8'))",
-        'const prepared = coverage ? { changedFiles: coverage.changedFiles, coverageReason: coverage.reason,',
-        "  coverageMap: coverage.map ? expandIntegrationCoverage(JSON.parse(gunzipSync(Buffer.from(coverage.map, 'base64'),",
-        '    { maxOutputLength: 64 * 1024 * 1024 }).toString())) : undefined } : undefined',
-        'console.log(JSON.stringify(affectedSnapshot(commit, suite, cwd, defaultRef, baseCommit || undefined, [], prepared)))',
-      ].join('\n')
-      const { stdout } = await run(process.execPath, ['--input-type=module', '-e', script, code, input.commit, input.suite,
-        clone, defaultRef, input.baseCommit ?? '', coveragePath], { signal: input.signal, maxBuffer: 64 * 1024 * 1024,
-        env: { ...process.env, TMPDIR: directory } })
-      return CiSelectionSchema.parse(JSON.parse(stdout))
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
   }
 
   async resolve(repository: string, defaultBranch: string, commit: string | undefined,
