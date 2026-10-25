@@ -11,6 +11,14 @@ export const schemaWorkerEntrypoint = 'apps/api/src/modules/harnesses/compatibil
 export const workerSnapshotFiles = [
   'apps/web/public/graphql.svg',
   'runtime/browser/apparmor/foreman-browser-runtime',
+  'runtime/browser/manifest.json',
+  'runtime/browser/runtime-lock.json',
+  'runtime/browser/ubuntu-24.04-x64-resolved-lock.json',
+  'runtime/browser/ubuntu-26.04-x64-resolved-lock.json',
+  'runtime/browser/LICENSES.txt',
+  'runtime/browser/licenses/MIT.txt',
+  'runtime/browser/credits.py',
+  'scripts/browser-runtime-install.mjs',
   'scripts/build-worker-artifact.mjs',
   'scripts/quota-helper-abi.mjs',
   'scripts/worker-artifact-files.mjs',
@@ -37,7 +45,7 @@ export function assertWorkerSnapshotSource(path) {
   const invalidPath = path.startsWith('/') || path.split('/').some(part => !part || part === '.' || part === '..')
   const testSource = /\.(?:test|spec)\.[cm]?[jt]s$/.test(path)
   const secretSource = /(?:^|\/)\.env(?:\.|$)|\.(?:pem|key)$|(?:^|\/)(?:credentials|secrets)\.json$/.test(path)
-  const allowedSource = path.startsWith('apps/api/src/') || path.startsWith('apps/ci/src/') || path.startsWith('apps/worker/src/')
+  const allowedSource = path === 'apps/api/src/modules/browser-runtime/bridge.py' || path === 'apps/api/src/modules/browser-runtime/skill/browser-use.md' || path.startsWith('apps/api/src/') || path.startsWith('apps/ci/src/') || path.startsWith('apps/worker/src/')
     || path.startsWith('apps/worker/artifacts/') || path.startsWith('packages/contracts/src/') || path.startsWith('packages/contracts-node/src/')
     || verificationScripts.includes(path) || workerSnapshotFiles.includes(path)
   if (forbiddenApiModule || invalidPath || testSource || secretSource || !allowedSource) {

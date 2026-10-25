@@ -56,4 +56,3 @@ export { prepareClaudeWorkflowCredentials } from './claudeSdk/workflowCredential
 export type { AppMcpRoutes } from './appMcpRoutes.js'
 export { workflowProfileSelection } from './workflowProfileSelection.js'
 export type { HostHarnessInstanceProfileChecks } from './instanceSettings/profileChecks.js'
-export type { InstalledWorkflowClaude, InstalledClaudeWorkflowCapture, InstalledWorkflowClaudeAdapter } from './installedWorkflowClaude.js'
