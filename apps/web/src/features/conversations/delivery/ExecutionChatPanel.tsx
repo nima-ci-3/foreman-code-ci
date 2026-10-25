@@ -131,7 +131,7 @@ function ExecutionChatContent(props: ExecutionChatPanelProps) {
         target={target} source={props.source} onBrowse={onBrowse} onDenied={revoke} /></Fragment>)}
       {retainedAt(-1)}
     </>}</ConversationViewport>
-    <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)}
+    <ChatDeliveryReceipts receipts={receipts.filter(receipt => receipt.state === 'queued' || receipt.state === 'unknown')} controlsReason={controlsReason} onCancel={delivery.pendingControl ? undefined : receipt => delivery.cancel(receipt.id)}
       onRefresh={delivery.refresh} />
     {pin.stale ? <Button onClick={pin.refresh}>Refresh target</Button> : null}
     {delivery.feedback ? <p role="alert">{delivery.feedback}</p> : null}

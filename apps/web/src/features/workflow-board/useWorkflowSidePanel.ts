@@ -64,9 +64,6 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
         }
         if (next.kind === 'none') delete selected.boardPanel
         else selected.boardPanel = next.kind
-        if (next.kind !== 'agent' || next.nodeId !== previous.boardNodeId || next.runId || next.executionId || next.waitingActivationId) {
-          delete selected.boardChatTarget
-        }
         if (next.kind === 'agent' || next.kind === 'browser') {
           if (next.kind === 'agent' || next.nodeId !== undefined) {
             selected.boardNodeId = next.nodeId
@@ -116,7 +113,7 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
     releaseBrowser()
     void navigate({ to: '/workspaces/$workspaceId', params: { workspaceId }, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous : ({ ...previous, workflowId,
-        boardChatTarget: undefined, boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: target.workflowVersionId, executionSemanticsVersion: 3,
+        boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: target.workflowVersionId, executionSemanticsVersion: 3,
         boardView: tab === 'details' ? 'graph' : previous.boardView, boardPanel: 'agent', boardAgentTab: tab,
         boardNodeId: target.nodeId, boardExecutionId: target.executionId,
         boardWaitingActivationId: undefined,
@@ -133,7 +130,7 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
     releaseBrowser()
     void navigate({ to: '/workspaces/$workspaceId', params: { workspaceId }, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous : ({ ...previous, workflowId,
-        boardChatTarget: undefined, boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: versionId, executionSemanticsVersion: 3,
+        boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: versionId, executionSemanticsVersion: 3,
         boardPanel: 'agent', boardAgentTab: 'chat', boardNodeId: target.agent.workflowNodeId,
         boardExecutionId: undefined, boardWaitingActivationId: target.waitingActivationId,
         runNodeId: undefined, runRelationshipId: undefined, runExchangeKey: undefined,
@@ -143,7 +140,6 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
     releaseBrowser()
     void navigate({ to: '/workspaces/$workspaceId', params: { workspaceId }, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous : ({ ...previous, workflowId,
-        boardChatTarget: target ? undefined : 'current',
         boardRunId: undefined, selectedRunId: target && !target.workflowVersionId ? target.runId : undefined,
         runId: target?.workflowVersionId ? target.runId : undefined, workflowVersionId: target?.workflowVersionId,
         executionSemanticsVersion: target?.workflowVersionId ? 3 : undefined,

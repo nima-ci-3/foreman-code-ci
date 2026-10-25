@@ -21,15 +21,14 @@ export function ChatDeliveryReceipts({ receipts, onCancel, onRefresh, onRecover,
   return <ul className="chat-delivery-receipts" aria-label="Delivery receipts">
     {receipts.map(receipt => <li key={receipt.id} title={receipt.errorCode && receipt.errorCode !== 'TARGET_SETTLED' ? receipt.errorCode : undefined}>
       <p><strong>{receipt.errorCode === 'TARGET_SETTLED' ? 'Not sent — selected turn ended' : stateLabels[receipt.state]}</strong>
-        {' · '}{receipt.state === 'queued' ? 'sends after the current turn' : deliveryTargetLabel(receipt.target)}</p>
+        {' · '}{deliveryTargetLabel(receipt.target)}</p>
       {receipt.requestedIntent !== receipt.appliedIntent && receipt.requestedIntent !== 'auto'
         ? <p>Requested: {intentLabels[receipt.requestedIntent]} · Applied: {intentLabels[receipt.appliedIntent]}</p> : null}
       {receipt.consultationId ? <p>Delegated work continues while it replies.</p> : null}
       {receipt.continuationId && !receipt.continuationExecution ? <p>Changing direction · Waiting for the continuing execution.</p> : null}
       {receipt.continuationExecution ? <p>Continuing task · A new execution is available.</p> : null}
       <div className="n-actions">
-        {receipt.state === 'queued' && onCancel ? <Button size="sm" variant="ghost" aria-label="Cancel queued message" disabled={!!controlsReason}
-          title={controlsReason} onClick={() => onCancel(receipt)}>Cancel</Button> : null}
+        {receipt.state === 'queued' && onCancel ? <Button size="sm" disabled={!!controlsReason} title={controlsReason} onClick={() => onCancel(receipt)}>Cancel queued message</Button> : null}
         {receipt.state === 'unknown' && onRefresh ? <Button size="sm" onClick={onRefresh}>Check status</Button> : null}
         {receipt.errorCode === 'TARGET_SETTLED' && onRecover ? <>
           <Button size="sm" onClick={() => onRecover(receipt, 'outside_run')}>Send outside run</Button>

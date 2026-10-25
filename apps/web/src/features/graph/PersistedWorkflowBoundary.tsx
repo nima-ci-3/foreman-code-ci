@@ -44,10 +44,8 @@ function AuthoringBoundary({ workspaceId, workflowId, updateFailures = [] }: { w
   // Polling only reports drift. It never installs a server graph over local work.
   if (edit || source.data && !source.isError) {
     // The save acknowledgement can advance the editor before its draft query refetch finishes.
-    const base = edit && (edit.context.savedDraft ?? edit.context.draft)
-    const saved = source.data && (source.data.savedDraft ?? source.data.draft)
-    const changed = !saving && base && saved && (saved.publishedRevision > base.publishedRevision
-      || saved.publishedRevision === base.publishedRevision && saved.baseWorkflowVersionId !== base.baseWorkflowVersionId)
+    const changed = !saving && edit && source.data && (source.data.draft.id !== edit.context.draft.id
+      || source.data.draft.revision > edit.context.draft.revision)
     return <>
       {changed ? <p role="status">The shared draft changed elsewhere. Your local edits and original revision are retained; reload explicitly before overwriting anything.</p> : null}
       <NextDraftEditor key={key} workspaceId={workspaceId} workflowId={workflowId} initialContext={source.data}

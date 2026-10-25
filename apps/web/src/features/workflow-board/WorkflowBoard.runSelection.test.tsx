@@ -7,17 +7,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { WorkflowRunSummarySchema } from '@foreman-code/contracts'
 import { RunBoardSnapshotGetResultSchema } from '@foreman-code/contracts/run-snapshots'
-import { GraphDraftCurrentSchema } from '@foreman-code/contracts/current'
 import { server } from '../../mocks/server'
-import { AgentChatPanel, useBoardViewportStore, useGraphDraftStore } from '../graph'
-import { versionReply } from '../run-board/testFixtures'
+import { AgentChatPanel, useBoardViewportStore } from '../graph'
 import { installFlowLayout } from '../run-board/testFlowLayout'
 import { RunsSelectorSearchSchema, useRunsSelectorUi } from '../runs-selector'
 import { useConversationDraftStore, agentChatContextKey } from '../conversations'
 import { installChatSource } from '../conversations/agentChat/testSupport'
 import { activitiesRoute, activityPage, clients, context,
   installSelectedHandlers, scope, snapshot, snapshotRoute } from '../conversations/agentChat/sch10.testSupport'
-import { boardDraftContextKey, nextDraftKey, useWorkflowBoard } from '../board-core'
+import { boardDraftContextKey, useWorkflowBoard } from '../board-core'
 import { WorkflowBoard } from './WorkflowBoard'
 
 function CurrentNavigation() { return useWorkflowBoard()?.navigationControls }
@@ -28,7 +26,6 @@ vi.mock('../workflow-files', () => ({ WorkflowFilesButton: () => null }))
 beforeEach(() => {
   // Each case opens a fresh Board; viewport memory is deliberately shared across Run visits within a case.
   useBoardViewportStore.setState({ views: {} })
-  useGraphDraftStore.getState().clearAllDrafts()
   installChatSource(); installFlowLayout(); useRunsSelectorUi.getState().setOpen(null)
 })
 afterEach(() => {
@@ -36,7 +33,6 @@ afterEach(() => {
   for (const client of clients.splice(0)) client.clear()
   useRunsSelectorUi.getState().setOpen(null)
   useConversationDraftStore.getState().clearAllDrafts()
-  useGraphDraftStore.getState().clearAllDrafts()
   localStorage.clear()
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -251,12 +247,6 @@ const liveSummary = { runId: 'run-a', shortId: 'a', startedAt: '2026-10-04T09:00
 const summariesRoute = `*/api/management/workspaces/${scope.workspaceId}/workflows/${scope.workflowId}/runs/summaries`
 function Count() { return <output aria-label="Active Runs">{useWorkflowBoard()?.activeRuns}</output> }
 async function mountWithSummaries(selectRun: () => void) {
-  const graph = versionReply(snapshot('run-a').snapshot).version.definition
-  const draft = GraphDraftCurrentSchema.parse({ ...scope, id: 'board-draft', revision: 1, publishedRevision: 1,
-    baseWorkflowVersionId: 'version-current', graph, stagedAgents: [], updatedByPrincipalId: 'owner', updatedAt: graph.createdAt ?? '2026-10-01T00:00:00Z' })
-  useGraphDraftStore.getState().installNextDraft(nextDraftKey(scope.workspaceId, scope.workflowId), { draft, agents: [] })
-  server.use(http.get('*/api/management/workspaces/:workspaceId/runs/:runId/version', ({ params }) =>
-    HttpResponse.json(versionReply(snapshot(String(params.runId)).snapshot))))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client)
   const root = createRootRoute({ component: Outlet })
   const route = createRoute({ getParentRoute: () => root, path: '/workspaces/$workspaceId', validateSearch: RunsSelectorSearchSchema,
@@ -266,7 +256,7 @@ async function mountWithSummaries(selectRun: () => void) {
     history: createMemoryHistory({ initialEntries: [`/workspaces/${scope.workspaceId}?workflowId=${scope.workflowId}`] }) })
   await router.load()
   render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
-  return { client, router }
+  return client
 }
 
 it('keeps the draft selected and reads its overlay when a Run starts later', async () => {
@@ -274,24 +264,25 @@ it('keeps the draft selected and reads its overlay when a Run starts later', asy
   const selectRun = vi.fn(), snapshotReads = vi.fn(() => HttpResponse.json(snapshot('run-a')))
   const listReads = vi.fn(() => runSummaries([]))
   server.use(http.get(summariesRoute, listReads), http.get(snapshotRoute, snapshotReads))
-  const { client } = await mountWithSummaries(selectRun)
+  const client = await mountWithSummaries(selectRun)
   await waitFor(() => expect(listReads).toHaveBeenCalled())
   expect(await screen.findByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
   server.use(http.get(summariesRoute, () => runSummaries([liveSummary])))
   await act(async () => { await client.invalidateQueries() })
   await waitFor(() => expect(screen.getByLabelText('Active Runs')).toHaveTextContent('1'))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow running · Show run' })).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument())
   expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
   await waitFor(() => expect(snapshotReads).toHaveBeenCalled())
   expect(selectRun).not.toHaveBeenCalled()
 })
 
-it('shows the live Run when the Board opens while it runs from a draft of another saved version', async () => {
+it('keeps the draft selected when the Board opens while a Run is running', async () => {
   installSelectedHandlers()
   server.use(http.get(summariesRoute, () => runSummaries([liveSummary])))
   const selectRun = vi.fn()
-  const { router } = await mountWithSummaries(selectRun)
-  expect(await screen.findByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', 'run-a')
-  expect(await screen.findByRole('group', { name: 'Removed Coder, saved agent, read only' })).toBeVisible()
-  expect(router.state.location.search.selectedRunId).toBe('run-a')
+  await mountWithSummaries(selectRun)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument())
+  expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
+  expect(selectRun).not.toHaveBeenCalled()
 })
