@@ -5,7 +5,6 @@ import { jobQueueHasExecution } from '@foreman-code/contracts/job-admission'
 import { Button, Icon, type IconName } from '../../../shared/ui/nocturne'
 import { JobResult, JobQueueFacts, jobError, useWorkflowJobHistory, useWorkflowJobQueue } from '../../jobs'
 import { formatDuration } from '../../resource-telemetry'
-import { useComputerName } from '../../../shared/api/computerActivity'
 
 function createJobsPanelStore() {
   type SelectedJob = Pick<JobExecutionRecord, 'id' | 'initiatingAgent'> & { definitionVersionId: string }
@@ -95,21 +94,20 @@ function relativeTime(value: string) {
 }
 
 function JobRow({ name, execution, onClick }: { name: string; execution: JobExecutionRecord; onClick(): void }) {
-  const computerName = useComputerName()
   const status = jobStatus(execution)
   const duration = execution.startedAt
     ? formatDuration(Math.max(0, Date.parse(execution.finishedAt ?? execution.updatedAt) - Date.parse(execution.startedAt)))
     : '—'
   const label = execution.initiatingAgent && !name.startsWith('CI: ') ? `CI: ${name}` : name
-  const target = execution.acceptedSpec.target
-  const computer = target.labelAtAcceptance ?? computerName(target)
   return <Button className="board-job-row" size="sm" variant="ghost" onClick={onClick}>
     <span className="board-job-name" title={label}>{label}</span>
     <span className={`board-job-status board-job-status-${status.tone}`} aria-label={status.label} title={status.label}>
       <Icon name={status.icon} size={15} />
     </span>
     <span title={execution.finishedAt ? 'Duration' : 'Duration through last result update'}>{duration}</span>
-    <span className="board-job-computer" title={computer}>{computer}</span>
+    <span className="board-job-computer" title={execution.acceptedSpec.target.labelAtAcceptance}>
+      {execution.acceptedSpec.target.labelAtAcceptance}
+    </span>
     <time dateTime={execution.createdAt} title={new Date(execution.createdAt).toLocaleString()}>
       {relativeTime(execution.createdAt)}
     </time>

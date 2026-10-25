@@ -1,5 +1,4 @@
 import type { AcceptedProviderAccountBinding } from '@foreman-code/contracts/provider-accounts'
-import { useComputerName } from '../../shared/api/computerActivity'
 import { useProtectedAccessError } from '../../shared/api/useProtectedAccessError'
 import { Button } from '../../shared/ui/nocturne'
 import { useProviderAccount, useProviderAccountDetails } from './providerAccountsQueries'
@@ -14,7 +13,6 @@ export function PinnedProviderAccount({ binding, label = 'Saved account' }: {
   // A legacy profile is shown by its account's name, never by its internal profile reference.
   const legacy = useProviderAccountDetails(binding?.kind === 'legacy-profile' ? binding.accountId : undefined)
   const legacyName = legacy.isError ? undefined : legacy.data?.name
-  const computerName = useComputerName()
   if (!binding) return <p className="pinned-provider-account">{label}: not recorded.</p>
   if (binding.kind === 'legacy-profile') return <p className="pinned-provider-account">{label}: {legacyName
     ? <><strong>{legacyName}</strong> · {binding.provider}</> : binding.provider}</p>
@@ -22,9 +20,8 @@ export function PinnedProviderAccount({ binding, label = 'Saved account' }: {
   const unavailable = !account || Boolean(account.removedAt) || account.status === 'unavailable'
   return <section className="pinned-provider-account" aria-label={label}>
     <p>{label}: <strong>{account?.name ?? binding.accountId}</strong> · {binding.provider}</p>
-    <p>Computer: <strong>{computerName(target) ?? (target.hostRef.kind === 'main' ? 'Main' : 'Worker')}</strong></p>
-    <details><summary>Identity</summary><p>{target.hostRef.kind === 'main' ? target.hostRef.mainId : target.hostRef.deviceId}
-      · Installation {target.applicationInstallationId}</p></details>
+    <p>{target.hostRef.kind === 'main' ? 'Main' : 'Worker'} · {target.hostRef.kind === 'main'
+      ? target.hostRef.mainId : target.hostRef.deviceId} · Installation {target.applicationInstallationId}</p>
     {binding.subject ? <p>Provider identity recorded at acceptance: {binding.subject.subject}</p>
       : <p>Provider identity at acceptance is unknown.</p>}
     {query.isPending ? <p role="status">Reading the saved account…</p> : null}

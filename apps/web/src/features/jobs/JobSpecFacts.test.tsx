@@ -1,22 +1,7 @@
-import type { ReactElement } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render as renderView, screen } from '@testing-library/react'
-import { http, HttpResponse } from 'msw'
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { server } from '../../mocks/server'
+import { render, screen } from '@testing-library/react'
+import { expect, it } from 'vitest'
 import { JobQueueFacts } from './JobSpecFacts'
 import { autoQueueTicket, definition, verificationQueueTicket } from './fixtures'
-
-let client: QueryClient
-beforeEach(() => {
-  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  server.use(http.get('*/api/management/computers/activity', () => HttpResponse.json({
-    mainId: definition.spec.target.hostRef.mainId, computers: [], cloud: [], truncated: false, activityComplete: true,
-  })))
-})
-afterEach(() => { cleanup(); client.clear() })
-const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
-const render = (ui: ReactElement) => renderView(ui, { wrapper })
 
 it('shows the saved job name, verification suite and request identity before acceptance', () => {
   render(<JobQueueFacts ticket={verificationQueueTicket} />)
@@ -40,16 +25,4 @@ it.each(['accepted', 'terminal'] as const)('shows the original computer for %s t
   expect(screen.getByText('Accepted computer')).toBeInTheDocument()
   expect(screen.getByText('Build laptop')).toBeInTheDocument()
   expect(screen.getByText('Preferred computer')).toBeInTheDocument()
-})
-
-it('names an explicit computer accepted without a label by its current name', async () => {
-  const { labelAtAcceptance: _label, ...target } = { ...definition.spec.target,
-    hostRef: { kind: 'device' as const, mainId: definition.spec.target.hostRef.mainId, deviceId: '22222222-2222-4222-8222-222222222222' } }
-  void _label
-  server.use(http.get('*/api/management/computers/activity', () => HttpResponse.json({ mainId: target.hostRef.mainId,
-    computers: [{ target: { hostRef: target.hostRef, applicationInstallationId: '33333333-3333-4333-8333-333333333333',
-      keyRevision: 1, authorizationRevision: 1 }, online: true, name: 'Office laptop', jobs: [], agents: [] }],
-    cloud: [], truncated: false, activityComplete: true })))
-  render(<JobQueueFacts ticket={{ ...verificationQueueTicket, placement: { kind: 'explicit', target } }} />)
-  expect(await screen.findByText('Office laptop')).toBeVisible()
 })

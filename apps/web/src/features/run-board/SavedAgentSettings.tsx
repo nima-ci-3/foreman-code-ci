@@ -21,14 +21,12 @@ export function SavedAgentSettings({ snapshot, definition, nodeId }: {
     staleTime: Infinity,
   })
   return <section aria-label="Saved Agent settings"><h3>{node?.name ?? nodeId}</h3>
-    <p>This Run keeps its saved Agent configuration. Changes apply to the next Run.</p>
-    <Button size="sm" onClick={() => board?.selectRun()}>Change settings for the next Run</Button>
-    <details><summary>This Run’s saved settings</summary>
-      {savedNode ? <JsonValue label="Saved node settings" value={savedNode} /> : <p>Saved node settings unavailable.</p>}
-      {agent ? configuration.isError ? <p role="status">Saved Agent configuration unavailable. <Button size="sm"
-        onClick={() => void configuration.refetch()}>Retry configuration</Button></p>
-        : configuration.data ? <JsonValue label="Saved Agent configuration" value={configuration.data} />
-          : <p role="status">Loading saved Agent configuration…</p> : null}
-    </details>
+    <p>This Run keeps its saved Agent configuration. Edits to the current workflow apply to future Runs.</p>
+    {savedNode ? <JsonValue label="Saved node settings" value={savedNode} /> : <p>Saved node settings unavailable.</p>}
+    {agent ? configuration.isError ? <p role="status">Saved Agent configuration unavailable. <Button size="sm"
+      onClick={() => void configuration.refetch()}>Retry configuration</Button></p>
+      : configuration.data ? <JsonValue label="Saved Agent configuration" value={configuration.data} />
+        : <p role="status">Loading saved Agent configuration…</p> : null}
+    <Button size="sm" onClick={() => board?.selectRun()}>Edit current workflow</Button>
   </section>
 }
