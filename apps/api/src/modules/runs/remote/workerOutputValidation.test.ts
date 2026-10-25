@@ -116,7 +116,8 @@ describe('Worker output validation', () => {
     const terminals = new Map<string, NonNullable<NativeHistory['terminalTurn']>>()
     vi.spyOn(CodexAppServerSessionManager.prototype, 'reconcile').mockImplementation(async (_session, correlationId) => {
       const terminal = terminals.get(correlationId)
-      const { terminalTurn: _turn, terminalResult: _result, ...history } = structuredClone(f.history)
+      const history = structuredClone(f.history)
+      delete history.terminalTurn; delete history.terminalResult
       return { ...history, correlationId, ...(terminal ? { terminalTurn: terminal, terminalResult: terminal.result } : {}) }
     })
     f.turns.mockImplementation(async function* (session, input) {
