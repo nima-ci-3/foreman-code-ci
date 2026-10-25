@@ -51,13 +51,15 @@ const partitionIssue = { message: 'Only the integration suite can be partitioned
 const selectionIssue = { message: 'Selected files require an explicit commit, affected scope and a supported suite.', path: ['scope'] }
 const selectedSuite = (value: z.infer<typeof CiRunInputObjectSchema>) => validCiSelection(value)
   && ((value.scope ?? 'affected') !== 'affected' || value.files === undefined || value.commit !== undefined)
+/** A gate covers every release suite. Affected scope (the default) runs each test file without a passing result at its
+ * current inputs plus every file no key can prove; full scope runs everything. */
 const validGate = (value: z.infer<typeof CiRunInputObjectSchema>) => !value.gate
-  || (value.suite === 'integration' && value.scope === 'full' && value.files === undefined && value.partitions === undefined)
+  || (value.suite === 'integration' && value.scope !== undefined && value.files === undefined && value.partitions === undefined)
 const validSmoke = (value: z.infer<typeof CiRunInputObjectSchema>) => !value.smokeComputer
   || (['unit', 'integration'].includes(value.suite) && value.scope === 'affected' && value.commit !== undefined
     && value.files?.length === 1 && !value.gate && value.partitions === undefined)
 const smokeIssue = { message: 'Computer smoke requires unit/integration, affected scope, commit and one file.', path: ['smokeComputer'] }
-const gateIssue = { message: 'A gate requires integration, full scope, and no files or partition limit.', path: ['gate'] }
+const gateIssue = { message: 'A gate requires integration, an explicit scope, and no files or partition limit.', path: ['gate'] }
 export const CiRunInputSchema = CiRunInputObjectSchema.refine(partitionedSuite, partitionIssue)
   .refine(selectedSuite, selectionIssue)
   .refine(validGate, gateIssue)

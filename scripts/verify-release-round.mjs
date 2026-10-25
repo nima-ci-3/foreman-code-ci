@@ -84,7 +84,9 @@ export async function releaseRoundProblems(call, workspaceId, commit, cwd = proc
   return problems
 }
 
-/** A full gate covers every release suite; each part passed or has a validated explicit rerun. */
+/** A gate covers every release suite; each part passed or has a validated explicit rerun. A proven gate (the default)
+ * runs typecheck and lint in full and only the unit and integration files without a passing result at their current
+ * inputs: a suite whose files were all proven has no part, and the group records the proofs in cachedFiles. */
 export async function gateRoundProblems(call, workspaceId, tickets, parent, { reruns = new Map(), cwd = process.cwd() } = {}) {
   if (!tickets.length) return ['No clean gate round is recorded.']
   const found = await call('ci_get', { workspaceId, ticketId: tickets[0] }).catch(error => ({ error }))
@@ -101,7 +103,8 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
   for (const run of group) {
     const label = `gate ${run.suite} ticket ${run.id}`
     if (run.gate !== true) problems.push(`${label} is not a gate run.`)
-    if (run.scope !== 'full') problems.push(`${label} ran with ${run.scope} scope, not full.`)
+    const proven = run.suite === 'unit' && run.scope === 'affected' && run.selection?.reason?.startsWith('Proven gate')
+    if (run.scope !== 'full' && !proven) problems.push(`${label} ran with ${run.scope} scope, not full.`)
     if (run.commit !== parent) problems.push(`${label} tested ${run.commit}, not the released code ${parent}.`)
     const replacement = reruns.get(run.id)
     if (replacement) {
@@ -111,8 +114,14 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
       problems.push(`${label} ${run.state}.`)
     }
   }
+  const provenGate = group.some(run => run.selection?.reason?.startsWith('Proven gate'))
+  const cached = group.flatMap(run => run.cachedFiles ?? [])
   for (const suite of RELEASE_SUITES) {
-    if (!group.some(run => run.suite === suite)) problems.push(`The gate round has no ${suite} part.`)
+    if (group.some(run => run.suite === suite)) continue
+    // Every file of a test suite can be proven by earlier passes at identical inputs.
+    const provedSuite = provenGate && ['unit', 'integration'].includes(suite) && cached.some(item =>
+      suite === 'integration' ? /\.integration\.test\.ts$/u.test(item.file) : !/\.integration\.test\.ts$/u.test(item.file))
+    if (!provedSuite) problems.push(`The gate round has no ${suite} part.`)
   }
   return problems
 }

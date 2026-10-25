@@ -97,7 +97,18 @@ export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state
   const passedFiles = results.data.files.filter(reported => reported.status === 'passed'
     && reported.tests.every(test => test.status === 'passed')
     && (results.data.truncated ? skippedListed : reported.tests.length > 0)).map(reported => reported.file)
+  // A file that failed reruns until it passes; a pass clears its failure.
+  const failedFiles = results.data.files.filter(reported => reported.status === 'failed'
+    || reported.tests.some(test => test.status === 'failed')).map(reported => reported.file)
+  if (failedFiles.length) {
+    await pool.query(`insert into ci_test_failures(workspace_id,repository,suite,file,ticket_id,commit)
+      select $1,$2,$3,file,$4,$5 from unnest($6::text[]) as failed(file)
+      on conflict (workspace_id,repository,suite,file) do update set ticket_id=excluded.ticket_id, commit=excluded.commit,
+        failed_at=now()`, [run.workspaceId, run.repository, run.suite, run.id, run.commit, failedFiles])
+  }
   if (!passedFiles.length) return
+  await pool.query('delete from ci_test_failures where workspace_id=$1 and repository=$2 and suite=$3 and file=any($4::text[])',
+    [run.workspaceId, run.repository, run.suite, passedFiles])
   const admitted = CacheKeysSchema.safeParse(row?.result_cache_keys)
   const keys: Record<string, string> = { ...(admitted.success ? admitted.data : {}) }
   const missing = passedFiles.filter(file => !keys[file])
@@ -111,4 +122,11 @@ export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state
   [run.workspaceId, run.repository, run.id, run.commit, proven.map(([file]) => file), proven.map(([, key]) => key)])
   await pool.query(`delete from ci_test_result_cache where workspace_id=$1 and passed_at < now() - interval '30 days'`,
     [run.workspaceId])
+}
+
+/** Test files of the suite whose latest result was a failure. */
+export async function failedTestFiles(pool: pg.Pool, input: { workspaceId: string; repository: string; suite: string }) {
+  return new Set((await pool.query<{ file: string }>(
+    'select file from ci_test_failures where workspace_id=$1 and repository=$2 and suite=$3',
+    [input.workspaceId, input.repository, input.suite])).rows.map(row => row.file))
 }

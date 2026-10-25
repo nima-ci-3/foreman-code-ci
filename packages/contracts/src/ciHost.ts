@@ -148,7 +148,8 @@ const CiHostStartSchema = z.object({
   /** Printed at the top of the run log, such as the selected files the result cache skipped. */
   notice: z.string().max(CI_LOG_MAX_BYTES).optional(),
 }).strip().refine(value => value.gate
-  ? value.suite === 'integration' && value.scope === 'full' && !!value.files?.length && !value.partition && !value.part
+  ? value.suite === 'integration' && (value.scope === 'full' || value.scope === 'affected') && !!value.files?.length
+    && !value.partition && !value.part
     && value.integrationShards !== undefined && value.files.every(file => /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(file))
   : validCiSelection(value) && value.integrationShards === undefined,
   'Gate jobs require full integration scope, assigned files and a shard count; other selections require affected scope.')

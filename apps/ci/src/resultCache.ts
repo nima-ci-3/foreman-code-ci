@@ -90,8 +90,9 @@ export class CiResultKeys {
   private readonly environments = new Map<string, string[]>()
   private readonly directories = new Set<string>()
 
-  private constructor(private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
-    private readonly ciExports: Record<string, unknown>, private readonly packages: ReadonlySet<string>, private readonly signal: AbortSignal) {
+  private constructor(private readonly source: CiTestTree, private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
+    private readonly workspacePackages: ReadonlyMap<string, { directory: string; exports: Record<string, unknown> }>,
+    private readonly packages: ReadonlySet<string>, private readonly signal: AbortSignal) {
     for (const path of tree.blobs.keys()) {
       const parts = path.split('/')
       for (let index = 1; index < parts.length; index++) this.directories.add(parts.slice(0, index).join('/'))
@@ -116,8 +117,15 @@ export class CiResultKeys {
         }
       }
     }
-    return new CiResultKeys(tree, exportsOf(manifests, 'packages/contracts/package.json'),
-      exportsOf(manifests, 'apps/ci/package.json'), packages, signal)
+    // Every workspace package resolves through its own exports to its sources, as tests run them.
+    const workspacePackages = new Map(manifests.flatMap(manifest => typeof manifest.value.name === 'string'
+      ? [[manifest.value.name, { directory: posix.dirname(manifest.path), exports: exportsOf(manifests, manifest.path) }] as const] : []))
+    return new CiResultKeys(input, tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
+  }
+
+  /** The same commit's keys under another deadline, for a graph that outlives the work that built it. */
+  bounded(signal: AbortSignal) {
+    return new CiResultKeys(this.source, boundedTree(this.source, signal), this.exports, this.workspacePackages, this.packages, signal)
   }
 
   /** The file's key for the suite and part, or null with the reason it must run. */
@@ -222,11 +230,18 @@ export class CiResultKeys {
     const edges: string[] = []
     for (const specifier of analysis.specifiers) {
       const relative = specifier.startsWith('.') || specifier.startsWith('/')
-      const ci = packageName(specifier) === '@foreman-code/ci'
-      if (relative || ci || packageName(specifier) === '@foreman-code/contracts') {
+      const name = packageName(specifier)
+      const workspace = !relative && name !== '@foreman-code/contracts' ? this.workspacePackages.get(name) : undefined
+      if (relative || workspace || name === '@foreman-code/contracts') {
         const target = specifier.startsWith('/') ? null
-          : ci ? this.ciSource(file, specifier) : resolveImport(file, specifier, this.tree.blobs, this.exports)
-        if (!target) throw new CacheDoubt(`${file} imports ${specifier}, which is not a repository file.`)
+          : workspace ? this.workspaceSource(file, specifier, name, workspace) : resolveImport(file, specifier, this.tree.blobs, this.exports)
+        if (!target) {
+          // Runner scripts and configs are hashed by content as environment files; a name they mention that is not a
+          // repository file (documentation text, a generated module) adds nothing to follow. A test's own closure
+          // must prove every import.
+          if (!strict) continue
+          throw new CacheDoubt(`${file} imports ${specifier}, which is not a repository file.`)
+        }
         edges.push(target)
       } else if (strict && !specifier.startsWith('node:') && !isBuiltin(specifier) && !this.packages.has(packageName(specifier))) {
         // Aliases, virtual modules and workspace packages other than contracts have no edge the key can follow.
@@ -245,13 +260,16 @@ export class CiResultKeys {
     return edges
   }
 
-  /** The CI package source an `@foreman-code/ci/<module>` specifier names through the package's exports. */
-  private ciSource(file: string, specifier: string): string | null {
-    const entry = this.ciExports[`.${specifier.slice('@foreman-code/ci'.length)}`]
-    const path = typeof entry === 'string' ? entry
-      : entry && typeof entry === 'object' && 'import' in entry && typeof entry.import === 'string' ? entry.import : undefined
+  /** The workspace package source a `<package>/<module>` specifier names through the package's exports (built `dist`
+   * paths map to their `src` sources, as tests run them). */
+  private workspaceSource(file: string, specifier: string, name: string,
+    workspace: { directory: string; exports: Record<string, unknown> }): string | null {
+    const entry = workspace.exports[`.${specifier.slice(name.length)}`]
+    const conditions = entry && typeof entry === 'object' ? entry as Record<string, unknown> : undefined
+    const path = typeof entry === 'string' ? entry : [conditions?.import, conditions?.default, conditions?.types]
+      .find((value): value is string => typeof value === 'string')
     if (!path) return null
-    const target = `apps/ci/${path.replace(/^\.\//, '').replace(/^dist\//, 'src/')}`
+    const target = `${workspace.directory}/${path.replace(/^\.\//, '').replace(/^dist\//, 'src/')}`
     return resolveImport(file, `./${posix.relative(posix.dirname(file), target)}`, this.tree.blobs, {})
   }
 

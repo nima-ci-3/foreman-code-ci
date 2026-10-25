@@ -43,7 +43,7 @@ import { ciExecutionRunId } from './executionAttempt.js'
 import { CI_RETAINED_EXECUTORS, CiExecutorObservationError, CiRetainedExecutors,
   ciExecutorOutageLimit, ciTransportUnavailable, recordCiExecutorStatus } from './executorRecovery.js'
 import { CI_BUSY_TICKET, expireOverdueCiRuns } from './deadlines.js'
-import { ciCachedNotice, planCachedSelection, recordCiResultCache, type CachedSelection } from './resultCacheStore.js'
+import { ciCachedNotice, failedTestFiles, planCachedSelection, recordCiResultCache, type CachedSelection } from './resultCacheStore.js'
 import { CiResultKeys } from './resultCache.js'
 import { ciRequestKey, joinCiRequest, registerCiRequest, releaseCiRequester, releaseStoppedRun,
   spareSharedSupersession } from './requestSharing.js'
@@ -417,10 +417,17 @@ export class HostCiService {
         this.keyGraphs.set(id, graph)
         if (this.keyGraphs.size > 8) this.keyGraphs.delete(this.keyGraphs.keys().next().value!)
       }
-      const keys = await graph
       const part = run.part ?? run.suite
-      return Object.fromEntries((await Promise.all(files.map(async file => [file, (await keys.key(file, run.suite, part)).key] as const)))
-        .flatMap(([file, key]) => key ? [[file, key]] : []))
+      try {
+        // The shared graph's build deadline has passed by the time later parts finish; each call gets its own.
+        const keys = (await graph).bounded(AbortSignal.timeout(60_000))
+        return Object.fromEntries((await Promise.all(files.map(async file => [file, (await keys.key(file, run.suite, part)).key] as const)))
+          .flatMap(([file, key]) => key ? [[file, key]] : []))
+      } catch (error) {
+        // The part's admitted keys are still recorded; these files run again next time.
+        this.context.log.warn({ err: error, ticketId: run.id }, 'CI result cache keys failed for a finished part')
+        return {}
+      }
     }
   }
 
@@ -556,6 +563,8 @@ export class HostCiService {
     // never starts a job, and test files that already passed with identical inputs are skipped and the files this run
     // proves are recorded. Any failure leaves the selection to the runner.
     let mainSelection: { files: string[]; reason: string } | undefined
+    let cache: CachedSelection | undefined
+    const partOf = (file: string) => input.suite === 'unit' && capabilities.parts ? unitPartOf(file, inventory?.heavy ?? []) : input.suite
     if (deriveFiles && !input.gate && !smokeTarget && ['unit', 'integration', 'typecheck', 'lint'].includes(input.suite)
       && this.commits.affectedSelection) {
       try {
@@ -563,12 +572,21 @@ export class HostCiService {
           ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}), ...(coverage ? { coverage } : {}),
           signal: AbortSignal.timeout(60_000) })
         if (picked.scope === 'affected') mainSelection = { files: picked.files, reason: picked.reason }
-        // A change that makes the selector pick everything (CI or lockfile changes) still skips test files that already
-        // passed with identical inputs: their result keys include those inputs.
+        // Test suites run every file without a passing result at its current inputs: a test that failed, changed or
+        // imports a change has no proof for its new key and runs; everything else is skipped. Files whose inputs no key
+        // can prove run when the change affects them or their latest result failed.
         const everyFile = input.suite === 'unit' ? inventory?.files : input.suite === 'integration' ? integration?.files : undefined
-        if (picked.scope === 'full' && everyFile?.length && this.commits.testTree) {
-          mainSelection = { files: [...everyFile], reason: `${picked.reason} Every file is selected; files that already passed `
-            + 'with identical inputs are skipped.' }
+        if (everyFile?.length && this.commits.testTree) {
+          const testTree = this.commits.testTree.bind(this.commits)
+          const affected = new Set(picked.scope === 'full' ? everyFile : picked.files)
+          const failed = await failedTestFiles(this.pool, { workspaceId: scope.workspaceId, repository, suite: input.suite })
+          const proof = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
+            suite: input.suite, files: everyFile, tree: signal => testTree(repository, commit, signal), partOf })
+          const run = proof.files.filter(file => proof.keys[file] !== undefined || affected.has(file) || failed.has(file))
+          cache = { files: run, cached: proof.cached,
+            keys: Object.fromEntries(run.flatMap(file => proof.keys[file] ? [[file, proof.keys[file]!]] : [])) }
+          mainSelection = { files: run, reason: `${picked.reason} Runs the tests without a passing result at their current `
+            + `inputs, plus unkeyed tests the change affects or that failed last; ${proof.cached.length} proven files are skipped.` }
         }
       } catch (error) {
         this.context.log.warn({ err: error, commit, suite: input.suite }, 'Main-side affected selection failed; the runner selects')
@@ -579,22 +597,22 @@ export class HostCiService {
     if (mainSelection) { deriveFiles = false; coverage = undefined }
     const explicitFiles = input.files ?? mainSelection?.files
     const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? explicitFiles : [] }
-    // Gates, full scope and smoke runs always run every file; only explicit affected test selections use the cache.
-    let cache: CachedSelection | undefined
-    if (!input.gate && !smokeTarget && selectionScope === 'affected' && explicitFiles?.length && this.commits.testTree
+    // Explicit affected selections use the cache; full scope runs every file. A smoke run proves its file on one
+    // computer, so its proofs are per computer: a computer that already passed the file at these inputs skips it.
+    if (!cache && !input.gate && selectionScope === 'affected' && explicitFiles?.length && this.commits.testTree
       && (input.suite === 'unit' || input.suite === 'integration')) {
       const testTree = this.commits.testTree.bind(this.commits)
       cache = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
         suite: input.suite, files: explicitFiles, tree: signal => testTree(repository, commit, signal),
-        partOf: file => input.suite === 'unit' && capabilities.parts ? unitPartOf(file, inventory?.heavy ?? []) : input.suite })
-      selection.files = cache.files
+        partOf: smokeTarget ? () => `smoke:${smokeTarget.key}` : partOf })
     }
+    if (cache) selection.files = cache.files
     const cachedFiles = cache?.cached.length ? cache.cached : undefined
     const empty = selectionScope === 'affected' && selection.files?.length === 0
     const split = input.suite === 'integration' ? capabilities.integrationPartitions : capabilities.parts
     let parts: { part: CiRunRecord['part']; partition: CiRunRecord['partition']; files: string[];
       expectedDurationMs?: number; suite?: CiRunRecord['suite']; plannedHostKey?: string;
-      integrationShards?: number; requiresBuildComputer?: boolean }[] = split ? planCiParts(selection, unitDurations, inventory)
+      integrationShards?: number; requiresBuildComputer?: boolean; scope?: CiRunRecord['scope'] }[] = split ? planCiParts(selection, unitDurations, inventory)
       : [{ part: null, partition: null, files: selection.files ?? [] }]
     let smokeShards: number | undefined
     if (smokeTarget && input.suite === 'integration') {
@@ -620,14 +638,29 @@ export class HostCiService {
           }
         }
       }
-      parts = [{ part: null, partition: null, files: input.files! }]
+      parts = [{ part: null, partition: null, files: selection.files ?? input.files! }]
     } else if (input.gate) {
       const speeds = await readExecutorSpeeds(this.pool, planning)
       timing.mark('speedsMs')
       const slots = await readCiSlots(this.context, this.pool, planning)
       timing.mark('slotsMs')
-      parts = await planCiGate(this.context, input, { ...integration!, durations: durations! }, inventory!, unitDurations, planning,
-        speeds, this.reservedCloudSlots, slots.ordinary, slots.usedByComputer)
+      // The default (affected) gate proves every test file: each one runs unless it already passed at its current
+      // inputs, and files no key can prove always run. Full scope runs everything.
+      let gateIntegration = integration!, gateUnit = inventory!
+      if (selectionScope === 'affected' && this.commits.testTree) {
+        const testTree = this.commits.testTree.bind(this.commits)
+        const prove = (suite: 'unit' | 'integration', files: readonly string[]) => planCachedSelection(this.context, this.pool,
+          { workspaceId: scope.workspaceId, repository, commit, suite, files, tree: signal => testTree(repository, commit, signal),
+            partOf: file => suite === 'unit' ? unitPartOf(file, inventory?.heavy ?? []) : 'integration' })
+        const [unitProof, integrationProof] = await Promise.all([prove('unit', inventory!.files), prove('integration', integration!.files)])
+        gateUnit = { ...inventory!, files: unitProof.files }
+        gateIntegration = { ...integration!, files: integrationProof.files }
+        cache = { files: [...unitProof.files, ...integrationProof.files], keys: { ...unitProof.keys, ...integrationProof.keys },
+          cached: [...unitProof.cached, ...integrationProof.cached] }
+        timing.mark('gateProofMs')
+      }
+      parts = await planCiGate(this.context, input, { ...gateIntegration, durations: durations! }, gateUnit, unitDurations, planning,
+        speeds, this.reservedCloudSlots, slots.ordinary, slots.usedByComputer, selectionScope === 'affected')
     } else if (integration) {
       const slots = await readCiSlots(this.context, this.pool, planning)
       parts = planIntegrationParts(selection, { ...integration, durations: durations! }, slots.eligible, slots.ordinary)
@@ -641,6 +674,8 @@ export class HostCiService {
     if (selectionScope === 'full') selectionReason = 'Full scope requested; every file in the suite or partition runs.'
     if (deriveFiles) selectionReason = 'Affected files will be selected on the runner.'
     if (mainSelection) selectionReason = mainSelection.reason
+    if (input.gate && selectionScope === 'affected') selectionReason = 'Proven gate: every test file without a passing result '
+      + `at its current inputs runs (files no key can prove always run); ${cache?.cached.length ?? 0} proven files are skipped.`
     const runs = parts.map((planned, index) => CiRunRecordSchema.parse({
       ...planned,
       ...(index === 0 && cachedFiles ? { cachedFiles } : {}),
@@ -648,8 +683,9 @@ export class HostCiService {
       ...(smokeTarget ? { plannedHostKey: smokeTarget.key,
         ...(smokeShards !== undefined ? { integrationShards: smokeShards } : {}) } : {}),
       id: randomUUID(), workspaceId: scope.workspaceId,
-      suite: planned.suite ?? input.suite, scope: selectionScope, commit, repository, groupId,
-      selection: { scope: selectionScope, files: planned.files ?? explicitFiles ?? [], reason: selectionReason },
+      suite: planned.suite ?? input.suite, scope: input.gate ? planned.scope ?? 'full' : selectionScope, commit, repository, groupId,
+      selection: { scope: input.gate ? planned.scope ?? 'full' : selectionScope, files: planned.files ?? explicitFiles ?? [],
+        reason: selectionReason },
       ciMirror: workspace.ciMirror ? `${workspace.ciMirror.owner}/${workspace.ciMirror.name}` : null,
       priority, priorityReason,
       ...(input.gate ? { gate: true, noSupersede: true } : {}),
