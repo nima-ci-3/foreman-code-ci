@@ -222,18 +222,10 @@ body:has(.n-agent-popover[data-panel='chat']) .operator-chat-launcher { visibili
 .agent-chat-input-box > .chat-delivery-actions .n-field { gap: 0; }
 .agent-chat-input-box > .chat-delivery-actions .n-field > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .agent-chat-input-box > .chat-delivery-actions .n-field { flex: none; width: auto; }
-.agent-chat-input-box > .chat-delivery-actions .n-menu-list { inset-inline-end: 0; top: auto; bottom: calc(100% + 6px); width: 200px; }
-.agent-chat-input-box:has(.chat-delivery-actions .n-menu-trigger) .n-input { padding-right: 13rem; }
+.agent-chat-input-box > .chat-delivery-actions select { width: 7.5rem; height: 28px; min-height: 28px; padding: 0 1.5rem 0 .5rem; font: var(--type-caption); }
+.agent-chat-input-box:has(.chat-delivery-actions select) .n-input { padding-right: 12rem; }
 .chat-delivery-receipts { margin: 0; padding: 0; list-style: none; color: var(--text-muted); font: var(--type-caption); }
 .chat-delivery-receipts p { margin: 0; }
 /* In the Board panel the panel title already names the Agent. */
 .workflow-floating-panel .agent-chat-identity h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .workflow-floating-panel .agent-chat-header > nav { justify-content: flex-end; }
-/* A delivery state under a sent message: one quiet line with its action beside it. */
-.chat-delivery-receipts > li { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
-.chat-delivery-receipts > li > .n-actions { display: inline-flex; gap: var(--space-1); }
-.chat-delivery-receipts > li > .n-actions .n-button { min-height: 24px; height: 24px; padding: 0 var(--space-2); }
-/* A small close sign at the end of opened result details. */
-.agent-chat-tool-close { display: flex; margin: var(--space-1) auto 0; width: 28px; height: 22px; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--text-muted); cursor: pointer; }
-.agent-chat-tool-close:hover { background: var(--n-raised, var(--surface-2)); color: var(--text-primary, inherit); }
-.agent-chat-writing { margin: 0; color: var(--text-muted); font-style: italic; }

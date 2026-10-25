@@ -153,19 +153,6 @@ jobs:
             - restore_cache:
                 keys:
                   - ci-<< pipeline.parameters.suite >>-{{ checksum "pnpm-lock.yaml" }}-
-            # Main's typecheck and lint state, published by the mirror's warm-up job: newer than this suite's last
-            # CircleCI run (which may be rare while GitHub Actions takes most work), so it is extracted over it.
-            - run:
-                name: Typecheck and lint state from main
-                command: |
-                  case "$SUITE" in typecheck*|lint*) ;; *) exit 0 ;; esac
-                  asset="suite-state-$(cat .logs/ci-packages-key).tar.gz"
-                  url="https://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/releases/download/ci-state/$asset"
-                  if curl -fsSL --retry 3 --max-time 120 -o "$HOME/suite-state.tar.gz" "$url"; then
-                    tar -xzf "$HOME/suite-state.tar.gz" && echo "Restored main's typecheck and lint state ($asset)."
-                  else
-                    echo "Main's typecheck and lint state is not published for this package set; using this suite's last run."
-                  fi
       - run:
           name: Suite
           command: |
@@ -202,7 +189,6 @@ jobs:
                   - apps/web/node_modules/.tmp
                   - apps/worker/node_modules/.cache
                   - packages/contracts/node_modules/.cache
-                  - packages/contracts-node/node_modules/.cache
       - when:
           condition:
             matches:

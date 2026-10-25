@@ -1,20 +1,18 @@
 // @vitest-environment jsdom
-import { useContext, useLayoutEffect, type ReactNode } from 'react'
+import { useLayoutEffect, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider, useLocation } from '@tanstack/react-router'
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { LocalHumanAccessSchema } from '@foreman-code/contracts/management'
-import { CURRENT_WORKFLOW_CAPABILITIES, CurrentWorkflowCapabilitiesSchema, GraphDraftCurrentSchema } from '@foreman-code/contracts/current'
+import { CURRENT_WORKFLOW_CAPABILITIES, CurrentWorkflowCapabilitiesSchema } from '@foreman-code/contracts/current'
 import { server } from '../../mocks/server'
 import { deferred } from '../../test/deferred'
-import { RunDisplayedSnapshot, nextDraftKey, workflowToGraph, useWorkflowBoard } from '../board-core'
-import { useGraphDraftStore } from '../graph'
-import type { WorkflowCollaborationSlots } from './WorkflowSidePanel'
+import { workflowToGraph, useWorkflowBoard } from '../board-core'
 import { installFlowLayout } from '../run-board/testFlowLayout'
 import { pinnedRunHandlers, reply, runA, runsUrl, scope, versionReply } from '../run-board/testFixtures'
-import { RunsSelectorSearchSchema, resolveRunsSelectorBoardLocation } from '../runs-selector'
+import { RunsSelectorSearchSchema } from '../runs-selector'
 import { WorkflowBoard } from './WorkflowBoard'
 import { useSidePanelPresentation } from './sidePanelPresentation'
 import { clearBoardStopStorage } from './stopOutbox'
@@ -58,98 +56,24 @@ beforeEach(() => {
       HttpResponse.json({ items: [], nextCursor: null, projection: 'caught-up' })),
   )
 })
-afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); useGraphDraftStore.getState().clearAllDrafts(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-async function mount(entry: string, draft: ReactNode = <p>Draft editor</p>, collaborationSlots?: WorkflowCollaborationSlots) {
+async function mount(entry: string, draft: ReactNode = <p>Draft editor</p>) {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(cache)
   const root = createRootRoute({ component: Outlet })
   const route = createRoute({ getParentRoute: () => root, path: '/workspaces/$workspaceId', validateSearch: RunsSelectorSearchSchema,
-    component: function BoardRoute() {
-      const location = useLocation()
-      const { run } = resolveRunsSelectorBoardLocation(location.pathname, location.search)
-      return <WorkflowBoard {...scope} run={run} inspection={{}} selectInspection={() => undefined}
-        selectRun={() => undefined} summaries={[]} collaborationSlots={collaborationSlots}>
-        {draft}
-      </WorkflowBoard>
-    } })
+    component: () => <WorkflowBoard {...scope} inspection={{}} selectInspection={() => undefined}
+      selectRun={() => undefined} summaries={[]}>
+      {draft}
+    </WorkflowBoard> })
   const router = createRouter({ routeTree: root.addChildren([route]),
     history: createMemoryHistory({ initialEntries: [entry] }), defaultPendingMinMs: 0 })
   await router.load()
-  const rendered = render(<QueryClientProvider client={cache}><RouterProvider router={router} /></QueryClientProvider>)
+  render(<QueryClientProvider client={cache}><RouterProvider router={router} /></QueryClientProvider>)
   await screen.findByTestId('unified-workflow-board')
-  return { ...rendered, router, cache }
+  return { router }
 }
-function CurrentBoardProbe() {
-  const board = useWorkflowBoard(), displayed = useContext(RunDisplayedSnapshot)
-  return <>{board?.navigationControls}
-    <output aria-label="Displayed Run">{displayed?.runId ?? 'none'}</output>
-    <input aria-label="Edit workflow" disabled={board?.boardRunLive} />
-    <button onClick={() => board?.showRunOnBoard?.('run-a')}>Start fixture Run</button>
-  </>
-}
-
-describe('saved state remains reachable from the current Board', () => {
-  const summaryPath = '*/api/management/workspaces/:workspaceId/workflows/:workflowId/runs/summaries'
-  const summary = (runId: string) => ({ runId, shortId: runId, startedAt: null, status: 'succeeded', trigger: 'manual' })
-  const summaries = (items: ReturnType<typeof summary>[]) => HttpResponse.json({ items, pageInfo: { nextCursor: null } })
-  beforeEach(() => {
-    const draft = GraphDraftCurrentSchema.parse({ ...scope, id: 'board-draft', revision: 1, publishedRevision: 1,
-      baseWorkflowVersionId: runA.workflowVersionId, graph: savedVersion('run-a').version.definition,
-      stagedAgents: [], updatedByPrincipalId: 'owner', updatedAt: runA.capturedAt })
-    useGraphDraftStore.getState().installNextDraft(nextDraftKey(scope.workspaceId, scope.workflowId), { draft, agents: [] })
-  })
-
-  it('opens the full saved canvas when the painted latest Run is explicitly selected', async () => {
-    server.use(http.get(summaryPath, () => summaries([summary('run-a')])))
-    const { router } = await mount(runsUrl(null), <CurrentBoardProbe />)
-    await waitFor(() => expect(screen.getByLabelText('Displayed Run')).toHaveTextContent('run-a'))
-    fireEvent.click(screen.getByRole('button', { name: 'Runs' }))
-    fireEvent.click(await within(screen.getByRole('menu', { name: 'Runs' })).findByRole('menuitemradio', { name: /run-a/ }))
-    expect(await screen.findByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', 'run-a')
-    expect(await savedNode('Y')).toBeVisible()
-    expect(router.state.location.search.selectedRunId).toBe('run-a')
-  }, 10_000)
-
-  it('keeps Current Agent chat selected when returning from history and reopening its URL', async () => {
-    server.use(http.get(summaryPath, () => summaries([summary('run-a')])))
-    const slots: WorkflowCollaborationSlots = { executionChat: selection => <>
-      <p>{selection.runId ? 'Run chat' : 'Current Agent chat'}</p>
-      <button onClick={() => selection.onSelectRun(undefined)}>Current Agent</button>
-      <button onClick={() => selection.onSelectRun({ runId: 'run-a', workflowVersionId: 'version-a' })}>Open Run chat</button>
-    </> }
-    const entry = `${runsUrl('run-a')}&boardPanel=agent&boardNodeId=node-x&boardAgentTab=chat`
-    const mounted = await mount(entry, <CurrentBoardProbe />, slots)
-    await screen.findByText('Run chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Current Agent' }))
-    await waitFor(() => expect(screen.getByLabelText('Displayed Run')).toHaveTextContent('run-a'))
-    expect(screen.getByText('Current Agent chat')).toBeVisible()
-    const href = mounted.router.state.location.href
-    mounted.unmount()
-    const reopened = await mount(href, <CurrentBoardProbe />, slots)
-    await waitFor(() => expect(screen.getByLabelText('Displayed Run')).toHaveTextContent('run-a'))
-    expect(screen.getByText('Current Agent chat')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Open Run chat' }))
-    expect(await screen.findByText('Run chat')).toBeVisible()
-    act(() => reopened.router.history.back())
-    expect(await screen.findByText('Current Agent chat')).toBeVisible()
-  }, 10_000)
-
-  it('does not resurrect a completed Start pin after newer Runs push it off the summary page', async () => {
-    let items: ReturnType<typeof summary>[] = []
-    server.use(http.get(summaryPath, () => summaries(items)))
-    const { cache } = await mount(runsUrl(null), <CurrentBoardProbe />)
-    fireEvent.click(screen.getByRole('button', { name: 'Start fixture Run' }))
-    await waitFor(() => expect(screen.getByLabelText('Displayed Run')).toHaveTextContent('run-a'))
-    items = [summary('run-a')]
-    await act(async () => { await cache.invalidateQueries({ queryKey: ['runs-selector', 'list'] }) })
-    await waitFor(() => expect(screen.getByLabelText('Edit workflow')).toBeEnabled())
-    items = Array.from({ length: 25 }, (_, index) => summary(`newer-run-${index}`))
-    await act(async () => { await cache.invalidateQueries({ queryKey: ['runs-selector', 'list'] }) })
-    await waitFor(() => expect(screen.getByLabelText('Displayed Run')).toHaveTextContent('newer-run-0'))
-    expect(screen.getByLabelText('Edit workflow')).toBeEnabled()
-  }, 10_000)
-})
 const savedNode = (name: string) => screen.findByRole('group', { name: `${name}, saved agent, read only` })
 /** A real mouse gesture; d3-drag follows the pointer on `event.view`, which jsdom's constructor will not set. */
 function pointer(target: EventTarget, type: string, clientX: number, clientY: number) {
@@ -308,7 +232,7 @@ describe('the Stop button keeps working through refresh failures and view change
     await waitFor(() => expect(stops).toHaveLength(1))
   })
 
-  it('still sends a Stop pressed just before opening a legacy Overview link', async () => {
+  it('still sends a Stop pressed just before switching to Overview', async () => {
     const stops: unknown[] = []
     const { run, handlers } = stopHandlers(stops)
     const held = deferred<void>()
@@ -317,11 +241,11 @@ describe('the Stop button keeps working through refresh failures and view change
       http.get('*/api/local-human', async () => { if (++reads > 1) await held.promise; return access() }),
       http.get('*/api/management/workspaces/:workspaceId/runs/run-b/executions', () =>
         HttpResponse.json({ run, items: [], pageInfo: { nextCursor: null } })))
-    const { router } = await mount(runsUrl('run-b'))
+    await mount(runsUrl('run-b'))
     const controls = within(await screen.findByRole('region', { name: 'Selected Run controls' }))
     await waitFor(() => expect(controls.getByRole('button', { name: 'Stop' })).toBeEnabled())
     fireEvent.click(controls.getByRole('button', { name: 'Stop' }))
-    await act(async () => { await router.navigate({ href: `${runsUrl('run-b')}&boardView=overview` }) })
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Workflow views' })).getByRole('button', { name: 'Overview' }))
     await act(async () => { held.resolve() })
     await waitFor(() => expect(stops).toHaveLength(1))
   })
@@ -357,13 +281,12 @@ describe('the Run board shows what it folds onto one line and keeps its caption 
     expect(line.getAttribute('aria-label')).toContain('approval from Y to X before rename: Design sign-off')
   })
 
-  it('omits computer and read-only captions from the Run toolbar', async () => {
+  it('puts the Run\'s worktree caption inside the floating toolbar, so neither covers the other', async () => {
     await mount(runsUrl('run-a'))
     await savedNode('Z')
     const toolbar = within(screen.getByRole('banner', { name: 'Board toolbar' }))
-    expect(toolbar.queryByText('Read only')).not.toBeInTheDocument()
-    expect(toolbar.queryByText(/Computers/)).not.toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', 'run-a')
+    expect(toolbar.getByText('Read only')).toBeVisible()
+    expect(toolbar.getByText(/Worktree/)).toBeVisible()
   })
 })
 

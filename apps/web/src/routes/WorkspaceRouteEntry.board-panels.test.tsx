@@ -79,7 +79,7 @@ async function choose(runId: string | null) {
   })
   await userEvent.click(item)
 }
-const savedY = () => screen.findByRole('button', { name: 'Open Y information' })
+const savedY = () => screen.findByRole('button', { name: 'Inspect Y' })
 const pinnedUrl = (runId: string) => `${runsUrl(null, scope)}&runId=${runId}&workflowVersionId=version-${runId.slice(4)}&executionSemanticsVersion=3`
 async function openActivities() {
   // The retained editor's own Activities button is hidden while a Run is shown.
@@ -223,7 +223,7 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
     const current = getMockFixture(scope.workspaceId)!.workflows.find(item => item.id === scope.workflowId)!
     expect(current.nodes.some(node => node.id === 'node-x')).toBe(false)
     const { router, unmount } = await mount(`${pinnedUrl('run-a')}&runNodeId=node-x`)
-    const inspect = await screen.findByRole('button', { name: 'Open X before rename information' }, { timeout: 5000 })
+    const inspect = await screen.findByRole('button', { name: 'Inspect X before rename' }, { timeout: 5000 })
     expect(inspect).toBeEnabled()
     // The linked node opens its saved details in the shared rail and retains the Activities filter.
     const rail = await screen.findByRole('complementary', { name: 'Workflow side panel' })
@@ -288,22 +288,15 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
     const canvas = await screen.findByLabelText('Selected Run board')
     expect(canvas).toHaveRole('region')
     expect(canvas).toBeVisible()
-    const savedAgent = await within(canvas).findByRole('button', { name: name => name.startsWith('Y, ') })
-    await user.hover(savedAgent)
-    const savedNode = within(canvas).getByLabelText('Open Y information')
+    const savedNode = await within(canvas).findByLabelText('Inspect Y')
     expect(savedNode).toHaveRole('button')
     expect(savedNode).toBeVisible()
     expect(canvas.getBoundingClientRect().width).toBe(320)
-    const selectedAgent = within(canvas).getByRole('button', { name: name => name.startsWith('X before rename, ') })
-    await user.click(selectedAgent)
-    expect(selectedAgent).toHaveAttribute('aria-pressed', 'true')
-    await user.hover(selectedAgent)
-    const node = within(canvas).getByLabelText('Open X before rename information')
+    const node = within(canvas).getByLabelText('Inspect X before rename')
     expect(node).toHaveRole('button')
     expect(node).toBeVisible()
     expect(screen.queryByRole('complementary', { name: 'Workflow side panel' })).toBeNull()
     await user.click(node)
-    expect(selectedAgent).toHaveAttribute('aria-pressed', 'false')
     const info = await screen.findByRole('complementary', { name: 'Workflow side panel' })
     expect(info).toHaveRole('complementary')
     expect(router.state.location.search).toMatchObject({ boardPanel: 'agent', boardAgentTab: 'details' })
@@ -472,30 +465,16 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
         { ...runA, status: executionState }, runB,
       ]))),
     )
-    // This case overlays a Run of the current draft; the history fixtures above use different saved nodes.
-    const context = await nextDraftApi.context(scope.workspaceId, scope.workflowId)
-    const saved = reply('run-a', scope).snapshot
-    if (saved.kind !== 'available') throw new Error('Expected a saved Run')
-    server.use(http.get(`${runsRoute}/run-a/snapshot`, () => HttpResponse.json({ snapshot: {
-      ...saved, workflowVersionId: context.draft.baseWorkflowVersionId,
-      nodes: context.draft.graph.nodes.map(node => {
-        if (node.kind === 'job') throw new Error('This fixture overlays Agent nodes')
-        return { id: node.id, name: node.name ?? node.label ?? node.id, agentId: node.agentId,
-          agentConfigurationVersionId: context.agents.find(item => item.agent.id === node.agentId)!.agent.configurationVersionId,
-          position: node.position ?? { x: 0, y: 0 }, size: { width: node.width ?? 156, height: node.height ?? 156 } }
-      }), edges: context.draft.graph.edges,
-    } })))
     const listed = await runsSelectorApi.list({ ...scope, limit: 20 })
     expect(listed.items.find(run => run.runId === 'run-a')).toMatchObject({ status: executionState })
     const { router } = await mount()
+    // One Board: opening during a live Run keeps the draft Board, with the Run shown on it, never a separate page.
     const editor = await authoring()
     expect(editor).toBeVisible()
     await waitFor(() => expect(screen.getByTitle('Rename workflow')).toBeDisabled())
+    await new Promise(resolve => setTimeout(resolve, 500))
     expect(router.state.location.search.selectedRunId).toBeUndefined()
     expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
-    expect(router.state.location.pathname).toBe('/workspaces/workspace-1')
-    expect(screen.getAllByTestId('unified-workflow-board')).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument()
     expect(writes).toEqual([])
   })
 
@@ -526,7 +505,7 @@ describe('Workspace Board route, editor and HTTP boundary', { timeout: 20_000 },
     expect(router.state.location.search.runNodeId).toBe('node-x')
     const hash = router.history.location.hash
     await choose('run-b')
-    await screen.findByRole('button', { name: 'Open X in B information' })
+    await screen.findByRole('button', { name: 'Inspect X in B' })
     const activities = await openActivities()
     await within(activities).findByText('History for run-b')
     await userEvent.click(within(activities).getByRole('button', { name: 'Close Activities' }))
