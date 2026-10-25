@@ -224,7 +224,10 @@ function useAgentSettingsForm({ agent, creationDefaults, node = {}, workflow = {
       if (placement) SavedNodePlacementSchema.parse(placement)
       const worktree = branchPrefix.trim() ? AgentWorktreeSettingsSchema.parse({ branchPrefix: branchPrefix.trim() }) : undefined
       initialSnapshot.current = currentSnapshot
-      onSave({ agent: { ...agent, name: name.trim(), harness: nextConfiguration.harness, model: nextConfiguration.model,
+      // A profile pin belongs to one computer; a node placed on another computer uses that computer's profile.
+      const { harnessProfileSelection: pin, ...unpinned } = agent
+      const kept = pin && placement && !sameWorkflowValue(pin.target.hostRef, placement.hostRef) ? unpinned : agent
+      onSave({ agent: { ...kept, name: name.trim(), harness: nextConfiguration.harness, model: nextConfiguration.model,
         effort: legacyEffortForHarness(nextConfiguration), fastMode: nextConfiguration.harness === 'codex' ? nextConfiguration.serviceTier === 'priority' : undefined,
         harnessConfiguration: nextConfiguration,
         [INSTALLATION_NAMES.fields.agentTools]: foremanTools.defaults ? activeForemanTools(foremanTools.defaults) : undefined,

@@ -57,6 +57,16 @@ const artifactPath = z.string().min(1).max(1024).regex(/^[a-zA-Z0-9_@./-]+$/u)
   .refine(path => path.split('/').every(part => part !== '' && part !== '.' && part !== '..'))
 const fileSize = z.number().int().nonnegative().max(64 * 1024 * 1024)
 
+const WorkerBrowserRuntimeApprovalSchema = z.object({
+  descriptorPath: artifactPath.optional(),
+  descriptorSha256: digest,
+  /** Recipe identity approves pinned upstream inputs, installer and release glue. */
+  recipeSha256: digest.optional(),
+  /** Retained archive releases approve the complete installed manifest. */
+  manifestSha256: digest.optional(),
+}).passthrough().refine(value => Boolean(value.recipeSha256) !== Boolean(value.manifestSha256),
+  'Browser runtime requires exactly one approved identity')
+
 export const WorkerArtifactManifestSchema = z.object({
   format: z.literal(1),
   version: z.string().regex(/^\d+\.\d+\.\d+$/u),
@@ -66,13 +76,7 @@ export const WorkerArtifactManifestSchema = z.object({
   protocolVersion: z.literal(1),
   identityFormat: z.literal(1),
   target: WorkerArtifactTargetSchema,
-  runtime: z.object({
-    metadataPath: z.literal('artifacts/node-runtime.json'),
-    archivePath: z.literal('artifacts/node-runtime.tar.xz').optional(),
-    version: z.string().regex(/^v\d+\.\d+\.\d+$/u),
-    archiveSha256: digest,
-    executableSha256: digest,
-  }).passthrough().optional(),
+  browserRuntime: WorkerBrowserRuntimeApprovalSchema.optional(),
   files: z.array(z.object({
     path: artifactPath,
     sha256: digest,

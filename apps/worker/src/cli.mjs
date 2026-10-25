@@ -1,10 +1,12 @@
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import { readFile } from 'node:fs/promises';
-import { resolve, isAbsolute } from 'node:path';
+import { resolve, isAbsolute, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { doctorReport, executableAvailability, hostFacts, WorkerError, requirePrivateDirectory } from './diagnostics.mjs';
 import { readWorkerStatus } from './runtime.mjs';
+import { readBrowserRuntimeStatus } from './browserRuntimeInstall.mjs';
 
 const execute = promisify(execFile);
 const args = process.argv.slice(2);
@@ -110,7 +112,9 @@ async function main() {
     const connection = { state: phase === 'ready' ? 'connected' : ['authenticating', 'negotiating', 'synchronizing'].includes(phase) ? 'connecting' : phase === 'disconnected' ? 'stopped' : phase, failure: status?.failure };
     if (!facts.rootPersistent) errors.push('nonpersistent_root');
     if (!facts.homePersistent) errors.push('nonpersistent_home');
-    console.log(JSON.stringify(doctorReport({ facts, identity, service, connection, executables: executableAvailability(process.env.PATH ?? ''), errors })));
+    const releaseDirectory = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
+    const browserRuntime = await readBrowserRuntimeStatus(dirname(dirname(releaseDirectory)));
+    console.log(JSON.stringify(doctorReport({ facts, identity, service, connection, browserRuntime, executables: executableAvailability(process.env.PATH ?? ''), errors })));
     return;
   }
   if (command === 'initialize-native-runtime') { await initializeInstalledNativeRuntime(stateDirectory); console.log(JSON.stringify({ nativeRuntime: 'initialized', executionAuthorized: false })); return; }
@@ -148,7 +152,8 @@ async function main() {
 }
 main().catch((error) => {
   const fallback = command === 'cleanup-job-before-entry' ? 'job_cleanup_failed' : 'worker_start_failed';
+  // The service journal is the only place an operator sees why startup failed, so keep the cause beside the code.
   console.error(command === 'pair' && pairingErrorMessage ? pairingErrorMessage(error)
-    : error instanceof WorkerError ? error.code : fallback);
+    : error instanceof WorkerError ? error.code : `${fallback}: ${error?.message ?? String(error)}`);
   process.exitCode = 1;
 });

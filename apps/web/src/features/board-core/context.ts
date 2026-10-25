@@ -13,6 +13,10 @@ export type WorkflowAuthoringActions = {
   saveChatAgent(nodeId: string): Promise<string | undefined>
   /** Moves draft nodes exactly as dragging them on the draft Board does. */
   moveNodes?(changes: GraphGeometryChange[]): void
+  /** Connects two draft nodes exactly as drawing a line on the draft Board does. */
+  connectNodes?(source: string, target: string): void
+  /** Opens the latest saved workflow; the draft is kept separately. */
+  openSavedWorkflow?(): void
 }
 
 /** What the Board shows and selects: workflow, Run, inspection, side panel, view and navigation callbacks. */
@@ -65,6 +69,8 @@ export type WorkflowBoardHosts = {
 export type WorkflowBoardAuthoring = {
   openWorkflowSettings?(): void
   registerAuthoringActions?(actions?: WorkflowAuthoringActions): void
+  /** Opens the latest saved workflow; the draft is kept separately. */
+  openSavedWorkflow?(): void
   /** Present while the editable draft is mounted, so a draft-only Agent's chat can save that Agent first. */
   saveChatAgent?(nodeId: string): Promise<string | undefined>
   /** The draft node's Agent, also before the node is saved. */
@@ -72,6 +78,7 @@ export type WorkflowBoardAuthoring = {
   draftNodeBrowser?(nodeId: string): NodeBrowserSettings | null | undefined
   /** The draft Board's own layout change (manual places, saved as a layout revision), for dragging on a shown Run. */
   moveDraftNodes?(changes: GraphGeometryChange[]): void
+  connectDraftNodes?(source: string, target: string): void
   executionChatMounted?: boolean
   collaborationFields?: CollaborationFieldSlots
 }
@@ -96,11 +103,11 @@ export function useWorkflowBoard(): WorkflowBoardValue | null {
 /** Provides each part of an already assembled Board value (tests and small embeddings). */
 export function WorkflowBoardProvider({ value, children }: { value: WorkflowBoardValue; children?: ReactNode }) {
   const { sidePanelHost, runCaptionHost, runActionHost, authoringToolbarHost, authoringPanelHost, openWorkflowSettings, registerAuthoringActions, saveChatAgent, draftNodeAgentId, draftNodeBrowser,
-    moveDraftNodes, executionChatMounted, collaborationFields, ...selection } = value
+    moveDraftNodes, connectDraftNodes, executionChatMounted, collaborationFields, ...selection } = value
   const hosts = useMemo(() => ({ sidePanelHost, runCaptionHost, runActionHost, authoringToolbarHost, authoringPanelHost }), [sidePanelHost, runCaptionHost, runActionHost, authoringToolbarHost, authoringPanelHost])
   const authoring = useMemo(() => ({ openWorkflowSettings, registerAuthoringActions, saveChatAgent, draftNodeAgentId, draftNodeBrowser,
-    moveDraftNodes, executionChatMounted, collaborationFields }), [openWorkflowSettings, registerAuthoringActions, saveChatAgent,
-    draftNodeAgentId, draftNodeBrowser, moveDraftNodes, executionChatMounted, collaborationFields])
+    moveDraftNodes, connectDraftNodes, executionChatMounted, collaborationFields }), [openWorkflowSettings, registerAuthoringActions, saveChatAgent,
+    draftNodeAgentId, draftNodeBrowser, moveDraftNodes, connectDraftNodes, executionChatMounted, collaborationFields])
   return createElement(BoardSelectionContext.Provider, { value: selection },
     createElement(BoardHostsContext.Provider, { value: hosts },
       createElement(BoardAuthoringContext.Provider, { value: authoring }, children)))

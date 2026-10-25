@@ -161,3 +161,28 @@ it('loads the Worker native Codex models when its account channel is unavailable
   await user.click(screen.getByRole('button', { name: 'Save agent settings' }))
   expect(onSave.mock.calls[0]![0].agent.harnessConfiguration.model).toBe('worker-codex')
 })
+
+it('drops a Main profile pin when the Agent is saved on another computer', async () => {
+  const catalog = [{ harness: 'claude', defaults: savedClaudeConfiguration, defaultsRevision: 1, capability: null, discoveryError: null }]
+  server.use(http.get('/api/management/harnesses', () => HttpResponse.json(catalog)))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.push(client)
+  client.setQueryData(queryKeys.managedHarnessCatalog, catalog)
+  const mainId = savedPlacementFixture.hostRef.mainId
+  // New board Agents copy the Main profile pin from the defaults.
+  const agent = { ...defaultAgentForHarness('claude', 'saved-agent', 'Worker', savedClaudeConfiguration),
+    harnessProfileSelection: { instanceId: '40000000-0000-4000-8000-000000000001', instanceRevision: '6',
+      target: { hostRef: { kind: 'main' as const, mainId }, applicationInstallationId: mainId,
+        harnessInstallationId: 'installed-main', installationFingerprint: 'b'.repeat(64) } } }
+  const onSave = vi.fn()
+  render(<QueryClientProvider client={client}>
+    <AgentSettingsForm agent={agent} node={{ placement: savedPlacementFixture }} onClose={() => undefined} onSave={onSave} />
+  </QueryClientProvider>)
+  const user = userEvent.setup()
+  await user.clear(screen.getByRole('textbox', { name: 'Name' }))
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Remote worker')
+  await user.click(screen.getByRole('button', { name: 'Save agent settings' }))
+  await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+  expect(onSave.mock.calls[0]![0].placement).toEqual(savedPlacementFixture)
+  expect(onSave.mock.calls[0]![0].agent).not.toHaveProperty('harnessProfileSelection')
+})

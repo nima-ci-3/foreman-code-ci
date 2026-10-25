@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { artifactFiles, validateWorkerTarget, workerReleaseVersion, assertWorkerUpdateToolchain } from './worker-artifact-files.mjs'
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
-// The Worker bundle is ~316 MB; Main's upload link measured 7 Mbit/s (about 6 min) and is slower under CI load.
+// Retain bounded publication retries for slow upload links.
 const PUBLICATION_COMMAND_TIMEOUT_MS = 15 * 60_000
 const PUBLICATION_RETRY_MS = 60_000
 // WORKER_PUBLICATION_DEADLINE_MS in packages/contracts/src/workerUpdate.ts; installed scripts cannot import contracts.
@@ -111,11 +111,14 @@ async function verifyArtifact(directory, target, version, commit) {
       throw new Error(`Worker artifact checksum mismatch: ${file.path}`)
     }
   }
+  if (target.osRelease === '24.04' && (!manifest.browserRuntime || manifest.browserRuntimeStatus?.state !== 'ready')) {
+    throw new Error('Ubuntu 24.04 Worker publication requires a verified browser runtime')
+  }
   if (manifest.browserRuntime) {
     const { readBrowserRuntimeArtifact, matchesBrowserRuntimeTarget } = await import('../apps/worker/src/browserRuntimeInstall.mjs')
     const runtime = await readBrowserRuntimeArtifact(join(directory, 'artifacts/browser-runtime'), manifest.browserRuntime.descriptorSha256)
-    const executionTarget = { ...target, node: manifest.runtime?.version ?? target.node }
-    if (runtime.manifestSha256 !== manifest.browserRuntime.manifestSha256 || !matchesBrowserRuntimeTarget(runtime.target, executionTarget)) {
+    if ((runtime.format === 2 ? manifest.browserRuntime.recipeSha256 !== manifest.browserRuntime.descriptorSha256
+      : runtime.manifestSha256 !== manifest.browserRuntime.manifestSha256) || !matchesBrowserRuntimeTarget(runtime.target, target)) {
       throw new Error('Browser runtime differs from the Worker target or locked descriptor')
     }
   }
@@ -281,28 +284,20 @@ export async function buildWorkerReleaseArtifacts({
   const product = JSON.parse(productManifest)
   assertWorkerUpdateToolchain(product)
   const version = workerReleaseVersion(product)
-  const canonicalTargets = readCommittedWorkerTargets(repository, commit)
-  const runtimePath = 'apps/worker/artifacts/node-24.22.1-linux-x64.json'
-  const hasRuntime = execFileSync('git', ['ls-tree', '--name-only', commit, '--', runtimePath],
-    { cwd: repository, encoding: 'utf8' }).trim() === runtimePath
-  // Node 22 updaters require an exact incoming target. These carriers bootstrap Node 24 before loading the Worker.
-  const targets = canonicalTargets.flatMap(entry => [entry, ...((hasRuntime ? ['v22.23.2', 'v22.23.3'] : []).map(node => ({
-    ...entry, bootstrapNode: node, target: { ...entry.target, node },
-  })))])
+  const targets = readCommittedWorkerTargets(repository, commit)
   const previousArtifacts = await readPreviousArtifacts(previousDirectory)
   const blobs = previousArtifacts.length ? committedBlobIds(repository, commit) : undefined
   await mkdir(directory, { mode: 0o700 })
   try {
     // Targets build independently; all of them settle before a failure removes the shared storage.
-    const builds = await Promise.allSettled(targets.map(async ({ path, target, bootstrapNode }) => {
+    const builds = await Promise.allSettled(targets.map(async ({ path, target }) => {
       const staging = await mkdtemp(join(directory, '.build-'))
       // The builder requires a fresh directory that it creates itself.
       await rm(staging, { recursive: true })
       const reused = previousArtifacts.length && await reuseWorkerArtifact({ repository, previousDirectory, previousArtifacts,
         path, target, commit, blobs, staging })
       if (!reused) {
-        await run(process.execPath, ['scripts/build-worker-artifact.mjs', path, staging,
-          'apps/worker/artifacts/node-24.22.1-linux-x64.json', ...(bootstrapNode ? [bootstrapNode] : [])], {
+        await run(process.execPath, ['scripts/build-worker-artifact.mjs', path, staging], {
           cwd: repository,
           env: { ...process.env, [INSTALLATION_NAMES.environment.WORKER_BUILD_COMMIT]: commit },
         })

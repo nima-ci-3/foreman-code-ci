@@ -138,3 +138,13 @@ it('reports a lost connection as an uncertain network failure', async () => {
   expect(error).toMatchObject({ code: 'NETWORK_ERROR' })
   expect(browserRequestUncertain(error)).toBe(true)
 })
+
+it('reports input the contract refuses as a certain rejection that sends nothing', async () => {
+  const fetcher = vi.fn<typeof fetch>()
+  const call = createBrowserHttp({ fetch: fetcher, origin: 'http://localhost', error: async () => ({ message: 'Rejected' }) })
+  const error: unknown = await call('POST', '/api/browser/sessions/session/actions',
+    { encode: () => { throw new Error('Invalid URL') }, decode: async () => undefined }, []).catch((failure: unknown) => failure)
+  expect(fetcher).not.toHaveBeenCalled()
+  expect(error).toMatchObject({ code: 'INVALID_REQUEST', message: 'Check what you entered, then try again.' })
+  expect(browserRequestUncertain(error)).toBe(false)
+})

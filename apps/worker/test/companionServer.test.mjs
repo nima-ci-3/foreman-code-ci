@@ -150,38 +150,6 @@ test('read-only preview cannot create identity, pair or change a service', async
   assert.equal(status.compatibility.supported, false);
 });
 
-for (const installed of [false, true]) {
-  test(`Companion accepts the execution runtime of a Node transition${installed ? ' in the selected installation' : ''}`, async t => {
-    const directory = await mkdtemp(join(tmpdir(), 'companion-transition-'));
-    t.after(() => rm(directory, { recursive: true, force: true }));
-    const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' };
-    const runtime = { version: 'v24.22.1' };
-    const manifestFile = join(directory, 'manifest.json');
-    await writeFile(manifestFile, JSON.stringify({ target, runtime }));
-    const installationRoot = join(directory, 'app');
-    if (installed) {
-      await mkdir(installationRoot);
-      await symlink(directory, join(installationRoot, 'current'));
-    }
-    const versions = { ...target, node: runtime.version };
-    const f = await fixture(t, { manifestFile, installationRoot,
-      runCli: async () => JSON.stringify({ versions, pairing: 'paired', service: { active: true } }) });
-    const status = await (await f.post('/api/status')).json();
-    assert.equal(status.installationChanged, false);
-    assert.equal(status.compatibility.supported, true);
-    assert.deepEqual(status.compatibility.required, versions);
-    assert.deepEqual(status.compatibility.mismatches, []);
-    for (const change of [{ node: target.node }, { osRelease: '26.04' }]) {
-      const original = { ...versions };
-      Object.assign(versions, change);
-      const incompatible = await (await f.post('/api/status')).json();
-      assert.equal(incompatible.compatibility.supported, false);
-      assert.deepEqual(incompatible.compatibility.mismatches, Object.keys(change));
-      Object.assign(versions, original);
-    }
-  });
-}
-
 test('a session spanning an installed target change reports the new target and denies installation actions', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'companion-update-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -190,9 +158,9 @@ test('a session spanning an installed target change reports the new target and d
   const second = join(root, 'release-b');
   await mkdir(first, { recursive: true, mode: 0o700 });
   await mkdir(second, { mode: 0o700 });
-  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v24.22.0' };
+  const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.2' };
   await writeFile(join(first, 'manifest.json'), JSON.stringify({ target }));
-  const nextTarget = { ...target, node: 'v24.22.1' };
+  const nextTarget = { ...target, node: 'v22.23.3' };
   await writeFile(join(second, 'manifest.json'), JSON.stringify({ target: nextTarget }));
   await symlink('release-a', join(root, 'current'));
   const commands = [];

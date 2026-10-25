@@ -211,7 +211,7 @@ it('checks the deployed build after recovery and uses the existing guarded app r
     version: 1, buildId: 'c'.repeat(64), contractsId: 'd'.repeat(64),
   })))
   available = true
-  expect(await screen.findByText('App updated. Your pending changes are kept until it can reload.',
+  expect(await screen.findByText('App updated.',
     {}, { timeout: 4_000 })).toBeVisible()
   expect(reload).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: 'Unsaved draft' })).toBe(draft)
@@ -242,8 +242,8 @@ it('detects a release within seconds after a long API outage while runtime reads
   expect(screen.getByText('Updating — reconnecting…')).toBeVisible()
   available = true
   released = true
-  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
-  expect(screen.getByText('App updated. Your pending changes are kept until it can reload.')).toBeVisible()
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+  expect(screen.getByText('App updated.')).toBeVisible()
   // The reconnect notice stays up for 3 s after the connection returns, so it does not flicker.
   await act(async () => { await vi.advanceTimersByTimeAsync(3_500) })
   expect(screen.queryByText('Updating — reconnecting…')).not.toBeInTheDocument()

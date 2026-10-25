@@ -15,7 +15,7 @@ export { attachJob, authoringHints, changeApprovalHandler, discardMeaningfulChan
 export type { AuthoringIssue, DraftNode, NextDraftContext } from './nextDraft/model'
 export { canUndoNextDraft, createNextDraftSlice, editNextDraft, newNextDraft, nextDraftDirty, nextDraftKey, redoNextDraft, undoNextDraft } from './nextDraft/state'
 export type { ConflictRecovery, DraftFailure, DraftRequest, NextDraftEdit, NextDraftSlice } from './nextDraft/state'
-export { agentNodeFacts, agentSettingRows, edgeBend, relationshipLines, useFloatingCurve } from './signalEdge'
+export { agentNodeFacts, agentSettingRows, edgeBend, floatingCurve, lineBend, relationshipLines, useFloatingCurve } from './signalEdge'
 export type { EdgeSignal, FloatingCurve } from './signalEdge'
 export type { AgentGraphNode, GraphMapperOptions, GraphNode, GraphProjection, JobGraphNode } from './types'
 export { activeWorkflowGraph, activeWorkflowNode } from './nextDraft/activeToolSettings'

@@ -29,7 +29,9 @@ export function useDraftEditorController(draftKey: string, edit: NextDraftEdit) 
   const openPanel = useRef(core.openPanel)
   openPanel.current = core.openPanel
   const geometry = useRef(core.geometry)
+  const canvas = core.canvas
   geometry.current = core.geometry
+  const inspectLatestRef = useRef<() => unknown>(undefined)
   const registerAuthoringActions = board?.registerAuthoringActions
   useLayoutEffect(() => {
     registerAuthoringActions?.({ openWorkflowSettings: () => openPanel.current('workflow'),
@@ -37,13 +39,16 @@ export function useDraftEditorController(draftKey: string, edit: NextDraftEdit) 
       draftNodeBrowser: nodeId => { const node = draftNodeAgent(draftKey, nodeId); return node ? node.browser ?? null : undefined },
       saveChatAgent: nodeId => saveChatAgent(draftKey, nodeId),
       // A shown Run's canvas moves agents through this same layout change.
-      moveNodes: changes => geometry.current(changes) })
+      moveNodes: changes => geometry.current(changes),
+      connectNodes: (source, target) => canvas.current?.connect(source, target),
+      openSavedWorkflow: () => { void inspectLatestRef.current?.() } })
     return () => registerAuthoringActions?.()
-  }, [registerAuthoringActions, draftKey])
+  }, [registerAuthoringActions, draftKey, canvas])
   const startState = useDraftStartState({ draftKey, edit, board })
   const { preflight, pendingStart, changedAgents } = startState
   const saveActions = useDraftEditorSave({ draftKey, edit, editIntent, core, pendingStart })
   const { reloading, stopAndSave, discardChanges, reload, inspectLatest } = saveActions
+  inspectLatestRef.current = inspectLatest
   const { startMutation, starting, start, recoverStart } = useDraftStartMutation({
     draftKey, edit, editIntent, core, startState, stopAndSave,
   })

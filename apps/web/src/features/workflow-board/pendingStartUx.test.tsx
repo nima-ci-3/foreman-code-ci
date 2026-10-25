@@ -54,7 +54,7 @@ it('reconciles an accepted Start on remount without leaving the selected histori
   })
   expect(reopened.router.state.location.search.selectedRunId).toBe(runs.before.run.id)
   expect(screen.getByRole('region', { name: 'Selected Run board' })).toBeVisible()
-  expect(screen.getByText('Selected Run', { selector: 'span' })).toBeVisible()
+  expect(screen.getByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', runs.before.run.id)
   expect(useGraphDraftStore.getState().nextDrafts[key]!.instanceId).toBe(retained.instanceId)
   expect(sent).toEqual([])
 }, 15_000)
@@ -107,7 +107,8 @@ it('resolves an unaccepted Start from an earlier session on load and saves Agent
   await userEvent.click(panel.getByText('More settings'))
   const prompt = panel.getByRole('textbox', { name: 'Initial prompt' })
   await userEvent.clear(prompt)
-  await userEvent.type(prompt, 'Saved after resolving the earlier start')
+  // One paste keeps this full-suite test inside its timeout; typing key by key added nothing it checks.
+  await userEvent.paste('Saved after resolving the earlier start')
   await userEvent.click(panel.getByRole('button', { name: 'Save agent settings and workflow' }))
   expect(await screen.findByText('Saved.')).toBeVisible()
   expect(mock.versions.get(mock.drafts.get(after.workflowId)!.baseWorkflowVersionId!)!.definition.nodes[0])

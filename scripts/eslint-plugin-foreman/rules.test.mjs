@@ -1,6 +1,10 @@
 import { createRequire } from 'node:module'
 import { describe, it } from 'node:test'
 import { plugin } from './index.mjs'
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // The repository root has no ESLint of its own; every package pins the same version.
 const { RuleTester } = createRequire(new URL('../../apps/api/package.json', import.meta.url))('eslint')
@@ -12,6 +16,20 @@ const tester = new RuleTester({ languageOptions: { ecmaVersion: 2024, sourceType
 const problem = [{ messageId: 'problem' }]
 const run = (id, valid, invalid) => tester.run(id, plugin.rules[id], {
   valid, invalid: invalid.map(code => typeof code === 'string' ? { code, errors: problem } : { errors: problem, ...code }),
+})
+
+it('invalidates lint results cached under an earlier local rule implementation', async t => {
+  const { ESLint } = createRequire(new URL('../../apps/api/package.json', import.meta.url))('eslint')
+  const directory = mkdtempSync(join(tmpdir(), 'foreman-lint-cache-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  writeFileSync(join(directory, 'value.js'), 'try { throw new Error("failure") } catch {}')
+  const lint = implementation => new ESLint({ cwd: directory, overrideConfigFile: true,
+    cache: true, cacheStrategy: 'content', cacheLocation: join(directory, 'cache'),
+    overrideConfig: { plugins: { foreman: implementation }, rules: { 'foreman/no-silent-catch': 'error' } } })
+  const previous = { ...plugin, meta: { name: plugin.meta.name }, rules: { ...plugin.rules,
+    'no-silent-catch': { ...plugin.rules['no-silent-catch'], create: () => ({}) } } }
+  assert.equal((await lint(previous).lintFiles(['value.js']))[0].errorCount, 0)
+  assert.equal((await lint(plugin).lintFiles(['value.js']))[0].messages[0]?.ruleId, 'foreman/no-silent-catch')
 })
 
 run('no-source-text-tests', [

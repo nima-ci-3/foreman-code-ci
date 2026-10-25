@@ -7,15 +7,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { WorkflowRunSummarySchema } from '@foreman-code/contracts'
 import { RunBoardSnapshotGetResultSchema } from '@foreman-code/contracts/run-snapshots'
+import { GraphDraftCurrentSchema } from '@foreman-code/contracts/current'
 import { server } from '../../mocks/server'
-import { AgentChatPanel, useBoardViewportStore } from '../graph'
+import { AgentChatPanel, useBoardViewportStore, useGraphDraftStore } from '../graph'
+import { versionReply } from '../run-board/testFixtures'
 import { installFlowLayout } from '../run-board/testFlowLayout'
 import { RunsSelectorSearchSchema, useRunsSelectorUi } from '../runs-selector'
 import { useConversationDraftStore, agentChatContextKey } from '../conversations'
 import { installChatSource } from '../conversations/agentChat/testSupport'
 import { activitiesRoute, activityPage, clients, context,
   installSelectedHandlers, scope, snapshot, snapshotRoute } from '../conversations/agentChat/sch10.testSupport'
-import { boardDraftContextKey, useWorkflowBoard } from '../board-core'
+import { boardDraftContextKey, nextDraftKey, useWorkflowBoard } from '../board-core'
 import { WorkflowBoard } from './WorkflowBoard'
 
 function CurrentNavigation() { return useWorkflowBoard()?.navigationControls }
@@ -26,6 +28,7 @@ vi.mock('../workflow-files', () => ({ WorkflowFilesButton: () => null }))
 beforeEach(() => {
   // Each case opens a fresh Board; viewport memory is deliberately shared across Run visits within a case.
   useBoardViewportStore.setState({ views: {} })
+  useGraphDraftStore.getState().clearAllDrafts()
   installChatSource(); installFlowLayout(); useRunsSelectorUi.getState().setOpen(null)
 })
 afterEach(() => {
@@ -33,6 +36,7 @@ afterEach(() => {
   for (const client of clients.splice(0)) client.clear()
   useRunsSelectorUi.getState().setOpen(null)
   useConversationDraftStore.getState().clearAllDrafts()
+  useGraphDraftStore.getState().clearAllDrafts()
   localStorage.clear()
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -106,7 +110,7 @@ function renderedNodeBounds(node: HTMLElement) {
   return { left, top, right: left + bounds.width * zoom, bottom: top + bounds.height * zoom }
 }
 
-it('keeps the saved Agent and Inspect reachable after desktop resize without a Selected Run panel', async () => {
+it('keeps the saved Agent and information action reachable after desktop resize without a Selected Run panel', async () => {
   installSelectedHandlers()
   server.use(http.get('*/api/management/workspaces/:workspaceId/runs/:runId/subagents', () =>
     HttpResponse.json({ items: [], nextCursor: null, projection: 'caught-up' })),
@@ -138,11 +142,13 @@ it('keeps the saved Agent and Inspect reachable after desktop resize without a S
     expect(bounds.bottom).toBeLessThanOrEqual(480)
   })
   expect(node.style.transform).toBe(savedPosition)
-  expect(within(node).getByRole('button', { name: 'Inspect Removed Coder' })).toBeEnabled()
+  await userEvent.hover(within(node).getByRole('button', { name: name => name.startsWith('Removed Coder, ') }))
+  expect(within(node).getByRole('button', { name: 'Open Removed Coder information' })).toBeVisible()
+  expect(within(node).getByRole('button', { name: 'Open Removed Coder information' })).toBeEnabled()
 
   act(() => layout.resize(280, 480))
   await waitFor(() => expect(renderedNodeBounds(node).right).toBeLessThanOrEqual(280))
-  await userEvent.click(within(node).getByRole('button', { name: 'Inspect Removed Coder' }))
+  await userEvent.click(within(node).getByRole('button', { name: 'Open Removed Coder information' }))
   expect(await screen.findByRole('region', { name: 'Run node inspector: Removed Coder' })).toBeInTheDocument()
 })
 
@@ -187,8 +193,7 @@ it.each(['job-only', 'early-failed', 'mixed'] as const)('opens a %s Run chosen i
   }))), http.get(activitiesRoute, activityReads))
   await mountBoard()
   await screen.findByRole('region', { name: 'Selected Run board' })
-  // The Run's caption sits in the Board's floating toolbar.
-  expect(within(await screen.findByRole('banner', { name: 'Board toolbar' })).getByText('Read only')).toBeVisible()
+  expect(await screen.findByRole('banner', { name: 'Board toolbar' })).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Edit workflow' })).not.toBeInTheDocument()
   expect(screen.queryByRole('complementary', { name: 'Agent chat' })).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Run-wide Activities' })).not.toBeInTheDocument()
@@ -247,6 +252,12 @@ const liveSummary = { runId: 'run-a', shortId: 'a', startedAt: '2026-10-04T09:00
 const summariesRoute = `*/api/management/workspaces/${scope.workspaceId}/workflows/${scope.workflowId}/runs/summaries`
 function Count() { return <output aria-label="Active Runs">{useWorkflowBoard()?.activeRuns}</output> }
 async function mountWithSummaries(selectRun: () => void) {
+  const graph = versionReply(snapshot('run-a').snapshot).version.definition
+  const draft = GraphDraftCurrentSchema.parse({ ...scope, id: 'board-draft', revision: 1, publishedRevision: 1,
+    baseWorkflowVersionId: 'version-current', graph, stagedAgents: [], updatedByPrincipalId: 'owner', updatedAt: graph.createdAt ?? '2026-10-01T00:00:00Z' })
+  useGraphDraftStore.getState().installNextDraft(nextDraftKey(scope.workspaceId, scope.workflowId), { draft, agents: [] })
+  server.use(http.get('*/api/management/workspaces/:workspaceId/runs/:runId/version', ({ params }) =>
+    HttpResponse.json(versionReply(snapshot(String(params.runId)).snapshot))))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client)
   const root = createRootRoute({ component: Outlet })
   const route = createRoute({ getParentRoute: () => root, path: '/workspaces/$workspaceId', validateSearch: RunsSelectorSearchSchema,
@@ -256,7 +267,7 @@ async function mountWithSummaries(selectRun: () => void) {
     history: createMemoryHistory({ initialEntries: [`/workspaces/${scope.workspaceId}?workflowId=${scope.workflowId}`] }) })
   await router.load()
   render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
-  return client
+  return { client, router }
 }
 
 it('keeps the draft selected and reads its overlay when a Run starts later', async () => {
@@ -264,25 +275,24 @@ it('keeps the draft selected and reads its overlay when a Run starts later', asy
   const selectRun = vi.fn(), snapshotReads = vi.fn(() => HttpResponse.json(snapshot('run-a')))
   const listReads = vi.fn(() => runSummaries([]))
   server.use(http.get(summariesRoute, listReads), http.get(snapshotRoute, snapshotReads))
-  const client = await mountWithSummaries(selectRun)
+  const { client } = await mountWithSummaries(selectRun)
   await waitFor(() => expect(listReads).toHaveBeenCalled())
   expect(await screen.findByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
   server.use(http.get(summariesRoute, () => runSummaries([liveSummary])))
   await act(async () => { await client.invalidateQueries() })
   await waitFor(() => expect(screen.getByLabelText('Active Runs')).toHaveTextContent('1'))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow running · Show run' })).toBeInTheDocument())
   expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
   await waitFor(() => expect(snapshotReads).toHaveBeenCalled())
   expect(selectRun).not.toHaveBeenCalled()
 })
 
-it('keeps the draft selected when the Board opens while a Run is running', async () => {
+it('shows the live Run when the Board opens while it runs from a draft of another saved version', async () => {
   installSelectedHandlers()
   server.use(http.get(summariesRoute, () => runSummaries([liveSummary])))
   const selectRun = vi.fn()
-  await mountWithSummaries(selectRun)
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument())
-  expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()
-  expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
-  expect(selectRun).not.toHaveBeenCalled()
+  const { router } = await mountWithSummaries(selectRun)
+  expect(await screen.findByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', 'run-a')
+  expect(await screen.findByRole('group', { name: 'Removed Coder, saved agent, read only' })).toBeVisible()
+  expect(router.state.location.search.selectedRunId).toBe('run-a')
 })

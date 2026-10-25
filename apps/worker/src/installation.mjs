@@ -8,7 +8,7 @@ import { acquireWorkerLock } from './runtime.mjs';
 import { migratePinnedCompanionLauncher } from './companionLauncher.mjs';
 import { prepareBundledBrowserRuntime, activateBrowserRuntime, rollbackBrowserRuntime,
   offlineBrowserRuntimeLifecycle, readBrowserRuntimeActivation, readInstalledBrowserRuntime,
-  writeBrowserRuntimeStatus } from './browserRuntimeInstall.mjs';
+  writeBrowserRuntimeStatus, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const digest = /^[a-f0-9]{64}$/;
@@ -16,9 +16,7 @@ const version = /^\d+\.\d+\.\d+$/;
 export function validateManifest(manifest, facts, expected) {
   if (manifest.format !== 1 || !version.test(manifest.version) || !/^[a-f0-9]{40}$/.test(manifest.commit) || !digest.test(manifest.lockfileSha256) || !manifest.target) throw new WorkerError('manifest_invalid');
   if (manifest.protocolVersion !== expected.protocolVersion || manifest.identityFormat !== expected.identityFormat) throw new WorkerError('protocol_or_identity_unsupported');
-  const runtimeMatches = manifest.target.node === facts.node || manifest.runtime?.version === facts.node
-    || manifest.runtime?.version === manifest.target.node;
-  if (facts.os !== 'ubuntu' || manifest.target.os !== facts.os || manifest.target.osRelease !== facts.osRelease || manifest.target.arch !== facts.arch || manifest.target.libc !== facts.libc || !runtimeMatches) throw new WorkerError('target_runtime_mismatch');
+  if (facts.os !== 'ubuntu' || manifest.target.os !== facts.os || manifest.target.osRelease !== facts.osRelease || manifest.target.arch !== facts.arch || manifest.target.libc !== facts.libc || manifest.target.node !== facts.node) throw new WorkerError('target_runtime_mismatch');
   if (!facts.rootPersistent || !facts.homePersistent || facts.storagePersistent === false) throw new WorkerError('nonpersistent_storage');
   if (manifest.packageManager !== 'pnpm@11.27.0' || !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 512) throw new WorkerError('manifest_invalid');
   const names = new Set();
@@ -341,9 +339,14 @@ export async function rollbackVersion({ root, stateDirectory, approveStop, facts
       const retained = await readRetainedRelease(root);
       validateManifest(retained.manifest, facts, expected);
       const activation = await readBrowserRuntimeActivation(join(root, 'browser-runtime'));
-      const retainedRuntime = retained.manifest.browserRuntime?.manifestSha256;
+      let retainedRuntime = retained.manifest.browserRuntime?.manifestSha256;
       const currentRuntime = activation ? await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts }) : null;
-      if (currentRuntime?.manifestSha256 !== retainedRuntime && activation?.changed && activation.state !== 'rolled-back') {
+      if (retained.manifest.browserRuntime?.recipeSha256 && activation?.previousReference) {
+        const previous = await readInstalledBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), target: facts,
+          reference: activation.previousReference });
+        if (browserRuntimeMatchesRelease(retained.manifest, previous)) retainedRuntime = previous.manifestSha256;
+      }
+      if (!browserRuntimeMatchesRelease(retained.manifest, currentRuntime) && activation?.changed && activation.state !== 'rolled-back') {
         if (activation.previousReference !== (retainedRuntime ? `versions/${retainedRuntime}` : null)) {
           throw new WorkerError('browser_runtime_rollback_unavailable');
         }
