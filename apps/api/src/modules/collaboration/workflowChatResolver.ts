@@ -136,7 +136,8 @@ async function resolveRunNode(sql: SqlQuery, input: WorkflowExecutionChatSelecti
     if (current.length === 1) return executionChoice(run, current[0]!, agent, targetAgent)
   }
   const rows = (await sql.query<WorkflowChatExecutionRow & { id: string }>(`select id,record,accepted,work_activation_id from harness_executions
-    where run_id=$1 and workflow_node_id=$2 and ($3::text is null or id<$3) order by id desc limit $4`,
+    where run_id=$1 and workflow_node_id=$2 and ($3::text is null
+      or (created_at,id)<(select created_at,id from harness_executions where id=$3)) order by created_at desc,id desc limit $4`,
   [run.id, input.workflowNodeId, before ?? null, input.limit + 1])).rows
   if (!rows.length) return { kind: 'unavailable', reason: 'NO_EXECUTION' }
   if (rows.length === 1 && !before) return executionChoice(run, rows[0]!, agent, targetAgent)

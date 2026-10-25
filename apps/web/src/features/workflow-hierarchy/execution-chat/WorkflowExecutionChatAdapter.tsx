@@ -75,6 +75,17 @@ export function WorkflowExecutionChatAdapter({selection:raw,views}:{
   useEffect(()=>{
     if(selection.runId&&resolved&&!pinned) onSelectTarget(resolved.target,resolved.workflowVersionId)
   },[selection.runId,resolved,pinned,onSelectTarget])
+  // A Run opens each Agent's newest execution chat; once one was pinned for that Agent, "Other attempts" lists them all.
+  const openedRun=useRef<string | undefined>(undefined)
+  const openKey=selection.runId?`${selection.runId}:${nodeId}`:undefined
+  if(openKey&&(selection.executionId||selection.waitingActivationId)) openedRun.current=openKey
+  useEffect(()=>{
+    // The server lists a Run node's executions newest first.
+    const latest=first?.kind==='selection_required'?first.items[0]:undefined
+    if(!openKey||!latest||openedRun.current===openKey) return
+    openedRun.current=openKey
+    onSelectTarget(latest.target,latest.workflowVersionId)
+  },[openKey,first,onSelectTarget])
   const client=useMemo(()=>resolved?boundClient(cache,resolved):undefined,[cache,resolved])
   // A draft-only Agent (never saved) has no configuration to chat with yet: save only that Agent, never the
   // workflow graph, so chat opens even while an unrelated part of the workflow can't be saved.
