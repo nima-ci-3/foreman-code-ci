@@ -11,6 +11,7 @@ import { downloadBrowserRuntimeArtifact } from '../src/browserRuntimeBuild.mjs';
 import { createWorkerBrowserRuntime } from '../src/browserRuntime.mjs';
 import { superviseWorkerUpdate, writeUpdateRecord } from '../src/updateSupervisor.mjs';
 import { packBrowserRuntime } from '../../../scripts/browser-runtime-install.mjs';
+import { INSTALLATION_NAMES } from '../../../packages/contracts/src/installationNames.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.39', node: 'v22.23.3' };
@@ -202,7 +203,7 @@ for (const outcome of ['current', 'rolled-back', 'closed']) {
     let selected = release;
     const record = { format: 1, manifestSha256, status: { state: 'restarting', targetVersion: '2.0.0',
       currentVersion: '1.0.0', manifestSha256: previous.manifestSha256 }, restart: {
-      service: 'foreman-worker.service', requestId: 'update', stateDirectory, root: f.directory,
+      service: INSTALLATION_NAMES.services.worker, requestId: 'update', stateDirectory, root: f.directory,
       pointer: { kind: 'file', path: join(f.directory, 'pointer') }, directory,
       previousDirectory: join(f.directory, 'old-release'), previousVersion: '1.0.0', workerInstallationId: 'worker' } };
     await writeUpdateRecord(stateDirectory, record);
