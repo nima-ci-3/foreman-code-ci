@@ -11,13 +11,6 @@ export const RunsSelectorSearchSchema = WorkspaceBoardSearchSchema.safeExtend({
   selectedRunId: runIdSchema.optional(),
 })
 
-const workspaceSearchKeys = new Set(Object.keys(RunsSelectorSearchSchema.shape))
-/** A mistyped or outdated query key in a shared link is dropped instead of failing the workspace page. */
-export function knownWorkspaceSearch(rawSearch: unknown): Record<string, unknown> {
-  if (!rawSearch || typeof rawSearch !== 'object') return {}
-  return Object.fromEntries(Object.entries(rawSearch).filter(([key]) => workspaceSearchKeys.has(key)))
-}
-
 export function withoutRunsSelectorSearch<T extends object>(search: T) {
   const { selectedRunId: _selectedRun, ...boardSearch } = search as T & { selectedRunId?: unknown }
   void _selectedRun

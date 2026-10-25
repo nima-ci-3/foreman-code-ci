@@ -157,12 +157,12 @@ describe('actual Main and installed Codex qualification read capability', () => 
       expect(fs.createReadStream).toHaveBeenCalledTimes(2)
       expect(f.readFacts).toHaveBeenCalledTimes(2)
 
-      f.facts.harness.qualification!.status = 'unqualified'
+      f.facts.harness.qualification.status = 'unqualified'
       await expect(f.reader.capture()).rejects.toMatchObject({ code: 'HARNESS_UNQUALIFIED' })
       expect(f.readFacts).toHaveBeenCalledTimes(3)
       expect(fs.createReadStream).toHaveBeenCalledTimes(2)
 
-      f.facts.harness.qualification!.status = 'qualified'
+      f.facts.harness.qualification.status = 'qualified'
       const before = await stat(payload)
       f.readFacts.mockImplementationOnce(async () => {
         await writeFile(payload, 'payload-two')
@@ -223,12 +223,12 @@ describe('actual Main and installed Codex qualification read capability', () => 
       try {
         expect(mount.revision).toBe('codex-live-5+identity-v1')
         const f = fixture({ suiteRevision: mount.revision, binding: original })
-        f.facts.harness.qualification!.suiteRevision = 'codex-live-5+identity-v1'
+        f.facts.harness.qualification.suiteRevision = 'codex-live-5+identity-v1'
         expect((await f.reader.capture()).qualification).toEqual(f.facts.harness.qualification)
         expect(await f.reader.repository.find('codex', '0.132.0', 'a'.repeat(64), 'codex-live-5+identity-v1')).toEqual(f.facts.harness.qualification)
         const gate = new HarnessQualificationRegistry(f.reader.repository, { codex: mount.revision })
         expect(await gate.trustedExact('codex', '0.132.0', 'a'.repeat(64))).toBe(true)
-        f.facts.harness.qualification!.suiteRevision = 'codex-live-4'
+        f.facts.harness.qualification.suiteRevision = 'codex-live-4'
         await expect(f.reader.capture()).rejects.toMatchObject({ code: 'HARNESS_UNQUALIFIED' })
       } finally { await worker.stop() }
     } finally {
@@ -243,7 +243,7 @@ describe('actual Main and installed Codex qualification read capability', () => 
     expect(await f.reader.repository.find('codex', '0.154.0', 'a'.repeat(64), 'codex-live-4')).toBeNull()
     expect(f.readFacts).toHaveBeenCalledTimes(3)
     expect(f.inspect).toHaveBeenCalledTimes(6)
-    f.facts.harness.qualification!.status = 'unqualified'
+    f.facts.harness.qualification.status = 'unqualified'
     await expect(f.reader.repository.list()).rejects.toMatchObject({ code: 'HARNESS_UNQUALIFIED' })
   })
   it('retains the measured payload after an update only when the original process owner is verified', async () => {
@@ -268,11 +268,11 @@ describe('actual Main and installed Codex qualification read capability', () => 
   })
   it.each(['proof-absent', 'wrong-sha', 'wrong-suite', 'wrong-profile', 'failed-check', 'stale-profile', 'different-operation', 'foreign-host', 'wrong-configuration'] as const)('denies %s without using a baseline or config trust flag', async kind => {
     const f = fixture()
-    if (kind === 'proof-absent') f.facts.harness.qualification!.status = 'unqualified'
-    if (kind === 'wrong-sha') f.facts.harness.qualification!.binarySha256 = 'c'.repeat(64)
-    if (kind === 'wrong-suite') f.facts.harness.qualification!.suiteRevision = 'previous-suite'
-    if (kind === 'wrong-profile') f.facts.harness.qualification!.profile = 'codex-0.154'
-    if (kind === 'failed-check') f.facts.harness.qualification!.checks[0]!.passed = false
+    if (kind === 'proof-absent') f.facts.harness.qualification.status = 'unqualified'
+    if (kind === 'wrong-sha') f.facts.harness.qualification.binarySha256 = 'c'.repeat(64)
+    if (kind === 'wrong-suite') f.facts.harness.qualification.suiteRevision = 'previous-suite'
+    if (kind === 'wrong-profile') f.facts.harness.qualification.profile = 'codex-0.154'
+    if (kind === 'failed-check') f.facts.harness.qualification.checks[0]!.passed = false
     if (kind === 'stale-profile') f.facts.harness.profileProof.instanceRevision = 'new-revision'
     if (kind === 'different-operation') f.readFacts.mockImplementation(async () => ({ ...structuredClone(f.facts), intent: { ...f.facts.intent, operationId: 'another-operation' } }))
     if (kind === 'foreign-host') f.facts.harness.override.target.applicationInstallationId = randomUUID()

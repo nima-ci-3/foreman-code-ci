@@ -10,7 +10,7 @@ import { HarnessExecutionError } from '../errors.js'
 import { ClaudeInputNotDeliveredError } from './port.js'
 import type { NativeCompactInput } from '../port.js'
 import { claudePromptUuid, type ClaudeManagerContext, type Runtime } from './sessionTypes.js'
-import { startupSignal, queryOptions, runtimeFor, newSessionOptions } from './sessionState.js'
+import { startupSignal, queryOptions, runtimeFor } from './sessionState.js'
 import { deliverCredentials } from './sessionCredentials.js'
 import { observed, pump } from './sessionPump.js'
 
@@ -69,7 +69,7 @@ export async function applyPreferences(ctx: ClaudeManagerContext, runtime: Runti
     runtime.sdk = await ctx.options.runner.open({ scope: ctx.options.scope,
       options: { ...queryOptions(ctx, start, preferences), model: profile?.id ?? ctx.options.sdkOptions.model,
         ...(runtime.credentialServers ? { mcpServers: runtime.credentialServers } : {}) },
-      ...(runtime.session ? { resume: { ...ctx.options.scope, nativeSessionId: runtime.session.nativeSessionId } } : newSessionOptions(ctx)),
+      ...(runtime.session ? { resume: { ...ctx.options.scope, nativeSessionId: runtime.session.nativeSessionId } } : {}),
       ...(startup.signal ? { signal: startup.signal } : {}), onObservation: observation => observed(ctx, runtime, observation),
       ...(ctx.options.cancelPendingRequests ? { cancelPendingRequests: () => {
         if (!runtime.replacingForResume) ctx.options.cancelPendingRequests!()
