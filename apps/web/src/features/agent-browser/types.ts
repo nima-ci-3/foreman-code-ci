@@ -13,7 +13,7 @@ export type NodeBrowserSettings = z.infer<typeof NodeBrowserSettingsSchema>
 
 /** In-process viewer adapter values. These are not HTTP/MCP schemas. C0 owns the wire. */
 export type PageGesture =
-  | { kind: 'pointer'; phase: 'move' | 'down' | 'up'; x: number; y: number; button: number; buttons: number; clickCount?: number; modifiers?: number }
+  | { kind: 'pointer'; phase: 'move' | 'down' | 'up'; x: number; y: number; button: number; buttons: number }
   | { kind: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
   | { kind: 'key'; phase: 'down' | 'up'; key: string; code: string; alt: boolean; control: boolean; meta: boolean; shift: boolean; repeat: boolean }
   | { kind: 'composition'; phase: 'start' | 'update' | 'end'; text: string }

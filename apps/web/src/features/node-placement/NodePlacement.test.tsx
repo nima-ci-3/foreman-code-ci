@@ -1,26 +1,11 @@
-import type { ReactElement } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render as renderView, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
-import { afterEach, beforeEach, vi } from 'vitest'
-import { server } from '../../mocks/server'
+import { vi } from 'vitest'
 import { NodePlacementField } from './NodePlacementField'
 import { NodePlacementFacts } from './NodePlacementFacts'
 import { acceptedPlacementFixture as placement, savedPlacementFixture as saved, workerObservationFixture as observation } from './fixtures'
 import { NativeExecutionPlacementSchema } from '@foreman-code/contracts/node-placement'
 import { worktreeFixture } from '../workflow-board/worktree.fixtures'
-
-let client: QueryClient
-beforeEach(() => {
-  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  server.use(http.get('*/api/management/computers/activity', () => HttpResponse.json({
-    mainId: placement.mainId, computers: [], cloud: [], truncated: false, activityComplete: true,
-  })))
-})
-afterEach(() => { cleanup(); client.clear() })
-const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
-const render = (ui: ReactElement) => renderView(ui, { wrapper })
 
 it('shows Main as the default without inventing or applying a saved placement', () => {
   const change = vi.fn()

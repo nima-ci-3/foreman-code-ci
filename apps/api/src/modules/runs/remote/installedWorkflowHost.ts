@@ -43,7 +43,6 @@ import { CodexAppServerSessionManager, safeEnvironment } from '../../harnesses/c
 import { inspectInstalledCodex } from '../../harnesses/installedCodexInspection.js'
 import { PayloadFingerprintCache } from '../../harnesses/payloadFingerprintCache.js'
 import { createInstalledCodexQualificationReader } from '../../harnesses/installedCodexQualification.js'
-import type { InstalledWorkflowClaude, InstalledWorkflowClaudeAdapter } from '../../harnesses/index.js'
 import { createInstalledCodexDependencies } from '../../harnesses/installedCodexDependencies.js'
 import { normalizeHarnessVersion } from '../../harnesses/qualification/profiles.js'
 import { NativeProcessRegistry, type NativeLaunchObservation, type NativeProcessRecovery } from '../../harnesses/recovery/processRegistry.js'
@@ -63,7 +62,7 @@ import { RemoteJobExecutionRpcRequestRecordSchema } from '@foreman-code/contract
 import { RemoteExecutionRpcRequestSchema, type RemoteExecutionRpcRequest } from '@foreman-code/contracts/remote-execution-rpc'
 import type { DeviceExtensionRegistration, DeviceExtensionContext } from '../../devices/deviceApplicationChannel.js'
 import { prepareWorkerApplicationAccess } from './workerApplicationAccess.js'
-import { createUnboundWorkerMcpEndpoint, createWorkerMcpEndpoint, isLeaseRefusal, WORKER_MCP_LEASE_RENEWAL_WINDOW_MS } from './workerMcpEndpoint.js'
+import { createWorkerMcpEndpoint, isLeaseRefusal, WORKER_MCP_LEASE_RENEWAL_WINDOW_MS } from './workerMcpEndpoint.js'
 import { readInstalledWorkflowConfiguration, type InstalledWorkflowConfigurationLocation } from './installedWorkflowConfiguration.js'
 import { RuntimeLeafAttestationSchema, assertRuntimeLeafPath, type RuntimeLeafAttestation } from './runtimeLeaf.js'
 import { InstalledWorkflowPhysicalReadouts, matchingOriginalRegistryLaunch,assertOriginalPhysicalDirectories, remoteWorkflowSourceDigest, remoteWorkflowNativeHistory } from './workflowPhysicalReadout.js'
@@ -104,7 +103,7 @@ export function captureInstalledWorkflowNativeOwner(registry:NativeProcessRegist
   if (session.harness === 'opencode') {
     throw retiredHarnessError()
   }
-  if((session.harness !== 'codex'&&session.harness !== 'claude')||intent.mainId!==connection.mainId)unavailable('native_binding_conflict')
+  if(session.harness !== 'codex'||intent.mainId!==connection.mainId)unavailable('native_binding_conflict')
   const owner=`execution:${intent.executionId}`
   const launches=registry.snapshot().launches.filter(row=>row.owner===owner&&row.lifecycle==='active')
   if(launches.length!==1)unavailable('native_owner_missing_or_ambiguous')
@@ -257,14 +256,10 @@ export async function attestInstalledWorkflowRuntimeLeaf(input:{sources:SourceOp
   } finally {if(directory!==base)await directory.close();await base.close()}
 }
 
-type CodexQualificationReader=ReturnType<typeof createInstalledCodexQualificationReader>
-type ClaudeQualificationReader=ReturnType<InstalledWorkflowClaudeAdapter['createReader']>
-type QualificationReader=CodexQualificationReader|ClaudeQualificationReader
+type QualificationReader=ReturnType<typeof createInstalledCodexQualificationReader>
 type QualificationCapture=Awaited<ReturnType<QualificationReader['capture']>>
 export type { CapturedWorkflowMainRequest, InstalledWorkflowNativeOutputContext }
 export interface InstalledWorkflowHostOptions {
-  /** Supplied by the Worker composition: the harnesses entry also carries Main-only code the Worker bundle excludes. */
-  workflowClaude?: InstalledWorkflowClaudeAdapter
   stateDirectory:string
   mainNow(): number
   pairing:WorkerPairingConfiguration
@@ -299,9 +294,7 @@ interface InstalledOperation {
   launchReservation?: Promise<void>
   account:ResolvedProviderAccount|null
   host?:RemoteExecutionHost
-  manager?:CodexAppServerSessionManager|InstalledWorkflowClaude['manager']
-  /** Set for a Claude execution: the adapter that chose its session before the first input. */
-  claude?:InstalledWorkflowClaude
+  manager?:CodexAppServerSessionManager
   launchDisabled?:true
   native?:InstalledWorkflowNativeOwner
   session?:NativeSessionReference
@@ -555,13 +548,12 @@ class InstalledWorkflowHostRuntime {
     } else {
       if(this.operations.size>=1000)unavailable('operation_retention_full')
       const harness = placement.payload.kind === 'agent' ? placement.payload.driverId : undefined
-      if (harness !== 'codex' && harness !== 'claude') unavailable('installed_harness_selection_missing')
-      const driver = harness as 'codex' | 'claude'
+      if (harness !== 'codex') unavailable('installed_harness_selection_missing')
       const binding = placement.payload.kind === 'agent' ? placement.payload.accountBinding : undefined
       assertWorkerProviderAccountBinding(binding, context.binding)
-      const account = await resolveRuntimeProviderAccount(this.input.accounts, driver, undefined,
+      const account = await resolveRuntimeProviderAccount(this.input.accounts, 'codex', undefined,
         this.registry.scope(`execution:${intent.executionId}`), undefined, binding)
-      const environment = account ? managedProviderEnvironment(hostEnvironment(), account, driver) : hostEnvironment()
+      const environment = account ? managedProviderEnvironment(hostEnvironment(), account, 'codex') : hostEnvironment()
       const suiteRevision = this.input.codexSuiteRevision
       const readerInput: Parameters<typeof createInstalledCodexQualificationReader>[0] = {intent,placement,signal: this.signal,
         trustedCurrentBinding:()=>this.input.currentBinding()??null,
@@ -598,27 +590,17 @@ class InstalledWorkflowHostRuntime {
           await workerExecutionAuthorizer(this.forBinding(binding))(resident.intent, placement, 'read', signal)
           await assertOriginal()
         }, suiteRevision }
-      const claudeAdapter = driver === 'claude' ? this.input.workflowClaude ?? unavailable('claude_workflow_adapter_unavailable') : undefined
-      const reader: QualificationReader = claudeAdapter ? claudeAdapter.createReader({ intent, placement,
-        signal: this.signal, trustedCurrentBinding: readerInput.trustedCurrentBinding,
-        ...(readerInput.trustedCurrentIntent ? { trustedCurrentIntent: readerInput.trustedCurrentIntent } : {}),
-        readFacts: readerInput.readFacts,
-        inspect: (binding, effectSignal) => claudeAdapter.inspect({ binding, configuration: this.input.configuration,
-          environment, cwd: this.input.stateDirectory, signal: effectSignal, fingerprintCache: this.payloadFingerprints }) })
-        : createInstalledCodexQualificationReader(readerInput)
+      const reader = createInstalledCodexQualificationReader(readerInput)
       const capture=await reader.capture(signal)
       signal.throwIfAborted()
       const savedHarness = capture.facts.configuration.harness
-      if ((savedHarness.harness === 'codex' || savedHarness.harness === 'claude') && savedHarness.accountId
+      if (savedHarness.harness === 'codex' && savedHarness.accountId
         && savedHarness.accountId !== account?.accountId) unavailable('accepted_account_binding_missing')
       this.current(context.binding)
       if(this.operations.size>=1000)unavailable('operation_retention_full')
       owned={intent:structuredClone(intent),placement:structuredClone(placement),context,
         connection:connectionIdentity(context.binding),reader,capture,
         scope:this.registry.scope(`execution:${intent.executionId}`),account,publications:new Map()}
-      // Claude's settings name its MCP URL before the first input, so its Worker endpoint exists before Main's lease.
-      if (driver === 'claude') owned.mcp = await createUnboundWorkerMcpEndpoint({ launcher: appLauncherPath(),
-        signal: this.signal, now: this.input.mainNow })
       this.operations.set(intent.executionId,owned)
     }
     const generation=commandInputHash(context.binding)
@@ -652,14 +634,12 @@ class InstalledWorkflowHostRuntime {
 
   private createManager(configurationContext: NativeManagerResolutionContext, log: RemoteOperationJournal) {
     const resident=this.operations.get(configurationContext.executionId)
-    if (resident && 'accepted' in resident.capture) return this.createClaudeManager(configurationContext, resident)
     if(!resident||configurationContext.harness !== 'codex'||!isDeepStrictEqual(configurationContext.configuration,resident.capture.facts.configuration)
       ||configurationContext.workingDirectory!==resident.capture.facts.executionPlacement.workingTree.canonicalCwd)unavailable('accepted_configuration_conflict')
-    const actual=resident!,codexCapture=actual.capture as Awaited<ReturnType<CodexQualificationReader['capture']>>
-    const binary=codexCapture.inspection.currentTarget?.installation.launcher.resolvedLauncher
+    const actual=resident!,binary=actual.capture.inspection.currentTarget?.installation.launcher.resolvedLauncher
     if(!binary)unavailable('installed_launcher_unavailable')
     const instances=new HarnessInstanceRegistry(localHarnessDrivers.filter(driver=>driver.driverId===configurationContext.harness))
-    const override=codexCapture.facts.harness.override,installation=codexCapture.facts.harness.installation
+    const override=actual.capture.facts.harness.override,installation=actual.capture.facts.harness.installation
     instances.reload([{instanceId:override.instanceId,instanceRevision:override.instanceRevision,driverId:override.driverId,enabled:override.enabled,configuration:override.configuration}])
     const payloadFingerprints=installation.launcher.payloadFingerprints
     if(!payloadFingerprints?.length)unavailable('launcher_payload_evidence_missing')
@@ -723,7 +703,7 @@ class InstalledWorkflowHostRuntime {
         }
       },
     }
-    const dependencies=createInstalledCodexDependencies({reader:actual.reader as CodexQualificationReader,codexSuiteRevision:this.input.codexSuiteRevision})
+    const dependencies=createInstalledCodexDependencies({reader:actual.reader,codexSuiteRevision:this.input.codexSuiteRevision})
     const declared = actual.placement.payload.kind === 'agent' && actual.placement.payload.artifactOutputs
     const outputPorts = declared ? (this.input.nativeOutputs
       ? this.input.nativeOutputs(outputContext)
@@ -757,7 +737,7 @@ class InstalledWorkflowHostRuntime {
       qualify:async(binary,cwd,environment,authenticated,effectSignal)=>{
         await before()
         const result=await dependencies.qualify(binary,cwd,environment,authenticated,effectSignal,actual.scope)
-        if(normalizeHarnessVersion(result.providerVersion)!==codexCapture.qualification.version)unavailable('native_version_changed')
+        if(normalizeHarnessVersion(result.providerVersion)!==actual.capture.qualification.version)unavailable('native_version_changed')
         return result
       },
       assertUnchanged:async value=>{await before();await dependencies.assertUnchanged(value)},
@@ -770,46 +750,6 @@ class InstalledWorkflowHostRuntime {
     },{workingDirectory:configurationContext.workingDirectory},nativeOutputs)
     actual.manager=manager
     return manager
-  }
-
-  /** A Claude execution reuses the Agent-chat Claude adapter; Main authorizes its SDK callbacks over the same channel. */
-  private createClaudeManager(configurationContext: NativeManagerResolutionContext, actual: InstalledOperation) {
-    const capture = actual.capture as Awaited<ReturnType<ClaudeQualificationReader['capture']>>
-    if (configurationContext.harness !== 'claude' || !isDeepStrictEqual(configurationContext.configuration, capture.facts.configuration)
-      || configurationContext.workingDirectory !== capture.facts.executionPlacement.workingTree.canonicalCwd) {
-      unavailable('accepted_configuration_conflict')
-    }
-    if (!actual.mcp) unavailable('original_native_start_missing')
-    // Declared artifact outputs are captured from Codex native file contexts only.
-    if (actual.placement.payload.kind === 'agent' && actual.placement.payload.artifactOutputs) {
-      unavailable('claude_artifact_outputs_unsupported')
-    }
-    const adapter = this.input.workflowClaude ?? unavailable('claude_workflow_adapter_unavailable')
-    const claude = adapter.allocate({ capture, workingDirectory: configurationContext.workingDirectory,
-      recovery: actual.scope,
-      environment: actual.account ? managedProviderEnvironment(hostEnvironment(), actual.account, 'claude') : hostEnvironment(),
-      ...(actual.account?.apiKey ? { apiKey: actual.account.apiKey } : {}),
-      before: async () => {
-        if (actual.launchDisabled || this.closing) unavailable('original_native_owner_closed')
-        await workerExecutionAuthorizer(this.forBinding(actual.context.binding))(actual.intent, actual.placement, 'start')
-        await this.reserveResidentLaunch(actual)
-      },
-      mcpEndpoint: actual.mcp!.endpoint, credential: () => actual.applicationAccess?.token,
-      // Main sends the accepted request with prepare; discovery before it has none yet.
-      inspectionStart: () => actual.nativeStart && structuredClone(actual.nativeStart),
-      authority: async (claudeRequest, signal) => {
-        const reply = await this.forBinding(actual.context.binding)(EXECUTION_AUTHORITY_EXTENSION.namespace, {
-          method: 'claude-authority', request: claudeRequest,
-          authorization: { version: 1, action: 'read', intent: actual.intent, placement: actual.placement } }, { signal })
-        if (reply.bytes?.byteLength) unavailable('claude_authority_reply_invalid')
-        return reply.payload
-      },
-      callbackJournal: adapter.callbackJournal(join(this.input.stateDirectory, 'workflow-claude-callbacks',
-        `${actual.intent.operationId}.json`)),
-      deviceId: actual.context.binding.deviceId })
-    actual.claude = claude
-    actual.manager = claude.manager
-    return claude.manager
   }
 
   private createExecutionHost(context: DeviceExtensionContext, log: RemoteOperationJournal) {
@@ -918,16 +858,10 @@ class InstalledWorkflowHostRuntime {
           if(observed.lifecycle!=='active'||!isDeepStrictEqual(observed.guardian,captured.launch.guardian)
             ||!isDeepStrictEqual(observed.provider,captured.launch.provider)||!isDeepStrictEqual(observed.boundary,captured.launch.boundary))unavailable('original_native_process_changed')
         }
-        if (resident.claude) {
-          assertOwnerCurrent()
-          if (!resident.claude.ownsSession(session)) unavailable('original_native_residency_unavailable')
-        } else {
-          const lifetime = captureOriginalCodexSession(resident.manager as CodexAppServerSessionManager, session,
-            resident.nativeStart!, assertOwnerCurrent)
-          assertOwnerCurrent()
-          if(!lifetime)unavailable('original_native_residency_unavailable')
-          lifetime!.assertCurrent()
-        }
+        const lifetime = captureOriginalCodexSession(resident.manager, session, resident.nativeStart!, assertOwnerCurrent)
+        assertOwnerCurrent()
+        if(!lifetime)unavailable('original_native_residency_unavailable')
+        lifetime!.assertCurrent()
         if (!resident.runtimeLeaf) unavailable('original_runtime_leaf_missing')
         this.recovery.remember({ version: 1,
           ...(resident.placement.payload.kind === 'agent' && resident.placement.payload.accountBinding
@@ -1247,7 +1181,7 @@ class InstalledWorkflowHostRuntime {
       receipt = closed.receipt
     }
     if (receipt.intent.executionId !== owner.attempt.executionId || receipt.intent.attemptId !== owner.attempt.attemptId
-      || owner.preparationNativeSession && (!['codex', 'claude', 'opencode'].includes(owner.preparationNativeSession.harness)
+      || owner.preparationNativeSession && (!['codex', 'opencode'].includes(owner.preparationNativeSession.harness)
         || owner.preparationNativeSession.nativeSessionId !== receipt.native?.sessionId)
       || receipt.entryAttempted && !receipt.native && !hasPositiveRemoteEntryClosure(receipt)
       // The journal adds the started turn to the native identity; the captured process identity never has it.

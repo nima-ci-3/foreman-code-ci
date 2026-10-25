@@ -11,8 +11,6 @@ import { readImmutableAgentConfiguration } from '../workflows/index.js'
 import type { ProviderAccountConfigurationService } from '../harnesses/index.js'
 import { readAgentDefaultsSetting } from '../settings/index.js'
 import { sha256Hex } from '../../shared/hash.js'
-import { HostHarnessOverrideSchema } from '@foreman-code/contracts/harness-registry'
-import { stagedProfileSelection } from './stagedProfileSelection.js'
 
 export function authorizeStagedAgents(principal: ManagementPrincipal, input: Pick<CurrentEditIntent['saveInput'], 'workspaceId' | 'stagedAgents'>) {
   for (const item of input.stagedAgents ?? []) {
@@ -61,15 +59,7 @@ export async function prepareCurrentStagedAgents(client: pg.PoolClient, principa
     const configRow = original ? (await client.query('select id,workspace_id,agent_id,version,record from agent_configuration_versions where id=$1', [original])).rows[0] : undefined
     const current = configRow ? readImmutableAgentConfiguration(configRow, { id: original!, workspaceId: input.workspaceId, agentId: item.agent.id }) : undefined
     if (row && !current) throw new DomainError('AGENT_CONFIGURATION_CONFLICT', 'The original immutable Agent configuration is unavailable.', 409)
-    const configured = configurationInput(input.workspaceId, item.agent, current, item.baseRevision === null)
-    const selection = await stagedProfileSelection(input.graph, item.agent.id, configured.harnessProfileSelection,
-      async (instanceId, instanceRevision) => {
-        const row = (await client.query<{ record: unknown }>(`select record from harness_instance_settings
-          where instance_id=$1 order by revision desc limit 1`, [instanceId])).rows[0]
-        const profile = row ? HostHarnessOverrideSchema.parse(row.record) : undefined
-        return profile?.instanceRevision === instanceRevision ? profile.target : undefined
-      })
-    const requested = { ...configured, ...(selection ? { harnessProfileSelection: selection } : {}) }
+    const requested = configurationInput(input.workspaceId, item.agent, current, item.baseRevision === null)
     const configInput = { ...requested, harnessProfileSelection: requested.harnessProfileSelection, harness: accounts
       ? await accounts.resolve(requested.harness, requested.harnessProfileSelection, { sql: client }) : requested.harness }
     if (accounts) {

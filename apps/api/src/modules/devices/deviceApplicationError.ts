@@ -126,18 +126,6 @@ const readinessCodes = new Set(['WORKER_VERSION_SKEW', 'WORKER_BUNDLE_UNPUBLISHE
 const failure = (code: string, failureClass: FailureClass, details?: WorkerBundleReadiness): DeviceApplicationFailure =>
   ({ code, class: failureClass, retryable: failureClass === 'transient', ...(details ? { details } : {}) })
 
-/** A Worker's browser action rejection keeps its code, 4xx status and short message, so the owner sees why. It reads a
- * DomainError on the Worker and the reply payload on Main. */
-function browserRejection(error: unknown): { message: string; status: number } | undefined {
-  if (!error || typeof error !== 'object') return undefined
-  const { code, message, status, rejection } = error as { code?: unknown; message?: unknown; status?: unknown; rejection?: unknown }
-  if (typeof code !== 'string' || !/^BROWSER_[A-Z_]{1,60}$/.test(code)) return undefined
-  const value = (rejection ?? { message, status }) as { message?: unknown; status?: unknown }
-  return typeof value.message === 'string' && value.message.length > 0 && value.message.length <= 300
-    && typeof value.status === 'number' && Number.isInteger(value.status) && value.status >= 400 && value.status < 500
-    ? { message: value.message, status: value.status } : undefined
-}
-
 /** The failure a device reply carries. Only listed codes cross the channel, with their listed class; an unlisted error
  * that states its class keeps it under a redacted code, so a transient failure stays transient. Unclassified unlisted
  * codes are rejections. */
@@ -157,8 +145,6 @@ export function deviceApplicationFailure(error: unknown): DeviceApplicationFailu
       ? WorkerBundleReadinessSchema.safeParse((error as { details?: unknown }).details) : undefined
     return failure(proposed, classes[proposed]!, details?.success ? details.data : undefined)
   }
-  const rejection = browserRejection(error)
-  if (rejection) return { ...failure(proposed as string, 'permanent'), rejection }
   const explicit = explicitFailureClass(error)
   if (explicit === 'permanent') return failure('extension-rejected', 'permanent')
   if (explicit) return failure(explicit === 'cancelled' ? 'cancelled' : 'unavailable', explicit)
@@ -171,14 +157,11 @@ export class DeviceApplicationError extends Error {
   readonly class: FailureClass
   readonly retryable: boolean
   readonly details: WorkerBundleReadiness | undefined
-  readonly rejection: { message: string; status: number } | undefined
   // Plain fields, not parameter properties: Worker code loads this file through Node's type stripping.
-  constructor(code: string, details?: WorkerBundleReadiness, options?: ErrorOptions & { class?: FailureClass
-    rejection?: { message: string; status: number } }) {
+  constructor(code: string, details?: WorkerBundleReadiness, options?: ErrorOptions & { class?: FailureClass }) {
     super(code, options)
     this.code = code
     this.details = details
-    this.rejection = options?.rejection
     this.class = options?.class ?? deviceApplicationFailure({ code }).class
     this.retryable = this.class === 'transient'
   }

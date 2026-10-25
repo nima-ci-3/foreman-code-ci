@@ -9,7 +9,6 @@ import { z } from 'zod'
 
 import { registerOperatorHttpSecurity, requireLocalRequest } from './modules/access/http.js'
 import { DomainError, databaseConnectionFailure, databaseReadFailure, publicFailureClass } from './modules/errors.js'
-import { DeviceApplicationError } from './modules/devices/index.js'
 import { registerApiRoutes, type ApiRouteServices } from './routes/registry.js'
 import { DEFAULT_READINESS_TIMEOUT_MS } from './routes/health.js'
 
@@ -24,10 +23,6 @@ const SLOW_REQUEST_MS = 2000
 
 function publicRequestError(error: unknown): DomainError {
   if (error instanceof DomainError) return error
-  // A Worker refused a browser action: show its reason, not a generic server failure.
-  if (error instanceof DeviceApplicationError && error.rejection) {
-    return new DomainError(error.code, error.rejection.message, error.rejection.status)
-  }
   if (error instanceof z.ZodError) {
     return new DomainError('INVALID_REQUEST', 'The request does not match its shared contract.', 400, {
       issues: error.issues.map((issue) => ({ path: issue.path, message: issue.message })),

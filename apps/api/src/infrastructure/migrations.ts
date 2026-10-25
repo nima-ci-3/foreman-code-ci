@@ -1,5 +1,4 @@
 import { removeGroupChatMigration } from './removeGroupChatMigration.js'
-import { plainNativePlacementMigration } from './plainNativePlacementMigration.js'
 import {
   agentCiActivityMigration,
   ciActivityRequesterLookupMigration,
@@ -30,7 +29,6 @@ import {
   hostCiActivityMigration,
   hostCiRunsMigration,
   ciActivityEventsMigration,
-  ciPassedSuiteIndexMigration,
 } from '../modules/ci/migrations.js'
 import { ciActivityConsumerMigration } from '../modules/runs/ciActivityConsumerMigration.js'
 import { memoryRepeatDecisionMigration } from './memoryRepeatDecisionMigration.js'
@@ -1066,8 +1064,6 @@ export const migrations = [
   ciActivityEventsMigration,
   ciActivityConsumerMigration,
   removeGroupChatMigration,
-  plainNativePlacementMigration,
-  ciPassedSuiteIndexMigration,
 ] as const
 
 /**

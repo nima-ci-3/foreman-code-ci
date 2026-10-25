@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { createReadStream, constants } from 'node:fs';
-import { access, chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, statfs, symlink, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, statfs, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { createGunzip } from 'node:zlib';
 import { promisify } from 'node:util';
@@ -191,7 +191,6 @@ export async function readBrowserRuntimeArtifact(artifact, expectedSha256) {
   const bytes = await readRegularFile(join(artifact, 'browser-runtime.json'), 1024 * 1024);
   invariant(hash(bytes) === expectedSha256, 'descriptor checksum mismatch');
   const descriptor = JSON.parse(bytes);
-  if (descriptor.format === 2) return validateBrowserRuntimeRecipe(descriptor);
   invariant(descriptor.format === 1 && descriptor.kind === 'foreman-browser-runtime-artifact'
     && digest.test(descriptor.archiveSha256) && digest.test(descriptor.manifestSha256), 'invalid archive identity');
   invariant(Array.isArray(descriptor.chunks) && descriptor.chunks.length > 0 && descriptor.chunks.length <= 256, 'invalid chunk count');
@@ -203,132 +202,6 @@ export async function readBrowserRuntimeArtifact(artifact, expectedSha256) {
   }
   invariant(total === descriptor.compressedBytes && total <= maxExpanded, 'invalid archive size');
   return descriptor;
-}
-
-export function validateBrowserRuntimeRecipe(recipe, target) {
-  invariant(recipe?.format === 2 && recipe.kind === 'foreman-browser-runtime-recipe', 'unsupported recipe');
-  invariant(matchesBrowserRuntimeTarget(recipe.target, recipe.manifest?.target)
-    && (!target || matchesBrowserRuntimeTarget(recipe.target, target)), 'recipe target mismatch');
-  invariant(recipe.inputs?.kind === 'foreman-browser-build-inputs' && digest.test(recipe.inputsSha256)
-    && recipe.resolvedLock?.kind === 'foreman-browser-resolved-lock'
-    && matchesBrowserRuntimeTarget(recipe.resolvedLock.target, recipe.target), 'missing pinned recipe inputs');
-  invariant(Array.isArray(recipe.files) && recipe.files.length > 0 && recipe.files.length <= 512, 'invalid recipe files');
-  const paths = new Set();
-  for (const file of recipe.files) {
-    invariant(safePath(file.path) && !paths.has(file.path) && !/^(?:python|chromium)(?:\/|$)/.test(file.path)
-      && !['manifest.json', 'readiness.json', 'recipe.json', 'runtime-lock.json', 'browser-runtime.json'].includes(file.path)
-      && digest.test(file.sha256) && Number.isSafeInteger(file.size) && file.size >= 0 && file.size <= 16 * 1024 * 1024
-      && [0o600, 0o700].includes(file.mode), 'invalid glue inventory');
-    paths.add(file.path);
-  }
-  for (const path of ['installer.mjs', 'credits.py', 'LICENSES.txt', recipe.manifest.bridgeScript,
-    recipe.manifest.nativeHostModule, recipe.manifest.skill]) invariant(paths.has(path), 'missing recipe glue');
-  invariant(hash(Buffer.from(`${JSON.stringify(recipe.resolvedLock, null, 2)}\n`)) === recipe.manifest.resolvedLockSha256,
-    'recipe resolved lock mismatch');
-  return recipe;
-}
-
-async function verifyInventory(directory, files) {
-  const base = await realpath(directory);
-  for (const file of files) {
-    invariant(safePath(file.path) && digest.test(file.sha256), 'invalid installed inventory');
-    const path = join(directory, file.path), info = await lstat(path);
-    invariant(info.isFile() && !info.isSymbolicLink() && (info.mode & 0o777) === file.mode
-      && (await realpath(path)).startsWith(`${base}/`), 'installed file escaped private unit');
-    const actual = await hashBrowserRuntimeFile(path);
-    invariant(actual.sha256 === file.sha256 && actual.size === file.size, 'installed file checksum mismatch');
-  }
-}
-
-async function copyInventory(source, destination, files) {
-  for (const file of files) {
-    const path = join(destination, file.path);
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await copyFile(join(source, file.path), path, constants.COPYFILE_EXCL);
-    await chmod(path, file.mode);
-  }
-}
-
-/** A cache entry is produced only by the approved installer from verified upstream archives. */
-async function thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal, fetchArtifact, run }) {
-  const key = hash(Buffer.from(`browser-third-party-v1\0${recipe.inputsSha256}\0${recipe.manifest.resolvedLockSha256}`));
-  const cache = join(runtimeRoot, 'third-party'); await privateDirectory(cache, true);
-  const directory = join(cache, key);
-  try {
-    await privateDirectory(directory);
-    const inventoryBytes = await readRegularFile(join(directory, 'inventory.json'), 16 * 1024 * 1024);
-    const receipt = JSON.parse(await readRegularFile(join(directory, 'receipt.json'), 16384));
-    invariant(receipt.key === key && receipt.inventorySha256 === hash(inventoryBytes), 'cached inventory mismatch');
-    const files = JSON.parse(inventoryBytes);
-    await verifyInventory(directory, files);
-    return { directory, files };
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const stage = await mkdtemp(join(cache, '.browser-build-'));
-  const unit = join(stage, 'unit'); await mkdir(unit, { mode: 0o700 });
-  try {
-    await installer.installBrowserThirdParty({ inputs: recipe.inputs, lock: recipe.resolvedLock, target: recipe.target,
-      unit, temporary: stage, licenseTexts: recipe.licenseTexts, fetchArtifact, run, signal });
-    await copyFile(join(artifact, 'credits.py'), join(unit, 'credits.py'));
-    await installer.collectChromiumNotices(join(unit, recipe.manifest.chromiumExecutable), unit, stage, run);
-    await rm(join(unit, 'credits.py'));
-    const entries = await installer.listUnitFiles(unit);
-    // Flatten pinned Python's internal symlinks, just as the archive packer does.
-    const flattened = join(stage, 'flat'); await mkdir(flattened, { mode: 0o700 });
-    for (const file of entries) {
-      const path = join(flattened, file.path);
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      await copyFile(file.source, path); await chmod(path, file.mode);
-    }
-    const files = entries.map(({ path, size, sha256, mode }) => ({ path, size, sha256, mode }));
-    const bytes = Buffer.from(`${JSON.stringify(files, null, 2)}\n`);
-    await writeFile(join(flattened, 'inventory.json'), bytes, { mode: 0o600 });
-    await privateJson(join(flattened, 'receipt.json'), { key, inventorySha256: hash(bytes) });
-    await verifyInventory(flattened, files);
-    signal?.throwIfAborted();
-    await rename(flattened, directory); await syncDirectory(cache);
-    return { directory, files };
-  } finally { await rm(stage, { recursive: true, force: true }); }
-}
-
-async function stageRecipe({ runtimeRoot, artifact, recipe, expectedSha256, target, readiness, signal, fetchArtifact, run }) {
-  validateBrowserRuntimeRecipe(recipe, target);
-  await verifyInventory(artifact, recipe.files);
-  const installer = await import(pathToFileURL(join(artifact, 'installer.mjs')).href);
-  const executePinned = (command, args, options = {}) => (run ?? execute)(command, args, { ...options, signal });
-  const fetchPinned = (url, options) => (fetchArtifact ?? globalThis.fetch)(url, { ...options,
-    ...(signal ? { signal: AbortSignal.any([signal, options.signal]) } : {}) });
-  const thirdParty = await thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal, fetchArtifact: fetchPinned, run: executePinned });
-  const versions = join(runtimeRoot, 'versions'); await privateDirectory(versions, true);
-  const temporary = await mkdtemp(join(versions, '.stage-'));
-  const stage = join(temporary, 'unit'); await mkdir(stage, { mode: 0o700 });
-  try {
-    await copyInventory(thirdParty.directory, stage, thirdParty.files);
-    await copyInventory(artifact, stage, recipe.files);
-    const recipeBytes = await readRegularFile(join(artifact, 'browser-runtime.json'), 1024 * 1024);
-    invariant(hash(recipeBytes) === expectedSha256, 'recipe changed during installation');
-    const lockBytes = Buffer.from(`${JSON.stringify(recipe.resolvedLock, null, 2)}\n`);
-    await writeFile(join(stage, 'runtime-lock.json'), lockBytes, { mode: 0o600 });
-    await writeFile(join(stage, 'recipe.json'), recipeBytes, { mode: 0o600 });
-    const files = [...thirdParty.files, ...recipe.files,
-      { path: 'runtime-lock.json', size: lockBytes.length, sha256: hash(lockBytes), mode: 0o600 },
-      { path: 'recipe.json', size: recipeBytes.length, sha256: expectedSha256, mode: 0o600 }]
-      .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-    const manifest = validateBrowserRuntimeManifest({ ...recipe.manifest, recipeSha256: expectedSha256, files }, target);
-    const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`), manifestSha256 = hash(bytes);
-    const destination = join(versions, manifestSha256);
-    try { return await verifyInstalled(destination, manifestSha256, target); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    await writeFile(join(stage, 'manifest.json'), bytes, { flag: 'wx', mode: 0o600 });
-    await privateDirectory(join(stage, 'empty-workspace'), true);
-    const candidate = installedDescriptor(stage, manifest, manifestSha256);
-    invariant((await readiness(candidate, { signal }))?.ready === true, 'readiness was not confirmed');
-    signal?.throwIfAborted();
-    await privateJson(join(stage, 'readiness.json'), { ready: true, manifestSha256 });
-    await verifyInstalled(stage, manifestSha256, target);
-    await syncUnit(stage, files);
-    await rename(stage, destination); await syncDirectory(versions);
-    return installedDescriptor(destination, manifest, manifestSha256);
-  } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
 /** Consume a runner-built unit without launching target executables on the release assembler. */
@@ -432,7 +305,7 @@ async function extractRuntime(archive, descriptor, directory, target, signal) {
 
 function installedDescriptor(directory, manifest, manifestSha256) {
   return { rootDirectory: directory, runtimeVersion: manifest.runtimeVersion, profileFormat: manifest.profileFormat,
-    manifestSha256, ...(manifest.recipeSha256 ? { recipeSha256: manifest.recipeSha256 } : {}), target: manifest.target, chromiumVersion: manifest.chromiumVersion,
+    manifestSha256, target: manifest.target, chromiumVersion: manifest.chromiumVersion,
     pythonExecutable: join(directory, manifest.pythonExecutable), chromiumExecutable: join(directory, manifest.chromiumExecutable),
     bridgeScript: join(directory, manifest.bridgeScript), nativeHostModule: join(directory, manifest.nativeHostModule),
     skill: join(directory, manifest.skill) };
@@ -444,20 +317,13 @@ async function verifyInstalled(directory, expected, target, requireReady = true)
   invariant((await readdir(join(directory, 'empty-workspace'))).length === 0, 'Harness workspace must remain empty');
   const bytes = await readRegularFile(join(directory, 'manifest.json'), 16 * 1024 * 1024);
   invariant(hash(bytes) === expected, 'installed manifest mismatch');
-  const manifest = validateBrowserRuntimeManifest(JSON.parse(bytes), target);
-  await verifyInventory(directory, manifest.files);
-  if (manifest.recipeSha256) {
-    const recipeBytes = await readRegularFile(join(directory, 'recipe.json'), 1024 * 1024);
-    invariant(hash(recipeBytes) === manifest.recipeSha256, 'installed recipe mismatch');
-    const recipe = validateBrowserRuntimeRecipe(JSON.parse(recipeBytes), target);
-    for (const [key, value] of Object.entries(recipe.manifest)) {
-      invariant(JSON.stringify(manifest[key]) === JSON.stringify(value), 'installed recipe metadata mismatch');
-    }
-    for (const file of recipe.files) {
-      const installed = manifest.files.find(entry => entry.path === file.path);
-      invariant(installed?.sha256 === file.sha256 && installed.size === file.size && installed.mode === file.mode,
-        'installed glue differs from approved recipe');
-    }
+  const manifest = validateBrowserRuntimeManifest(JSON.parse(bytes), target), base = await realpath(directory);
+  for (const file of manifest.files) {
+    const path = join(directory, file.path), info = await lstat(path);
+    invariant(info.isFile() && !info.isSymbolicLink() && (info.mode & 0o777) === file.mode
+      && (await realpath(path)).startsWith(`${base}/`), 'installed file escaped private unit');
+    const actual = await hashBrowserRuntimeFile(path);
+    invariant(actual.sha256 === file.sha256 && actual.size === file.size, 'installed file checksum mismatch');
   }
   invariant(hash(await readFile(join(directory, 'runtime-lock.json'))) === manifest.resolvedLockSha256, 'resolved lock mismatch');
   if (requireReady) {
@@ -483,10 +349,9 @@ async function switchRuntime(runtimeRoot, name, reference) {
 }
 
 /** Called once by bootstrap, never from profile/computer card reads. No executable is launched here. */
-export async function readInstalledBrowserRuntime({ runtimeRoot, target, reference }) {
+export async function readInstalledBrowserRuntime({ runtimeRoot, target }) {
   await privateDirectory(runtimeRoot);
-  reference ??= await currentReference(runtimeRoot);
-  invariant(!reference || /^versions\/[a-f0-9]{64}$/.test(reference), 'invalid runtime reference');
+  const reference = await currentReference(runtimeRoot);
   if (!reference) throw new Error('BROWSER_RUNTIME_MISSING');
   return verifyInstalled(join(runtimeRoot, reference), reference.slice('versions/'.length), target);
 }
@@ -596,11 +461,9 @@ finally:
 
 /** Stage first. Activation is separate for running Worker/Main update handoff. */
 export async function stageBrowserRuntime({ runtimeRoot, artifact, expectedSha256, target, signal,
-  readiness = checkBrowserRuntimeReadiness, activate = true, drain, fetchArtifact, run }) {
+  readiness = checkBrowserRuntimeReadiness, activate = true, drain }) {
   const staged = await withRuntimeLock(runtimeRoot, async () => {
     const descriptor = await readBrowserRuntimeArtifact(artifact, expectedSha256);
-    if (descriptor.format === 2) return stageRecipe({ runtimeRoot, artifact, recipe: descriptor, expectedSha256,
-      target, readiness, signal, fetchArtifact, run });
     const versions = join(runtimeRoot, 'versions'); await privateDirectory(versions, true);
     const destination = join(versions, descriptor.manifestSha256);
     try { return await verifyInstalled(destination, descriptor.manifestSha256, target); }
@@ -711,27 +574,12 @@ export async function pruneBrowserRuntimeVersions(runtimeRoot) {
   });
 }
 
-/** The selected release approves either the exact recipe or a retained immutable archive. */
-export async function stageBundledBrowserRuntime({ root, artifact, manifest, target, signal, readiness, fetchArtifact, run }) {
+/** Worker descriptors remain ordinary small files; large runtime bytes stay in bounded archive chunks. */
+export async function stageBundledBrowserRuntime({ root, artifact, manifest, target, signal, readiness }) {
   const entry = manifest.files.find(file => file.path === 'artifacts/browser-runtime/browser-runtime.json');
   if (!entry) return null;
-  try {
-    const approved = manifest.browserRuntime;
-    invariant(approved?.descriptorSha256 === entry.sha256, 'release browser descriptor mismatch');
-    const descriptor = await readBrowserRuntimeArtifact(join(artifact, 'artifacts/browser-runtime'), entry.sha256);
-    invariant(descriptor.format === 2 ? approved.recipeSha256 === entry.sha256
-      : approved.manifestSha256 === descriptor.manifestSha256, 'release browser approval mismatch');
-    return await stageBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), artifact: join(artifact, 'artifacts/browser-runtime'),
-      expectedSha256: entry.sha256, target, signal, readiness, activate: false, fetchArtifact, run });
-  } catch (error) {
-    if (/No usable sandbox!/.test(`${error.message}\n${error.stderr ?? ''}`)) {
-      const profile = join(artifact, 'runtime/browser/apparmor/foreman-browser-runtime').replaceAll("'", "'\\''");
-      throw new Error('Browser sandbox needs the Foreman AppArmor user-namespace profile. Run:\n'
-        + `sudo install -m 0644 '${profile}' /etc/apparmor.d/foreman-browser-runtime && sudo apparmor_parser -r /etc/apparmor.d/foreman-browser-runtime`
-        + '\nThen retry the browser runtime; reinstalling the Worker is unnecessary.', { cause: error });
-    }
-    throw error;
-  }
+  return stageBrowserRuntime({ runtimeRoot: join(root, 'browser-runtime'), artifact: join(artifact, 'artifacts/browser-runtime'),
+    expectedSha256: entry.sha256, target, signal, readiness, activate: false });
 }
 
 /** Optional browser setup may fail independently of the verified core release. Cancellation is not optional. */
@@ -743,11 +591,4 @@ export async function prepareBundledBrowserRuntime(options) {
     options.signal?.throwIfAborted();
     return { runtime: null, failure: { reason: error.message } };
   }
-}
-
-/** Recipe installations retain their real manifest hash for inventory, activation and rollback. */
-export function browserRuntimeMatchesRelease(manifest, runtime) {
-  const approval = manifest?.browserRuntime;
-  return approval?.recipeSha256 ? digest.test(approval.recipeSha256) && approval.recipeSha256 === runtime?.recipeSha256
-    : digest.test(approval?.manifestSha256 ?? '') && approval.manifestSha256 === runtime?.manifestSha256;
 }

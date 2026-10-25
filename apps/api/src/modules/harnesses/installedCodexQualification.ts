@@ -109,7 +109,7 @@ export function createInstalledCodexQualificationReader(input: {
       || profileProof.environmentGeneration !== installation.environmentGeneration
       || profileProof.connectionGeneration !== installation.connectionGeneration
       || profileProof.authenticated !== true || profileProof.compatible !== true || !profileProof.qualified
-      || !qualification || qualification.harness !== harness || installation.observedVersion !== qualification.version
+      || qualification.harness !== harness || installation.observedVersion !== qualification.version
       || qualification.binarySha256 !== current.binarySha256 || qualification.suiteRevision !== input.suiteRevision
       || qualification.status !== 'qualified' || qualification.profile !== QUALIFICATION_TARGET_PROFILE[harness]
       || !qualification.checkedAt || !qualification.checks.length || qualification.checks.some(check => !check.passed)) return unavailable()

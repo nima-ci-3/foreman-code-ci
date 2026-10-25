@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { createRequire, isBuiltin } from 'node:module';
 import { Readable } from 'node:stream';
@@ -10,21 +10,19 @@ import { createGzip } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { BROWSER_RUNTIME_MAGIC, BROWSER_RUNTIME_CHUNK_BYTES, hashBrowserRuntimeFile,
-  validateBrowserRuntimeManifest, checkBrowserRuntimeReadiness,
-  copyBuiltBrowserRuntime, matchesBrowserRuntimeTarget } from '../apps/worker/src/browserRuntimeInstall.mjs';
-import { cfworkerLicense, validateWorkerTarget, assertWorkerDependency } from './worker-artifact-files.mjs';
+  validateBrowserRuntimeManifest, checkBrowserRuntimeReadiness, createBrowserRuntimeDirectory,
+  removeBrowserRuntimeDirectory } from '../apps/worker/src/browserRuntimeInstall.mjs';
+import { cfworkerLicense, validateWorkerTarget } from './worker-artifact-files.mjs';
 import { assertWorkerSnapshotSource, workerPackageAliases } from './worker-snapshot-policy.mjs';
-
-import { downloadBrowserRuntimeArtifact, extractPinnedPython, extractChromium, resolvePythonLock,
-  installLockedWheels, normalizeBrowserPythonEntrypoints, listUnitFiles, collectChromiumNotices,
-  validateWheelClosure } from '../apps/worker/src/browserRuntimeBuild.mjs';
-export { downloadBrowserRuntimeArtifact, normalizeBrowserPythonEntrypoints, collectChromiumNotices } from '../apps/worker/src/browserRuntimeBuild.mjs';
 
 const execute = promisify(execFile);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+const digest = /^[a-f0-9]{64}$/;
 const controls = new Set(['runtime/browser/manifest.json', 'runtime/browser/runtime-lock.json', 'runtime/browser/LICENSES.txt',
-  'scripts/browser-runtime-install.mjs', 'apps/worker/src/browserRuntimeInstall.mjs', 'apps/worker/src/browserRuntimeBuild.mjs', 'scripts/worker-artifact-files.mjs',
+  'scripts/browser-runtime-install.mjs', 'apps/worker/src/browserRuntimeInstall.mjs', 'scripts/worker-artifact-files.mjs',
   'scripts/worker-snapshot-policy.mjs', 'runtime/browser/licenses/MIT.txt', 'runtime/browser/credits.py', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'packages/contracts/package.json', 'packages/contracts-node/package.json', 'apps/ci/package.json']);
+const safePath = path => typeof path === 'string' && /^[a-zA-Z0-9_@.+/[\]-]+$/.test(path)
+  && path.split('/').every(part => part && part !== '.' && part !== '..');
 const invariant = (condition, message) => { if (!condition) throw new Error(`Browser runtime assembly: ${message}`); };
 
 async function sourceSnapshot(repository, commit, run) {
@@ -56,7 +54,171 @@ async function requireNativeTarget(target) {
   'build on the exact committed supported target; cross-building is not qualified');
 }
 
+export async function downloadBrowserRuntimeArtifact(url, destination, expected, fetchArtifact = globalThis.fetch) {
+  invariant(digest.test(expected ?? ''), 'expected artifact digest required');
+  invariant(new URL(url).protocol === 'https:', 'invalid artifact URL');
+  // An optional local cache keyed by the pinned digest; a cached copy is re-hashed before use.
+  const cache = process.env.FOREMAN_BROWSER_ARTIFACT_CACHE;
+  const cached = cache ? join(cache, expected) : undefined;
+  if (cached) {
+    const bytes = await readFile(cached).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+    if (bytes && createHash('sha256').update(bytes).digest('hex') === expected) {
+      await writeFile(destination, bytes, { flag: 'wx', mode: 0o600 });
+      return { url, sha256: expected, size: bytes.length };
+    }
+  }
+  const result = await fetchAndStore(url, destination, expected, fetchArtifact);
+  if (cached) {
+    await mkdir(cache, { recursive: true, mode: 0o700 });
+    await copyFile(destination, cached);
+  }
+  return result;
+}
+
+async function fetchAndStore(url, destination, expected, fetchArtifact) {
+  const response = await fetchArtifact(url, { redirect: 'follow' });
+  invariant(response.ok && response.body, `artifact unavailable (${response.status})`);
+  const handle = await open(destination, 'wx', 0o600), hash = createHash('sha256');
+  let size = 0;
+  try {
+    for await (const value of response.body) {
+      const bytes = Buffer.from(value); size += bytes.length;
+      invariant(size <= 2 * 1024 ** 3, 'artifact too large');
+      hash.update(bytes); await handle.writeFile(bytes);
+    }
+    const sha256 = hash.digest('hex');
+    invariant(sha256 === expected, 'upstream artifact checksum mismatch');
+    await handle.sync(); return { url, sha256, size };
+  } finally { await handle.close(); }
+}
+
+async function extractPinnedPython({ archive, unit, run }) {
+  // The executable archive is checksum-pinned before extraction; no untrusted user archives enter this build path.
+  const { stdout } = await run('tar', ['-tzf', archive], { maxBuffer: 16 * 1024 * 1024 });
+  for (const entry of String(stdout).trim().split('\n')) {
+    invariant(entry.startsWith('python/') && safePath(entry.replace(/\/$/, '')), 'unsafe Python archive entry');
+  }
+  await run('tar', ['--extract', '--gzip', '--file', archive, '--directory', unit, '--no-same-owner', '--no-same-permissions']);
+}
+
+async function extractChromium(python, archive, destination, run) {
+  const script = `import os,pathlib,stat,sys,zipfile
+root=pathlib.Path(sys.argv[2]); root.mkdir(mode=0o700)
+with zipfile.ZipFile(sys.argv[1]) as archive:
+ for item in archive.infolist():
+  parts=pathlib.PurePosixPath(item.filename).parts
+  assert parts and not item.filename.startswith('/') and all(part not in ['.','..'] for part in parts) and '\\\\' not in item.filename
+  assert not stat.S_ISLNK(item.external_attr >> 16)
+  path=root.joinpath(*parts)
+  if item.is_dir(): path.mkdir(mode=0o700,parents=True,exist_ok=True); continue
+  path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+  with archive.open(item) as source, path.open('xb') as output:
+   while chunk:=source.read(1048576): output.write(chunk)
+  path.chmod(0o700 if item.external_attr >> 16 & 0o111 else 0o600)
+`;
+  await run(python, ['-I', '-B', '-c', script, archive, destination], { maxBuffer: 65536 });
+}
+
+async function resolvePythonLock({ python, inputs, target, temporary, previous, run }) {
+  if (previous) {
+    invariant(previous.format === 1 && previous.kind === 'foreman-browser-resolved-lock'
+      && JSON.stringify(previous.target) === JSON.stringify(target) && previous.python.sha256 === inputs.python.sha256
+      && previous.chromium.version === inputs.chromium.version && previous.chromium.sha256 === inputs.chromium.sha256,
+    'incompatible resolved lock');
+    return previous;
+  }
+  const report = join(temporary, 'pip-report.json');
+  const requirements = inputs.packages.map(item => `${item.name}==${item.version}`);
+  await run(python, ['-I', '-B', '-m', 'pip', '--isolated', 'install', '--dry-run', '--ignore-installed', '--only-binary=:all:',
+    '--disable-pip-version-check', '--report', report, '--index-url', 'https://pypi.org/simple', ...requirements],
+  { timeout: 600000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PIP_CONFIG_FILE: '/dev/null' } });
+  const resolved = JSON.parse(await readFile(report, 'utf8'));
+  invariant(resolved.version === '1' && typeof resolved.pip_version === 'string' && Array.isArray(resolved.install), 'invalid resolver report');
+  const packages = resolved.install.map(item => ({ name: item.metadata.name, version: item.metadata.version,
+    url: item.download_info.url, sha256: item.download_info.archive_info.hashes.sha256,
+    filename: decodeURIComponent(basename(new URL(item.download_info.url).pathname)) }))
+    .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  return { format: 1, kind: 'foreman-browser-resolved-lock', target, resolver: `pip==${resolved.pip_version}`,
+    python: inputs.python, chromium: inputs.chromium, packages };
+}
+
+function validateWheelClosure(lock, inputs) {
+  invariant(lock.packages.length > 0 && lock.packages.length <= 1000, 'invalid resolved wheel count');
+  const names = new Set();
+  for (const item of lock.packages) {
+    const name = item.name.toLowerCase().replace(/[-_.]+/g, '-');
+    invariant(!names.has(name) && /^[a-zA-Z0-9_.+-]+$/.test(item.version) && safePath(item.filename)
+      && !item.filename.includes('/') && item.filename.endsWith('.whl') && digest.test(item.sha256)
+      && new URL(item.url).protocol === 'https:', 'invalid locked wheel');
+    names.add(name);
+  }
+  for (const required of inputs.packages) {
+    const selected = lock.packages.find(item => item.name.toLowerCase().replace(/[-_.]+/g, '-') === required.name);
+    invariant(selected?.version === required.version && selected.sha256 === required.wheelSha256, `unpublished or altered ${required.name} wheel`);
+  }
+}
+
+async function installLockedWheels({ lock, inputs, python, wheelhouse, unit, licenseTexts, fetchArtifact, run }) {
+  validateWheelClosure(lock, inputs);
+  await mkdir(wheelhouse, { mode: 0o700 });
+  for (const wheel of lock.packages) await downloadBrowserRuntimeArtifact(wheel.url, join(wheelhouse, wheel.filename), wheel.sha256, fetchArtifact);
+  const requirements = join(wheelhouse, 'requirements.lock');
+  await writeFile(requirements, lock.packages.map(item => `${item.name}==${item.version} --hash=sha256:${item.sha256}`).sort().join('\n') + '\n', { mode: 0o600 });
+  await run(python, ['-I', '-B', '-m', 'pip', '--isolated', 'install', '--no-index', '--no-compile', '--require-hashes',
+    '--only-binary=:all:', '--find-links', wheelhouse, '--requirement', requirements, '--disable-pip-version-check'],
+  { timeout: 600000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PIP_CONFIG_FILE: '/dev/null' } });
+  await run(python, ['-I', '-B', '-m', 'pip', '--isolated', 'check'], { timeout: 60000, maxBuffer: 65536 });
+  await copyFile(requirements, join(unit, 'requirements.lock'));
+  const script = `import email,json,pathlib,sys,zipfile
+root=pathlib.Path(sys.argv[2]); root.mkdir(mode=0o700,parents=True)
+inventory=[]; license_texts=json.loads(sys.argv[3])
+for wheel in sorted(pathlib.Path(sys.argv[1]).glob('*.whl')):
+ with zipfile.ZipFile(wheel) as archive:
+  metadata_name=next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))
+  metadata=archive.read(metadata_name); parsed=email.message_from_bytes(metadata)
+  prefix=parsed['Name']+'-'+parsed['Version']; directory=root/prefix; directory.mkdir(mode=0o700)
+  (directory/'METADATA').write_bytes(metadata)
+  notices=[name for name in archive.namelist() if not name.endswith('/') and any(part.lower().startswith(('license','licence','copying','notice')) for part in pathlib.PurePosixPath(name).parts)]
+  files=['METADATA']; source={'kind':'wheel'}
+  for index,name in enumerate(notices):
+   filename=str(index)+'-'+pathlib.PurePosixPath(name).name
+   (directory/filename).write_bytes(archive.read(name)); files.append(filename)
+  if not notices and len(parsed.get('License',''))<=100:
+   expression=(parsed.get('License-Expression') or parsed.get('License','')).strip()
+   terms=license_texts.get(expression)
+   assert terms, 'Missing license text: '+prefix+' ('+expression+')'
+   (directory/'LICENSE.txt').write_text(terms['text']); files.append('LICENSE.txt')
+   source={'kind':'spdx','expression':expression,'url':terms['url'],'sha256':terms['sha256']}
+  inventory.append({'package':prefix,'files':files,'licenseSource':source})
+(root/'index.json').write_text(json.dumps(inventory,indent=2)+'\\n')
+`;
+  await run(python, ['-I', '-B', '-c', script, wheelhouse, join(unit, 'licenses/python-packages'), JSON.stringify(licenseTexts)], { maxBuffer: 65536 });
+}
+
 /** Runtime supports the managed Python/module interface only, never pip-generated console launchers. */
+export async function normalizeBrowserPythonEntrypoints({ python, unit, run = execute }) {
+  const script = `import csv,io,json,pathlib,sys
+root=pathlib.Path(sys.argv[1]).resolve(); binary=root/'python'/'bin'
+for path in sorted(binary.iterdir()):
+ if path.name not in ('python','python3','python3.13'):
+  assert path.is_file() or path.is_symlink(), 'Unexpected Python entrypoint directory'
+  path.unlink()
+for info in sorted((root/'python').glob('lib/python*/site-packages/*.dist-info')):
+ direct=info/'direct_url.json'
+ if direct.exists() and json.loads(direct.read_text()).get('url','').startswith('file:'): direct.unlink()
+ record=info/'RECORD'
+ if not record.exists(): continue
+ rows=[]
+ for row in csv.reader(io.StringIO(record.read_text())):
+  target=(info.parent/row[0]).resolve()
+  if not target.exists(): continue
+  if target==record.resolve(): row=[row[0],'','']
+  rows.append(row)
+ output=io.StringIO(newline=''); writer=csv.writer(output,lineterminator='\\n')
+ writer.writerows(sorted(rows,key=lambda row:row[0])); record.write_text(output.getvalue())
+`;
+  await run(python, ['-I', '-B', '-c', script, unit], { timeout: 60000, maxBuffer: 65536 });
+}
 
 export async function copyNativeLicenses(inputs, repository, unit, readSource = path => readFile(join(repository, path))) {
   const seen = new Set();
@@ -87,18 +249,17 @@ export async function copyNativeLicenses(inputs, repository, unit, readSource = 
   }
 }
 
-async function bundleNativeHost({ repository, unit, snapshot, entrypoint = 'apps/api/src/modules/browser-runtime/hostFactory.ts', filename = 'native-host.mjs' }) {
+async function bundleNativeHost({ repository, unit, snapshot }) {
   const require = createRequire(join(repository, 'apps/worker/package.json')), { build } = require('esbuild');
   const contracts = JSON.parse(await snapshot.read('packages/contracts/package.json')).exports;
   const nodeContracts = JSON.parse(await snapshot.read('packages/contracts-node/package.json')).exports;
   const ci = JSON.parse(await snapshot.read('apps/ci/package.json')).exports;
-  const result = await build({ absWorkingDir: repository, entryPoints: [entrypoint],
-    outfile: join(unit, filename), bundle: true, platform: 'node', format: 'esm', target: 'node24', metafile: true,
+  const result = await build({ absWorkingDir: repository, entryPoints: ['apps/api/src/modules/browser-runtime/hostFactory.ts'],
+    outfile: join(unit, 'native-host.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node24', metafile: true,
     legalComments: 'linked', sourcemap: false, alias: workerPackageAliases({ contracts, 'contracts-node': nodeContracts, ci }),
     define: { 'process.env.WS_NO_BUFFER_UTIL': '"1"', 'process.env.WS_NO_UTF_8_VALIDATE': '"1"' },
     banner: { js: "import { createRequire as runtimeRequire } from 'node:module'; const require = runtimeRequire(import.meta.url);" },
     plugins: [{ name: 'browser-runtime-exact-source', setup(builder) {
-      builder.onResolve({ filter: /.*/ }, input => { assertWorkerDependency(input.path); });
       builder.onLoad({ filter: /\.(?:[cm]?[jt]s|json)$/ }, async input => {
         const path = relative(repository, input.path);
         if (path.includes('node_modules/')) return;
@@ -110,6 +271,33 @@ async function bundleNativeHost({ repository, unit, snapshot, entrypoint = 'apps
     for (const dependency of output.imports) invariant(!dependency.external || isBuiltin(dependency.path), `unbundled native module ${dependency.path}`);
   }
   await copyNativeLicenses(Object.keys(result.metafile.inputs), repository, unit, snapshot.read);
+}
+
+async function listUnitFiles(directory) {
+  const root = await realpath(directory), files = [];
+  async function walk(path, prefix, ancestors) {
+    const actual = await realpath(path);
+    invariant(actual === root || actual.startsWith(`${root}/`), 'unit symlink escaped private root');
+    const info = await lstat(actual);
+    if (info.isDirectory()) {
+      invariant(!ancestors.has(actual), 'unit directory cycle');
+      const next = new Set(ancestors); next.add(actual);
+      await chmod(actual, 0o700);
+      for (const name of (await readdir(actual)).sort()) {
+        if (name === '__pycache__' || name.endsWith('.pyc')) { await rm(join(actual, name), { recursive: true, force: true }); continue; }
+        await walk(join(actual, name), prefix ? `${prefix}/${name}` : name, next);
+      }
+    } else {
+      invariant(info.isFile() && safePath(prefix), `unit contains a nonregular or unsafe file: ${JSON.stringify({
+        path: prefix, regular: info.isFile(),
+      })}`);
+      const mode = info.mode & 0o111 ? 0o700 : 0o600;
+      await chmod(actual, mode);
+      files.push({ path: prefix, ...await hashBrowserRuntimeFile(actual), mode, source: actual });
+    }
+  }
+  await walk(root, '', new Set());
+  return files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
 
 /** Exported artifact packer also accepts tiny fixture units through its public interface. */
@@ -148,7 +336,23 @@ export async function packBrowserRuntime({ unit, output, manifest, outputOwned =
   } finally { await rm(archive, { force: true }); }
 }
 
-/** Native lock-update tooling. Releases ship recipes; this packed output is for reproducing lock changes. */
+export async function collectChromiumNotices(chromium, unit, temporary, run) {
+  const runtimeDirectory = await createBrowserRuntimeDirectory(temporary);
+  try {
+  const { stdout, stderr } = await run(join(unit, 'python/bin/python3'), ['-I', '-B', join(unit, 'credits.py'),
+    chromium, '--headless=new', '--allow-chrome-scheme-url', '--no-first-run', '--disable-background-networking', '--disable-component-update',
+    '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
+    `--user-data-dir=${join(temporary, 'credits-profile')}`, 'chrome://credits/'], { timeout: 60000, maxBuffer: 32 * 1024 * 1024,
+    env: { ...process.env, TMPDIR: runtimeDirectory?.temporaryDirectory ?? process.env.TMPDIR } });
+  invariant(String(stdout).length > 1000 && /license|copyright/i.test(String(stdout)),
+    `Chromium credits unavailable: ${JSON.stringify({ bytes: Buffer.byteLength(String(stdout)),
+      page: String(stdout).slice(0, 300), stderr: String(stderr ?? '').slice(-1500) })}`);
+  await mkdir(join(unit, 'licenses'), { recursive: true, mode: 0o700 });
+  await writeFile(join(unit, 'licenses/chromium-credits.html'), stdout, { mode: 0o600 });
+  } finally { await removeBrowserRuntimeDirectory(runtimeDirectory); }
+}
+
+/** Deliberate release assembly only. Startup/install consume its locked immutable output. */
 export async function assembleBrowserRuntime({ repository, commit, target, foremanVersion, output, resolvedLock,
   run = execute, fetchArtifact = globalThis.fetch, readiness = checkBrowserRuntimeReadiness, onProgress }) {
   // Reservation happens before any cleanup scope. An existing destination is never owned or deleted here.
@@ -220,86 +424,15 @@ export async function assembleBrowserRuntime({ repository, commit, target, forem
   finally { if (temporary) await rm(temporary, { recursive: true, force: true }); }
 }
 
-/** Release assembly ships code and an approved recipe, never target executables. */
-export async function buildBrowserRuntimeRecipe({ repository, commit, target, foremanVersion, output, snapshot }) {
-  snapshot ??= await sourceSnapshot(repository, commit, execute);
-  const read = async path => Buffer.from(await snapshot.read(path));
-  const recipe = JSON.parse(await read('runtime/browser/manifest.json'));
-  const inputBytes = await read('runtime/browser/runtime-lock.json'), inputs = JSON.parse(inputBytes);
-  const lock = JSON.parse(await read(`runtime/browser/ubuntu-${target.osRelease}-${target.arch}-resolved-lock.json`));
-  await resolvePythonLock({ inputs, target, previous: lock });
-  validateWheelClosure(lock, inputs);
-  await mkdir(output, { mode: 0o700 });
-  await bundleNativeHost({ repository, unit: output, snapshot });
-  await bundleNativeHost({ repository, unit: output, snapshot,
-    entrypoint: 'apps/worker/src/browserRuntimeBuild.mjs', filename: 'installer.mjs' });
-  for (const [path, source] of Object.entries({ 'bridge.py': recipe.bridgeSource, 'browser-use.md': recipe.skillSource,
-    'credits.py': 'runtime/browser/credits.py', 'LICENSES.txt': 'runtime/browser/LICENSES.txt' })) {
-    await writeFile(join(output, path), await read(source), { mode: 0o600 });
-  }
-  const licenseTexts = {};
-  for (const [expression, entry] of Object.entries(inputs.licenseTexts)) {
-    const bytes = await read(entry.path);
-    invariant(sha256(bytes) === entry.sha256, `license text checksum mismatch: ${expression}`);
-    licenseTexts[expression] = { ...entry, text: bytes.toString('utf8') };
-  }
-  const lockBytes = Buffer.from(`${JSON.stringify(lock, null, 2)}\n`);
-  const manifest = { format: 1, kind: 'foreman-browser-runtime', runtimeVersion: recipe.runtimeVersion, foremanVersion,
-    profileFormat: recipe.profileFormat, target, sourceCommit: commit,
-    pythonVersion: recipe.pythonVersion, browserUseVersion: recipe.browserUseVersion, browserHarnessVersion: recipe.browserHarnessVersion,
-    chromiumVersion: recipe.chromiumVersion, chromiumRevision: recipe.chromiumRevision,
-    pythonEntrypointPolicy: 'managed-python-module-only', resolvedLockSha256: sha256(lockBytes),
-    pythonExecutable: 'python/bin/python3', chromiumExecutable: 'chromium/chrome-linux64/chrome',
-    bridgeScript: 'bridge.py', nativeHostModule: 'native-host.mjs', skill: 'browser-use.md' };
-  const files = (await listUnitFiles(output)).map(({ source, ...file }) => file);
-  const descriptor = { format: 2, kind: 'foreman-browser-runtime-recipe', target, manifest, inputs,
-    inputsSha256: sha256(inputBytes), resolvedLock: lock, licenseTexts, files };
-  const bytes = Buffer.from(`${JSON.stringify(descriptor, null, 2)}\n`);
-  await writeFile(join(output, 'browser-runtime.json'), bytes, { flag: 'wx', mode: 0o600 });
-  return { descriptor, descriptorSha256: sha256(bytes) };
-}
-
-/** Collect native runner outputs for Main without relabelling or launching their executables. */
-export async function collectBrowserRuntimeArtifacts({ directories, output, commit }) {
-  invariant(directories.length > 0, 'native runner artifacts required');
-  await mkdir(output, { mode: 0o700 });
-  try {
-    const artifacts = [];
-    for (const directory of directories) {
-      const index = JSON.parse(await readFile(join(directory, 'index.json'), 'utf8'));
-      invariant(index.format === 1 && index.sourceCommit === commit && Array.isArray(index.artifacts)
-        && index.artifacts.length > 0, 'build index source mismatch');
-      for (const entry of index.artifacts) {
-        validateWorkerTarget(entry.target);
-        invariant(!artifacts.some(artifact => matchesBrowserRuntimeTarget(artifact.target, entry.target)),
-          'duplicate native browser target');
-        const name = `runtime-${artifacts.length}`;
-        const copied = await copyBuiltBrowserRuntime({ directory, output: join(output, name), target: entry.target, commit });
-        artifacts.push({ directory: name, target: copied.descriptor.target, descriptorSha256: copied.descriptorSha256 });
-      }
-    }
-    const index = { format: 1, sourceCommit: commit, artifacts };
-    await writeFile(join(output, 'index.json'), `${JSON.stringify(index)}\n`, { flag: 'wx', mode: 0o600 });
-    return index;
-  } catch (error) { await rm(output, { recursive: true, force: true }); throw error; }
-}
-
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, targetFile, output, lockFile] = process.argv.slice(2);
+  invariant(command === 'assemble' && targetFile && output, 'usage: browser-runtime-install.mjs assemble <approved-target.json> <new-output-directory> [resolved-lock.json]');
   const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const { stdout } = await execute('git', ['rev-parse', 'HEAD'], { cwd: repository });
   const commit = String(stdout).trim();
-  if (command === 'collect') {
-    invariant(targetFile && output, 'usage: browser-runtime-install.mjs collect <new-output-directory> <native-artifact-directory>...');
-    const index = await collectBrowserRuntimeArtifacts({ output: resolve(targetFile), commit,
-      directories: process.argv.slice(4).map(directory => resolve(directory)) });
-    process.stdout.write(`${JSON.stringify(index)}\n`);
-  } else {
-    invariant(command === 'assemble' && targetFile && output, 'usage: browser-runtime-install.mjs assemble <approved-target.json> <new-output-directory> [resolved-lock.json]');
-    const target = JSON.parse(await readFile(resolve(repository, targetFile), 'utf8'));
-    const foremanVersion = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).version;
-    const result = await assembleBrowserRuntime({ repository, commit, target, foremanVersion, output: resolve(output),
-      ...(lockFile ? { resolvedLock: JSON.parse(await readFile(resolve(lockFile), 'utf8')) } : {}) });
-    process.stdout.write(`${JSON.stringify({ descriptorSha256: result.descriptorSha256, manifestSha256: result.descriptor.manifestSha256 })}\n`);
-  }
+  const target = JSON.parse(await readFile(resolve(repository, targetFile), 'utf8'));
+  const foremanVersion = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).version;
+  const result = await assembleBrowserRuntime({ repository, commit, target, foremanVersion, output: resolve(output),
+    ...(lockFile ? { resolvedLock: JSON.parse(await readFile(resolve(lockFile), 'utf8')) } : {}) });
+  process.stdout.write(`${JSON.stringify({ descriptorSha256: result.descriptorSha256, manifestSha256: result.descriptor.manifestSha256 })}\n`);
 }

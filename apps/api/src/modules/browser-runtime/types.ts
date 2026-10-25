@@ -25,7 +25,7 @@ export type BrowserHostAction =
   | { kind: 'download'; downloadId: string; intent: 'read' | 'delete' }
 
 export type BrowserPageInput =
-  | { kind: 'pointer'; phase: 'move' | 'down' | 'up'; x: number; y: number; button: number; buttons: number; clickCount?: number; modifiers?: number }
+  | { kind: 'pointer'; phase: 'move' | 'down' | 'up'; x: number; y: number; button: number; buttons: number }
   | { kind: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
   | { kind: 'key'; phase: 'down' | 'up'; key: string; code: string; alt: boolean; control: boolean; meta: boolean; shift: boolean; repeat: boolean }
   | { kind: 'composition'; phase: 'start' | 'update' | 'end'; text: string }
@@ -61,7 +61,6 @@ export interface BrowserNativeDriver {
   openLocal(profileId: string, generation: number, targetId: string): Promise<Record<string, string> | undefined>
   facts(profileId: string, generation: number, targetId: string): BrowserNativeFacts
   onTabClosed(listener: (profileId: string, generation: number, targetId: string) => void): () => void
-  onPageChanged?(listener: (profileId: string, generation: number, tab: NativeBrowserTab) => void): () => void
   onPopup(listener: (profileId: string, generation: number, openerTargetId: string, tab: NativeBrowserTab) => void | Promise<void>): () => void
 }
 export type BrowserNativeDispatch = (method: string, params?: Record<string, unknown>) => Promise<unknown>
@@ -73,7 +72,7 @@ export interface BrowserPreparedBinding {
 export interface BrowserSubjectAuthority {
   /** Resolve exact saved configuration and existing credential scope; never accept caller-invented subject authority. */
   resolve(subject: AgentSubject): Promise<BrowserPreparedBinding>
-  assertCurrent(subject: AgentSubject, assignment?: { profileId: string; computerId?: string }): Promise<void>
+  assertCurrent(subject: AgentSubject, assignment?: { profileId: string }): Promise<void>
 }
 
 export interface BrowserRuntimeReceipt {
@@ -88,7 +87,7 @@ export interface BrowserRuntimeJournal {
 }
 export interface BrowserRuntimeSessionRecord {
   session: BrowserSession; control: BrowserControl; readOnly: boolean
-  leases: Array<{ lease: BrowserTabLease; targetId: string; restoreUrl?: string }>
+  leases: Array<{ lease: BrowserTabLease; targetId: string }>
   /** Private replay and owner lifecycle identity; no secrets, input text, or frames. */
   prepareCommandId: string; closing: boolean
   viewerDisconnected?: boolean

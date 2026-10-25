@@ -33,19 +33,3 @@ it('falls back to the session tab when the selected setup tab is closed', async 
   expect(await screen.findByRole('tab', { name: 'Page a', selected: true })).toBeTruthy()
   expect(screen.queryByText('No browser tab is open.')).toBeNull()
 })
-
-it('reconnects the same profile setup after its browser process is restored with fresh ownership', async () => {
-  const initial = setupRead(['a'], 'a'), restored = setupRead(['a'], 'a'), fake = browserPortFake(initial)
-  restored.session.browserGeneration = 2
-  restored.tabs = restored.tabs.map(tab => ({ ...tab, browserGeneration: 2 }))
-  vi.mocked(fake.port.reconnect).mockResolvedValue(restored)
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  render(<QueryClientProvider client={client}><BrowserSetupDialog authBoundary="login" session={initial.session}
-    profileName="Work" computerName="Main" port={fake.port} files={browserFilesFake()}
-    profiles={{} as BrowserProfilesPort} onClosed={vi.fn()} onCleanupError={vi.fn()} /></QueryClientProvider>)
-  await waitFor(() => expect(fake.port.openView).toHaveBeenCalled())
-  act(() => fake.observer!.disconnected(new Error('The browser host restarted.')))
-  await userEvent.click(await screen.findByRole('button', { name: 'Reconnect' }))
-  await waitFor(() => expect(fake.port.openView).toHaveBeenCalledWith(expect.objectContaining({ id: 'setup-session', browserGeneration: 2 }),
-    expect.objectContaining({ tabId: 'a', browserGeneration: 2 }), expect.any(String), expect.any(Object), expect.any(AbortSignal)))
-})

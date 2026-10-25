@@ -1,15 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterEach, expect, it } from 'vitest'
+import { expect, it } from 'vitest'
 import type { WorkflowJobPage } from '@foreman-code/contracts/job-verification'
 import { server } from '../../../mocks/server'
 import { execution, logPage } from '../../jobs/fixtures'
 import { CiServerDialog } from './CiServer'
-
-const clients: QueryClient[] = []
-afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear() })
 
 const workspaceId = execution.workspaceId
 const workflowId = 'workflow-a'
@@ -18,9 +15,6 @@ const nodeJob = { ...execution, workflow: { workflowId, runId: 'run-a', nodeId: 
 
 function respond(items: WorkflowJobPage['items'], history?: () => Response) {
   server.use(
-    http.get('*/api/management/computers/activity', () => HttpResponse.json({
-      mainId: execution.acceptedSpec.target.hostRef.mainId, computers: [], cloud: [], truncated: false, activityComplete: true,
-    })),
     http.get(`${root}/workflows/:workflowId/executions`, history ?? (() =>
       HttpResponse.json({ workspaceId, workflowId, items, nextCursor: null } satisfies WorkflowJobPage))),
     http.get(`${root}/queue`, () => HttpResponse.json({ tickets: [], nextHistoryCursor: null })),
@@ -30,7 +24,6 @@ function respond(items: WorkflowJobPage['items'], history?: () => Response) {
 }
 async function openWorkflowJobs() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  clients.push(client)
   render(<QueryClientProvider client={client}><CiServerDialog open onOpenChange={() => undefined}
     workflow={{ workspaceId, workflowId }} jobs={[]} names={new Map()} truncated={false} error={false} loading={false} />
   </QueryClientProvider>)

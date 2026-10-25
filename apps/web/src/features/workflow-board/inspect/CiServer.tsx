@@ -33,7 +33,7 @@ export const CiServerNode = memo(function CiServerNode({ data }: NodeProps<CiSer
     {data.resizable ? <NodeResizer minWidth={150} minHeight={170} handleClassName="board-kanban-resize" lineClassName="ci-server-resize-line" /> : null}
     <button type="button" className="ci-server-chassis" onPointerDown={(event) => { pressed.current = { x: event.clientX, y: event.clientY } }}
       onClick={(event) => { const from = pressed.current
-        if (event.detail === 0 || !from || Math.hypot(event.clientX - from.x, event.clientY - from.y) < 4) data.open() }}
+        if (!from || Math.hypot(event.clientX - from.x, event.clientY - from.y) < 4) data.open() }}
       aria-label={`CI server, ${summary.label}. Open CI jobs and test results`}>
       <span className="ci-server-bays" aria-hidden="true">{[0, 1, 2].map((bay) => <span key={bay} className="ci-server-bay">
         <i className="ci-server-led" /><i className="ci-server-slot" /></span>)}</span>

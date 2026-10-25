@@ -14,9 +14,6 @@ import { waitForUpdateOperation } from './updateOperation.mjs';
 import { migratePinnedCompanionLauncher } from './companionLauncher.mjs';
 import { offlineBrowserRuntimeLifecycle, rollbackBrowserRuntime, readInstalledBrowserRuntime,
   pruneBrowserRuntimeVersions } from './browserRuntimeInstall.mjs';
-import { readUpdateRecord } from './updateRecord.mjs';
-
-export { readUpdateRecord };
 
 const execute = promisify(execFile);
 const services = [INSTALLATION_NAMES.services.worker, 'foreman-ci-worker.service'];
@@ -45,6 +42,23 @@ export async function writeUpdateRecord(stateDirectory, record) {
 async function syncDirectory(directory) {
   const handle = await open(directory, 'r');
   try { await handle.sync(); } finally { await handle.close(); }
+}
+
+export async function readUpdateRecord(stateDirectory) {
+  await requirePrivateDirectory(stateDirectory);
+  const path = join(stateDirectory, 'worker-update.json');
+  try {
+    const info = await lstat(path);
+    if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o077)) {
+      throw new WorkerError('worker_update_state_invalid');
+    }
+    const record = JSON.parse(await readFile(path, 'utf8'));
+    if (record.format !== 1) throw new WorkerError('worker_update_state_invalid');
+    return record;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 export async function locateWorkerLaunch({ stateDirectory, releaseDirectory, home = process.env.HOME,
@@ -347,8 +361,6 @@ export async function launchUpdateSupervisor(stateDirectory, { run = execute } =
     await run('/usr/bin/systemd-run', ['--user', '--collect', '--unit', unit, '--property=Type=exec',
       '--property=Restart=on-failure', '--property=RestartSec=1',
       ...(process.env.FOREMAN_INSTALL_SKIP_CI_SMOKE === '1' ? ['--setenv=FOREMAN_INSTALL_SKIP_CI_SMOKE=1'] : []),
-      // A transient unit starts with systemd's default PATH; its CI smoke runs corepack, which needs this Node.
-      `--setenv=PATH=${dirname(process.execPath)}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
       process.execPath, helper, stateDirectory], { timeout: 10_000, maxBuffer: 4096, env: environment() });
   } catch (error) {
     if (error.killed || error.signal || error.code === 'ETIMEDOUT') {

@@ -1,6 +1,5 @@
 import { NodePlacementReadbackSchema } from '@foreman-code/contracts/node-placement'
 import type { z } from 'zod'
-import { useComputerName } from '../../shared/api/computerActivity'
 import './nodePlacement.css'
 
 export type NodePlacementReadback = z.infer<typeof NodePlacementReadbackSchema>
@@ -10,17 +9,16 @@ export type NodePlacementFactsProps = {
   readback?: NodePlacementReadback
 }
 
-/** Render only immutable, authorized readback for this exact selected node. A computer accepted without a
- * label shows its current name, so the owner sees its name instead of a device ID. */
+/** Render only immutable, authorized readback for this exact selected node.
+ * Current labels/defaults/connectivity deliberately cannot enter this component. */
 export function NodePlacementFacts({ runId, nodeId, readback }: NodePlacementFactsProps) {
-  const computerName = useComputerName()
   const parsed = NodePlacementReadbackSchema.safeParse(readback)
   if (!parsed.success || parsed.data.evidence === 'legacy_missing') return <p>Computer: not recorded.</p>
   const { placement, observations } = parsed.data
   if (placement.runId !== runId || placement.nodeId !== nodeId) return <p>Computer: not recorded.</p>
   const host = placement.hostRef
   const identity = host.kind === 'device' ? host.deviceId : host.mainId
-  const label = placement.labelAtAcceptance ?? computerName({ hostRef: host }) ?? identity
+  const label = placement.labelAtAcceptance ?? identity
   const preparations = (parsed.data.nativePlacements ?? []).filter(native =>
     native.runId === runId && native.nodeId === nodeId && native.acceptedBindingHash === placement.bindingHash)
   const matching = observations.filter((observation) => observation.bindingHash === placement.bindingHash

@@ -2,13 +2,12 @@ import type { Edge, Node, ReactFlowProps } from '@xyflow/react'
 import type { RunBoardSnapshot, RunBoardNodeSnapshot, RunBoardEdgeSnapshot } from '@foreman-code/contracts/run-snapshots'
 import type { WorkflowDefinitionCurrent } from '@foreman-code/contracts/current'
 import { roleNodeSize, workflowToGraph, layoutHierarchy, agentNodeFacts, edgeBend, relationshipLines } from '../board-core'
-import type { AgentPanel, IconName } from '../../shared/ui/nocturne'
+import type { IconName } from '../../shared/ui/nocturne'
 import { agentProductRoleLabel, isHierarchyReportingRoute, type ActivitySnapshotV1, type Agent, type CiActivity, type WorkRef,
   type WorkflowHierarchyReadResult } from '@foreman-code/contracts'
 
 export type AvailableRunBoardSnapshot = Extract<RunBoardSnapshot, { kind: 'available' }>
-export type SavedBoardNode = Node<{ snapshot: RunBoardNodeSnapshot; role?: string; icon?: IconName; reportingParent?: string; ci?: CiActivity; inspect?: () => void; pick?: () => void; picked?: boolean
-  openPanel?: AgentPanel; act?: (panel: AgentPanel) => void }, 'savedBoardNode'>
+export type SavedBoardNode = Node<{ snapshot: RunBoardNodeSnapshot; role?: string; icon?: IconName; reportingParent?: string; ci?: CiActivity; inspect?: () => void }, 'savedBoardNode'>
 /** One line per agent pair, as on the draft Board: an approval beside a handoff rides on the handoff's line. */
 export type SavedBoardEdge = Edge<{ snapshot: RunBoardEdgeSnapshot; members: readonly RunBoardEdgeSnapshot[]; bend: number }, 'savedBoardEdge'>
 

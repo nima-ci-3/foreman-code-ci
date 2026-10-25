@@ -26,9 +26,6 @@ export function selectAffectedFiles({ suite, changedFiles, sources, exports = {}
   const full = reason => ({ scope: 'full', files: [], reason })
   if (!['unit', 'integration', 'lint', 'typecheck'].includes(suite)) return full('This suite requires a full run.')
   if (changedFiles.some(ciInfrastructureFile)) return full('Shared CI infrastructure changed.')
-  if (['typecheck', 'lint'].includes(suite) && changedFiles.some(file => /\.d\.[cm]?ts$/.test(file))) {
-    return full('Type declarations changed; imports may name their JavaScript implementation.')
-  }
   if (changedFiles.some(file => codeFile.test(file) && !sources.has(file))) return full('A source file was removed.')
   // Glob dependencies cannot be represented by one literal import edge.
   if ([...sources.values()].some(text => /import\.meta\.glob\s*\(/.test(text))) return full('Glob imports require a full run.')
@@ -84,10 +81,10 @@ export function selectAffectedFiles({ suite, changedFiles, sources, exports = {}
       && !(file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file))
       && (projects.some(project => file.startsWith(`${project}/`)) || file.startsWith('scripts/')))
   } else if (suite === 'lint') {
-    files = [...affected].filter(file => sources.has(file) && /\.[cm]?[jt]sx?$/.test(file)
+    files = changedFiles.filter(file => sources.has(file) && /\.[cm]?[jt]sx?$/.test(file)
       && projects.some(project => file.startsWith(`${project}/`)))
   } else {
-    files = [...affected].filter(file => sources.has(file) && /\.(?:[cm]?ts|tsx)$/.test(file)
+    files = [...affected].filter(file => sources.has(file) && /\.tsx?$/.test(file)
       && projects.some(project => file.startsWith(`${project}/`)))
   }
   let reason = 'Static import reachability from changed files.'

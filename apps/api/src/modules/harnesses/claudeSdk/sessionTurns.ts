@@ -3,7 +3,7 @@ import { claudeNativeEvent } from './nativeEvents.js'
 import { createClaudeEventNormalizer } from './normalization.js'
 import { childHistoryCursor, childHistoryEvent, encodeChildHistoryCursor } from '../../subagents/index.js'
 import type { NativeHarnessEvent, NativeSessionReference, PendingNativeInteraction, ApprovalResponseOption } from '@foreman-code/contracts'
-import type { NativeHistory, NativeSteerInput, NativeTurnInput, NativeSubagentHistoryPage } from '../port.js'
+import type { NativeHistory, NativeTurnInput, NativeSubagentHistoryPage } from '../port.js'
 import { HarnessExecutionError } from '../errors.js'
 import { ClaudeInputNotDeliveredError } from './port.js'
 import { claudePromptUuid, type ClaudeMessageTurnInput, type ClaudeManagerContext } from './sessionTypes.js'
@@ -85,23 +85,6 @@ export async function respond(ctx: ClaudeManagerContext, session: NativeSessionR
   runtimeFor(ctx, session)
   if (!ctx.options.qualification.interactions || !ctx.options.interactionPort) throw new HarnessExecutionError('CLAUDE_RESPONSE_UNQUALIFIED', 'No live qualified native callback is bound to this response.')
   return ctx.options.interactionPort.respond(session, requestId, option, signal)
-}
-
-/** Steers the exact active turn: the message joins it at its next step (after the current tool call), and the turn
- * finishes as one result. The expected turn is the active message's native receipt. */
-export async function steerTurn(ctx: ClaudeManagerContext, session: NativeSessionReference, input: NativeSteerInput,
-  signal?: AbortSignal): Promise<{ nativeTurnId: string }> {
-  signal?.throwIfAborted()
-  const runtime = runtimeFor(ctx, session)
-  const turn = runtime.active
-  if (runtime.closed || runtime.failure || runtime.controlPending || !turn?.submitted || turn.terminal || turn.cancelRequested
-    || !turn.nativeMessageId || turn.nativeMessageId !== input.expectedTurnId) {
-    throw new HarnessExecutionError('CLAUDE_STEER_TURN_MISMATCH', 'The expected Claude turn is no longer active; queue the message instead.')
-  }
-  runtime.sdk.assertInputCapacity()
-  await runtime.sdk.offer({ promptUuid: claudePromptUuid(`steer:${input.controlCommandId ?? input.clientCorrelationId}`),
-    content: input.prompt, priority: 'next' }, signal)
-  return { nativeTurnId: turn.nativeMessageId }
 }
 
 /** Interrupts only the exact active turn, identified by its native message receipt. */

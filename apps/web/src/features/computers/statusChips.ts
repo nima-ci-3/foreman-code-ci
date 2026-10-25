@@ -72,12 +72,7 @@ function updateChip({ status, readiness, starting }: {
       detail: running ? `${taskLabel(running.kind)} is running.` : workerUpdating ? 'The Worker is updating.' : 'Starting the update.' }
   }
   if (!status) return { id: 'update', label, state: 'unknown', text: 'unknown', tone: 'neutral', detail: 'Update state is not available yet.' }
-  // A Worker update that failed only because the Worker was restarting into it, or whose target the Worker now runs,
-  // was finished by that restart. Any other failure (a failed download) stays retryable.
-  const finishedByRestart = (task: MaintenanceTask) => task.kind === 'update-worker' && worker?.state === 'current'
-    && !workerBehind(status, readiness) && (/worker_update_restart_pending/iu.test(task.summary)
-      || (!!task.workerTargetVersion && task.workerTargetVersion === worker.currentVersion))
-  const failedTask: MaintenanceTask | undefined = tasks.find(task => task.state === 'failed' && !finishedByRestart(task))
+  const failedTask: MaintenanceTask | undefined = tasks.find(task => task.state === 'failed')
   const failedWorker = worker?.state === 'failed' || worker?.state === 'rolled-back'
   if (failedTask || failedWorker) {
     const raw = failedTask?.summary ?? worker?.lastError ?? 'Worker update failed.'
