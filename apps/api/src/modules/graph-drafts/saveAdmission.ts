@@ -104,8 +104,10 @@ const currentInteractions = `exists (
     or i.record->>'executionId' is distinct from i.execution_id
     or i.record->>'status' is distinct from i.status or i.record->>'revision' is distinct from i.revision::text
     or i.record->>'requestingAgentId' is distinct from e.agent_id
-    or i.record->>'nativeSessionId' is distinct from e.record->>'nativeSessionId'
-    -- An owner work direction is always user-handled, whatever the workflow's approval handler.
+    -- An owner work direction is always user-handled, whatever the workflow's approval handler,
+    -- and falls back to the Run ID when its execution never opened a native session.
+    or i.record->>'nativeSessionId' is distinct from coalesce(e.record->>'nativeSessionId',
+      case when i.record->>'kind'='work_direction' then r.id end)
     or (i.record->>'kind' is distinct from 'work_direction' and i.record->'approval' is distinct from r.record->'approval')
     or (i.record->>'kind'='work_direction' and i.record->'approval' is distinct from '{"handler":"user"}'::jsonb)
     -- Owner work directions settle without native approval callbacks or graph-resume records.

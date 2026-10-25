@@ -148,12 +148,6 @@ describe.skipIf(!postgresEnabled)('workflow settlement direction', () => {
         await f.restart()
         await f.lifecycle.settleRun(true, false)
         const scope = { workspaceId: f.scope.workspaceId, workflowId: f.scope.workflowId, stagedAgentIds: [] }
-        const diag = (await f.db.pool.query(`select i.status, i.execution_id, e.id as eid, i.record->>'kind' kind,
-          i.record->>'requestingAgentId' ra, e.agent_id, i.record->>'nativeSessionId' ins, e.record->>'nativeSessionId' ens,
-          i.record->'approval' ia, r.record->'approval' ra2, i.record->>'executionId' iex, i.record->>'status' rs, i.record->>'revision' rr, i.revision
-          from durable_interactions i join runs r on r.id=i.run_id left join harness_executions e on e.id=i.execution_id and e.run_id=i.run_id
-          where i.run_id=$1`, [f.run.id])).rows
-        console.log('DIAG', JSON.stringify(diag))
         expect(await withTransaction(f.db.pool, (sql) => readAffectedGraphRuns(sql, scope)))
           .toEqual([expect.objectContaining({ terminal: true, interactionPending: false })])
       } finally { await api.app.close() }
