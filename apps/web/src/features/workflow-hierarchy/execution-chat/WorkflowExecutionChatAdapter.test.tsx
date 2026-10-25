@@ -100,7 +100,7 @@ it.each(['execution', 'coordinator'] as const)('pins the resolved %s before moun
   expect(pins.has(kind === 'execution' ? 'waitingActivationId' : 'executionId')).toBe(false)
 })
 
-it('requires an explicit Run choice, opens its attempt and never follows a successor on refresh', async () => {
+it('requires an explicit Run and execution choice and never follows a successor on refresh', async () => {
   const wire = install({ kind: 'run_selection_required', items: [{ runId: 'run', workflowVersionId: 'version' }],
     revision: 1, nextCursor: null, hasMore: false })
   const cache = mount()
@@ -110,12 +110,14 @@ it('requires an explicit Run choice, opens its attempt and never follows a succe
   if (choice.kind !== 'selected') throw new Error('Expected selected fixture')
   const candidate = { target: choice.target, agent: choice.agent, workflowVersionId: choice.workflowVersionId,
     source: choice.source, state: choice.state }
-  let pinned: WorkflowExecutionChatResolution = choice
-  server.use(http.get(`${base}/target`, ({ request }) => HttpResponse.json(new URL(request.url).searchParams.get('executionId')
-    ? pinned : { kind: 'selection_required', items: [candidate], revision: 1, nextCursor: null, hasMore: false })))
+  wire.controls.resolution = { kind: 'selection_required', items: [candidate], revision: 1, nextCursor: null, hasMore: false }
   fireEvent.click(screen.getByRole('button', { name: 'Run run' }))
+  await screen.findByRole('button', { name: 'Execution execution · Attempt 1' })
+  expect(wire.reads).toEqual([])
+  wire.controls.resolution = choice
+  fireEvent.click(screen.getByRole('button', { name: 'Execution execution · Attempt 1' }))
   await screen.findByText('Working on the task.')
-  pinned = selected({ ...executionTarget,
+  wire.controls.resolution = selected({ ...executionTarget,
     execution: { ...fixture.execution, executionId: 'successor', activationId: 'successor-activation' } })
   await act(async () => { await cache.invalidateQueries({ queryKey: [...executionChatScopeKey(scope), 'selection'] }) })
   expect(await screen.findByRole('alert')).toHaveTextContent('another saved selection')
@@ -124,25 +126,22 @@ it('requires an explicit Run choice, opens its attempt and never follows a succe
   expect(screen.queryByRole('region', { name: 'Execution conversation' })).not.toBeInTheDocument()
 })
 
-it('opens the latest attempt of a finished Run and keeps history switching available', async () => {
+it('requires an explicit attempt choice for a finished Run and keeps history switching available', async () => {
   const choice = selected()
   if (choice.kind !== 'selected') throw new Error('Expected selected fixture')
-  const candidate = (executionId: string, attempt: number) => ({ target: { ...choice.target,
-    execution: { ...fixture.execution, executionId, attempt } },
-  agent: choice.agent, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
+  const candidate = (executionId: string) => ({ target: { ...choice.target, execution: { ...fixture.execution, executionId } },
+    agent: choice.agent, workflowVersionId: choice.workflowVersionId, source: choice.source, state: 'idle' as const })
   install()
-  const items = [candidate('execution', 1), candidate('check', 2)]
-  server.use(http.get(`${base}/target`, ({ request }) => {
-    const pinned = items.find(item => item.target.execution.executionId === new URL(request.url).searchParams.get('executionId'))
-    return HttpResponse.json(pinned ? { ...choice, target: pinned.target, state: 'idle' }
-      : { kind: 'selection_required', items, revision: 1, nextCursor: null, hasMore: false })
-  }))
+  const choices: WorkflowExecutionChatResolution = { kind: 'selection_required', items: [candidate('execution'), candidate('check')],
+    revision: 1, nextCursor: null, hasMore: false }
+  server.use(http.get(`${base}/target`, ({ request }) => HttpResponse.json(new URL(request.url).searchParams.get('executionId')
+    ? { ...choice, state: 'idle' } : choices)))
   mount({ runId: 'run' })
-  expect(await screen.findByText('Working on the task.')).toBeInTheDocument()
-  expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"check"')
-  fireEvent.click(screen.getByRole('button', { name: 'Other attempts' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 1' }))
-  await waitFor(() => expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"execution"'))
+  expect(await screen.findByText('Working on the task.')).toBeInTheDocument()
+  expect(screen.getByLabelText('Chat selection')).toHaveTextContent('"executionId":"execution"')
+  fireEvent.click(screen.getByRole('button', { name: 'Other attempts' }))
+  expect(await screen.findByRole('button', { name: 'Execution check · Attempt 1' })).toBeInTheDocument()
 })
 
 it('retains transient status, hides denied history through a failed retry, and resumes only after a successful read', async () => {
@@ -245,6 +244,7 @@ it.each(['NO_EXECUTION', 'NODE_UNAVAILABLE', 'WORKFLOW_UNAVAILABLE', 'missing-ru
     expect(screen.getByLabelText('Chat selection')).toHaveTextContent('unavailable-run')
     fireEvent.click(escape)
     fireEvent.click(await screen.findByRole('button', { name: 'Run run' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Execution execution · Attempt 1' }))
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Unsent exact execution question')
     expect(wire.reads).toEqual([])
     expect(screen.getByLabelText('Chat selection')).not.toHaveTextContent('unavailable-version')
