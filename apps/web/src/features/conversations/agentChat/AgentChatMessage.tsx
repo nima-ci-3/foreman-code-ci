@@ -1,12 +1,12 @@
-import { memo, useState, type ReactNode } from 'react'
+import { memo, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import type { Message } from '@foreman-code/contracts'
 import { useMutation } from '@tanstack/react-query'
 import { errorMessage } from '../../../shared/errorMessage'
-import { Button, CodeBlock, Icon, MessageBubble } from '../../../shared/ui/nocturne'
+import { Button, CodeBlock, MessageBubble } from '../../../shared/ui/nocturne'
 import { TextTruncationNotice } from '../../chat-core'
-import { partialStructuredResult, structuredResult } from './structuredResult'
+import { structuredResult } from './structuredResult'
 
 const markdownComponents: Components = {
   pre({ node }) {
@@ -73,25 +73,11 @@ function MessageExpansion({ onExpand }: { onExpand(): Promise<void> }) {
 /** A structured turn result (routing, board patches) reads as its summary line; the JSON stays one click away. */
 function AgentContent({ content }: { content: string }) {
   const result = structuredResult(content)
-  // While the result is still streaming its JSON, show progress instead of the raw text.
-  if (!result && partialStructuredResult(content)) return <p className="agent-chat-writing" role="status">Writing the result…</p>
   if (!result) return <AgentMarkdown content={content} />
   return <>
     {result.prose ? <AgentMarkdown content={result.prose} /> : null}
     {result.summary ? <AgentMarkdown content={result.summary} /> : <p>Turn finished.</p>}
-    <ResultDetails value={result.value} />
+    <details className="agent-chat-tool"><summary>Result details</summary>
+      <CodeBlock code={JSON.stringify(result.value, null, 2)} label="Result details" /></details>
   </>
-}
-
-/** Opened details close from their end too, so a long result never needs scrolling back to its toggle. */
-function ResultDetails({ value }: { value: unknown }) {
-  const [open, setOpen] = useState(false)
-  return <details className="agent-chat-tool" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>Result details</summary>
-    {open ? <>
-      <CodeBlock code={JSON.stringify(value, null, 2)} label="Result details" />
-      <button type="button" className="agent-chat-tool-close" aria-label="Hide result details" title="Hide result details"
-        onClick={() => setOpen(false)}><Icon name="minus" size={14} aria-hidden="true" /></button>
-    </> : null}
-  </details>
 }

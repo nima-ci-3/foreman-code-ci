@@ -2,7 +2,6 @@ import { asRecord } from '../../shared/records.js'
 import type { HarnessExecution, NativeSessionReference } from '@foreman-code/contracts'
 import type { NativeHistory } from '../harnesses/port.js'
 import { DomainError } from '../errors.js'
-import { componentLogger } from '../diagnostics/index.js'
 
 function outcome(status: unknown): 'succeeded' | 'failed' | 'canceled' | undefined {
   return status === 'completed' ? 'succeeded' : status === 'failed' ? 'failed' : status === 'interrupted' ? 'canceled' : undefined
@@ -22,18 +21,11 @@ export function workflowProviderId(session: NativeSessionReference, history: Nat
 export function assertOriginalWorkflowTerminal(execution: Pick<HarnessExecution, 'id' | 'agentId'>,
   session: NativeSessionReference, history: NativeHistory, command = `execution:${execution.id}`): void {
   const terminal = history.terminalTurn
-  const fail = (reason: string): never => {
-    componentLogger('harness').warn({ executionId: execution.id, harness: session.harness, reason,
-      terminalOutcome: terminal?.result.outcome, events: history.events.length,
-      resultEvents: history.events.filter(event => event.type === 'claude.result').length,
-      pendingInteractions: history.pendingInteractions.length }, 'Original native terminal not proven')
-    throw new DomainError('NATIVE_TERMINAL_SOURCE_REQUIRED',
-      'The exact original native terminal frame and pinned turn are required.', 409)
-  }
-  if (!terminal) return fail('terminal_missing')
-  if (terminal.correlationId !== command || history.correlationId !== command) return fail('correlation')
-  if (!terminal.providerId || terminal.providerId !== workflowProviderId(session, history)) return fail('provider_turn')
-  if (history.pendingInteraction || history.pendingInteractions.length) return fail('pending_interaction')
+  const fail = (): never => { throw new DomainError('NATIVE_TERMINAL_SOURCE_REQUIRED',
+    'The exact original native terminal frame and pinned turn are required.', 409) }
+  if (!terminal || terminal.correlationId !== command || history.correlationId !== command
+    || !terminal.providerId || terminal.providerId !== workflowProviderId(session, history)
+    || history.pendingInteraction || history.pendingInteractions.length) return fail()
   if (session.harness === 'claude') {
     for (const event of history.events) {
       const payload = asRecord(event.payload)
@@ -49,9 +41,9 @@ export function assertOriginalWorkflowTerminal(execution: Pick<HarnessExecution,
         'error_max_structured_output_retries'].includes(String(raw.subtype))
         && terminal.result.outcome === 'failed' && terminal.result.error?.code === 'CLAUDE_NATIVE_RESULT_ERROR') return
     }
-    return fail('claude_result_frame')
+    return fail()
   }
-  if (session.harness !== 'codex') return fail('harness')
+  if (session.harness !== 'codex') return fail()
   for (const event of history.events) {
     const payload = asRecord(event.payload), turn = asRecord(payload.turn)
     if ((event.type === 'turn.completed' || event.type === 'turn/completed')
@@ -68,5 +60,5 @@ export function assertOriginalWorkflowTerminal(execution: Pick<HarnessExecution,
         && (current.clientUserMessageId === undefined || current.clientUserMessageId === command)) return
     }
   }
-  return fail('codex_turn_frame')
+  return fail()
 }

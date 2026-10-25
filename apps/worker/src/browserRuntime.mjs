@@ -1,11 +1,10 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { setTimeout as wait } from 'node:timers/promises';
 import { readInstalledRelease } from './installation.mjs';
-import { readUpdateRecord } from './updateRecord.mjs';
 import { readInstalledBrowserRuntime, readBrowserRuntimeStatus, writeBrowserRuntimeStatus,
-  stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
+  stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime } from './browserRuntimeInstall.mjs';
 
+const digest = /^[a-f0-9]{64}$/;
 const importHost = path => import(pathToFileURL(path).href);
 
 function unavailable(message, cause) {
@@ -15,7 +14,8 @@ function unavailable(message, cause) {
 }
 
 function approveRuntime(release, runtime) {
-  if (!browserRuntimeMatchesRelease(release?.manifest, runtime)) {
+  const approved = release?.manifest?.browserRuntime?.manifestSha256;
+  if (!digest.test(approved ?? '') || approved !== runtime.manifestSha256) {
     throw unavailable('The managed browser runtime does not match the selected Worker release.');
   }
 }
@@ -41,7 +41,6 @@ export function createWorkerBrowserRuntime(options) {
     loadModule = importHost, runtimeRoot = join(root, 'browser-runtime') } = options;
   let host = null, nativeModule = null, installed = null;
   let startupChecked = false;
-  let repairWait = null;
   let offlineLifecycle = null;
   let profileCheckpoint = null;
   let phase = 'unavailable', admissionStopped = false, closed = false, lastFailure = null;
@@ -98,41 +97,16 @@ export function createWorkerBrowserRuntime(options) {
     }
   }
 
-  async function waitForCommittedUpdate(release) {
-    let update = await readUpdateRecord(stateDirectory);
-    if (!update || update.manifestSha256 !== release.manifestSha256) return true;
-    const controller = new AbortController();
-    repairWait = controller;
-    try {
-      // Bundled-runtime supervisors can restart this release without a browser rollback receipt.
-      while (update?.manifestSha256 === release.manifestSha256 && update.status.state === 'restarting') {
-        if (closed || admissionStopped) return false;
-        phase = 'draining'; lastFailure = 'Browser repair is waiting for the Worker update to finish.';
-        await wait(250, undefined, { signal: controller.signal });
-        update = await readUpdateRecord(stateDirectory);
-      }
-      return !closed && !admissionStopped && update?.manifestSha256 === release.manifestSha256
-        && update.status.state === 'current';
-    } catch (error) {
-      if (!controller.signal.aborted) throw error;
-      return false;
-    } finally { repairWait = null; }
-  }
-
   async function retryInstallation() {
     if (closed) throw unavailable('This browser runtime owner has been closed.');
     if (host) return status();
     await assertHostOwnership();
     const release = await readSelectedRelease({ root, facts, expected });
+    phase = 'installing'; lastFailure = null;
     try {
-      if (!await waitForCommittedUpdate(release)) {
-        phase = 'unavailable'; lastFailure = 'Browser repair was canceled before the Worker update completed.';
-        return status();
-      }
-      phase = 'installing'; lastFailure = null;
       const staged = await stageBundledBrowserRuntime({ root, artifact: release.directory, manifest: release.manifest,
         target: facts, readiness: options.browserRuntimeReadiness });
-      if (!staged) throw unavailable('This release has no approved browser runtime recipe.');
+      if (!staged) throw unavailable('This release needs a verified browser artifact from a matching target runner.');
       const selected = await readSelectedRelease({ root, facts, expected });
       if (selected.manifestSha256 !== release.manifestSha256 || closed) {
         throw unavailable('The Worker release changed while repairing its browser runtime.');
@@ -154,7 +128,6 @@ export function createWorkerBrowserRuntime(options) {
 
   function stopAdmission() {
     admissionStopped = true;
-    repairWait?.abort();
     host?.stopAdmission();
     if (host) phase = 'draining';
   }

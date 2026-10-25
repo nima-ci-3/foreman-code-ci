@@ -28,7 +28,6 @@ export class BrowserController {
   private taking: Promise<BrowserControl> | undefined
   private acquireCommand: string | undefined
   private releaseCommand: string | undefined
-  private releasing: Promise<void> | undefined
   private operation = 0
   private closed = false
   private deliberateClose = false
@@ -166,16 +165,6 @@ export class BrowserController {
     const frame = this.snapshot.frame
     if (!frame || this.snapshot.stale || this.closed || this.snapshot.notice === 'denied') return
     const bytes = new TextEncoder().encode(JSON.stringify(gesture)).byteLength
-    // A move still waiting behind others is replaced by the newer one: only the latest position matters, and
-    // each queued gesture is a round trip to the computer. Presses, releases and keys keep their order.
-    const last = this.queue.at(-1)
-    if (gesture.kind === 'pointer' && gesture.phase === 'move' && last
-      && last.gesture.kind === 'pointer' && last.gesture.phase === 'move' && last.gesture.buttons === gesture.buttons
-      && last.width === frame.width && last.height === frame.height && last.viewportOffsetTop === (frame.viewportOffsetTop ?? 0)) {
-      this.queuedBytes += bytes - last.bytes
-      this.queue[this.queue.length - 1] = { ...last, gesture, bytes }
-      return
-    }
     if (this.queue.length >= 128 || this.queuedBytes + bytes > 32768 || bytes > 16384) {
       this.pause(new Error('Input paused — connection is catching up. Reconnect before continuing.'))
       return
@@ -258,13 +247,7 @@ export class BrowserController {
     }
   }
 
-  /** Overlapping calls (several clicks outside the page) share one release with its original epoch and command. */
-  release(): Promise<void> {
-    this.releasing ??= this.releaseOnce().finally(() => { this.releasing = undefined })
-    return this.releasing
-  }
-
-  private async releaseOnce(): Promise<void> {
+  async release(): Promise<void> {
     if (this.closed || this.snapshot.notice === 'denied') return
     if (!this.taking && this.snapshot.control.controllingViewerId !== this.viewerId) return
     this.operation += 1

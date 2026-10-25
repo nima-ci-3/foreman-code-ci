@@ -10,7 +10,6 @@ import {
 import type { WorkflowNativeProofRecord } from './workflowNativeProof.js'
 import type { WorkflowResultEffectFailure } from './workflowResultEffectFailure.js'
 import { DomainError } from '../errors.js'
-import { componentLogger } from '../diagnostics/index.js'
 import type { WorkflowCollaborationHooks } from '../collaboration/index.js'
 
 import {
@@ -173,8 +172,6 @@ export class RepeatRepositoryFactory {
         }
         throw error
       }
-      componentLogger('engine').warn({ runId: run.id, executionId: execution.id, err: error },
-        'Execution preparation failed; retrying')
       // Preparation transport failures are retried from the saved checkpoint,
       // rather than treated as an interrupted native launch by the driver.
       const unavailable = new DomainError('EXECUTION_PREPARATION_UNAVAILABLE',

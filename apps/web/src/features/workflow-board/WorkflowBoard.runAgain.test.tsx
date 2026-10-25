@@ -2,7 +2,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
-import { HttpResponse } from 'msw'
 import { CurrentRunDetailsSchema, RepeatGraphCurrentStateSchema, RunStartCurrentInputSchema } from '@foreman-code/contracts/current'
 import { nextDraftKey } from '../board-core'
 import { useGraphDraftStore } from '../graph'
@@ -36,22 +35,15 @@ it.each([
 ] as const)('starts the saved workflow from a %s Run graph', async (_label, state, outcome) => {
   const scope = selectState(state, outcome)
   const original = structuredClone(fixture.mock.runs.get(scope.runId))
-  measureBoardWire(fixture.mock, async request => {
-    if (request.method !== 'POST' || !new URL(request.url).pathname.endsWith('/runs')) return undefined
-    // Admit after history before the response triggers Board/list refreshes.
-    const response = await fixture.mock.dispatch(request)
-    if (!response) throw new Error('The Board fixture must handle Start')
-    const result = await response.json() as { run: { id: string; startedAt?: string }; accepted: boolean }
-    const startedAt = new Date(Date.parse(fixture.after.createdAt) + 1000).toISOString()
-    fixture.mock.runs.get(result.run.id)!.run.startedAt = startedAt
-    return HttpResponse.json({ ...result, run: { ...result.run, startedAt } }, { status: response.status })
-  })
+  measureBoardWire(fixture.mock)
   const mounted = await mountMeasuredBoard(`${boardHref(scope)}&boardView=graph`)
   await screen.findByRole('region', { name: 'Selected Run board' })
   const toolbar = within(await screen.findByRole('banner', { name: 'Board toolbar' }))
   const run = await toolbar.findByRole('button', { name: 'Start saved version' })
   await waitFor(() => expect(run, run.title).toBeEnabled())
   expect(run).toHaveTextContent('Run current workflow')
+  expect(toolbar.getByLabelText('Start target')).toHaveTextContent(fixture.after.id)
+  expect(toolbar.getByLabelText('Start target')).toHaveTextContent('New input, without reusing the selected Run’s input.')
   expect(toolbar.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
   await userEvent.setup().click(run)
   await waitFor(() => expect(fixture.mock.runs.size).toBe(4))
@@ -61,6 +53,8 @@ it.each([
     workspaceId: scope.workspaceId, workflowId: scope.workflowId, workflowVersionId: fixture.after.id,
   })
   expect(fixture.mock.runs.get(scope.runId)).toEqual(original)
+  // The generic Start fixture has a fixed old clock; this newly admitted Run starts after history.
+  fixture.mock.runs.get('run-current-1')!.run.startedAt = new Date(Date.parse(fixture.after.createdAt) + 1000).toISOString()
   await mounted.cache.invalidateQueries()
   await waitFor(() => expect(screen.getByRole('region', { name: 'Workflow authoring' })).toBeVisible())
   expect(mounted.router.state.location.search).not.toHaveProperty('selectedRunId')

@@ -42,8 +42,6 @@ function fixture(suite: 'lint' | 'integration' = 'lint') {
       if (typeof parameters![5] === 'string') logTail = parameters![5]
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes("record->>'gate'='true'") || sql.includes("record->>'supersededBy' is not null")) return { rows: [] }
-    if (sql.includes("state='queued'") && record.state !== 'queued') return { rows: [] }
     if (sql.includes('from ci_group_requesters')) return { rows: [] }
     if (sql.includes('durations from ci_runs')) return { rows: [] }
     if (sql.startsWith('select id,host_key')) return { rows: [{ id: record.id, host_key: computer.key, record }] }

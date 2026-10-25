@@ -3,7 +3,7 @@ import type { CiHostStatus } from '@foreman-code/contracts'
 import { CiRunRecordSchema, requiresUserSystemd, userSystemdIntegrationFiles,
   type CiRunRecord } from '@foreman-code/contracts'
 import type { HostCiComputer, HostCiEndpoint } from './service.js'
-import { ciComputerPreference, supportsUserSystemd } from './computerCapabilities.js'
+import { isGitHubComputer, supportsUserSystemd } from './computerCapabilities.js'
 import type { CiContext } from './environment.js'
 import { executorSpeedKey, readExecutorSpeeds } from './executorSpeed.js'
 import { buildComputerIntegrationShards } from './capacity.js'
@@ -48,7 +48,7 @@ export async function weighCiPartitions(context: CiContext, pool: pg.Pool,
     }
     const existing = group.find(run => run.partition!.weights)
     const ordered = [...computers].sort((left, right) =>
-      ciComputerPreference(right) - ciComputerPreference(left)
+      Number(isGitHubComputer(left)) - Number(isGitHubComputer(right))
       || right.priority - left.priority
       || (speed.get(right.key) ?? 0) - (speed.get(left.key) ?? 0))
     const systemdComputers = ordered.filter(supportsUserSystemd).sort((left, right) =>

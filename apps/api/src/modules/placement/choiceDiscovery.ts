@@ -46,9 +46,9 @@ function folderChoices(choices: NodePlacementChoice[]): NodePlacementChoice[] {
 
 function matchesConfiguration(profile: HostHarnessOverride, configuration: AgentConfigurationVersion): boolean {
   const requested = configuration.harnessProfileSelection
-  // A saved profile pins the Agent's profile on its own computer; other computers match by configuration.
-  if (requested && sameWorkflowValue(profile.target.hostRef, requested.target.hostRef) && (profile.instanceId !== requested.instanceId
+  if (requested && (profile.instanceId !== requested.instanceId
     || profile.instanceRevision !== requested.instanceRevision
+    || !sameWorkflowValue(profile.target.hostRef, requested.target.hostRef)
     || profile.target.applicationInstallationId !== requested.target.applicationInstallationId)) {
     return false
   }
@@ -76,10 +76,9 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
       return this.listFolders(services, principal, input, configuration, source)
     }
     const sourceFailures = await this.refreshSources(services, principal, input.workspaceId, source)
-    // A paired computer needs its harness profile before its project root can be provisioned.
-    const preparation = await this.prepareWorkerProfiles(services, principal, input.workspaceId, configuration, source)
     let pending = await provisionPairedAgentRoots(this.pool, services, principal, input.workspaceId, configuration,
       matchesConfiguration, source)
+    const preparation = await this.prepareWorkerProfiles(services, principal, input.workspaceId, configuration, source)
     pending ||= [...preparation.values()].some(value => value.pending)
     const profiles = await withTransaction(this.pool, async sql => {
       const roots = await this.sourceRoots(sql, input.workspaceId)
@@ -195,20 +194,17 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
     configuration: AgentConfigurationVersion, source: 'http' | 'mcp', policies?: WorkspaceRootPolicy[]) {
     const results = new Map<string, ComputerAvailability>()
     const harnessInstances = services.harnessInstances
-    const driver = configuration.harness.harness
-    if (!harnessInstances || (driver !== 'codex' && driver !== 'claude') || !isAuthorized(principal, 'harnesses:update')) return results
-    const roots = [...policies ? policies.map(policy => ({ selection: { hostRef: policy.hostRef },
+    if (!harnessInstances || configuration.harness.harness !== 'codex' || configuration.harnessProfileSelection
+      || !isAuthorized(principal, 'harnesses:update')) return results
+    const roots = policies ? policies.map(policy => ({ selection: { hostRef: policy.hostRef },
       binding: { workerInstallationId: policy.registration?.workerInstallationId ?? null } }))
-      : await withTransaction(this.pool, sql => this.sourceRoots(sql, workspaceId)),
-    // A freshly paired computer with this harness installed has no project root yet; set its profile up too.
-    ...await withTransaction(this.pool, sql => this.pairedHarnessHosts(sql, services, driver))]
+      : await withTransaction(this.pool, sql => this.sourceRoots(sql, workspaceId))
     for (const root of roots) {
       const host = root.selection.hostRef
       const key = commandInputHash(host)
-      if (host.kind !== 'device' || results.has(key) || services.computerOnline && !services.computerOnline(host)
-        || configuration.harnessProfileSelection && sameWorkflowValue(configuration.harnessProfileSelection.target.hostRef, host)) continue
+      if (host.kind !== 'device' || results.has(key) || services.computerOnline && !services.computerOnline(host)) continue
       const installation = services.registry.installations.list().find(value => value.installed
-        && value.driverId === driver && value.installationFingerprint && sameWorkflowValue(value.hostRef, host))
+        && value.driverId === 'codex' && value.installationFingerprint && sameWorkflowValue(value.hostRef, host))
       const applicationInstallationId = root.binding.workerInstallationId
       const installationFingerprint = installation?.installationFingerprint
       if (!installation || !installationFingerprint || !applicationInstallationId) continue
@@ -227,18 +223,6 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
         })) : computer)
     }
     return results
-  }
-
-  private async pairedHarnessHosts(sql: pg.PoolClient, services: DiscoveryServices, driver: string) {
-    const hosts = []
-    for (const installation of services.registry.installations.list()) {
-      if (!installation.installed || installation.driverId !== driver || installation.hostRef.kind !== 'device') continue
-      const device = (await sql.query<{ worker_installation_id: string }>(`select worker_installation_id from device_registrations
-        where id=$1 and main_id=$2 and record->>'status'='paired'`, [installation.hostRef.deviceId, installation.hostRef.mainId])).rows[0]
-      if (device) hosts.push({ selection: { hostRef: installation.hostRef },
-        binding: { workerInstallationId: device.worker_installation_id } })
-    }
-    return hosts
   }
 
   /** Every paired computer stays offered: one with no choice above says in plain words why it can't run this Agent.
@@ -264,6 +248,7 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
       let reason = preparation.get(commandInputHash(hostRef))?.reason
         ?? `${name} has no ${harness} setup that matches this agent’s model and settings yet.`
       if (services.computerOnline && !services.computerOnline(hostRef)) reason = `${name} is offline.`
+      else if (driver !== 'codex') reason = `${harness} agents run only on Main for now, not on ${name}.`
       else if (!installed) reason = `${harness} isn’t installed on ${name}.`
       else if (!roots.some(root => sameWorkflowValue(root.selection.hostRef, hostRef))) {
         reason = `This workspace’s project isn’t set up on ${name} yet.`
@@ -306,7 +291,7 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
   }
 
   private supportedProfile(profile: HostHarnessOverride): boolean {
-    return profile.driverId === 'codex' || profile.driverId === 'claude'
+    return profile.driverId === 'codex' || profile.driverId === 'claude' && profile.target.hostRef.kind === 'main'
   }
 
   private async probeReadiness(services: DiscoveryServices, profiles: HostHarnessOverride[],

@@ -714,7 +714,7 @@ describe('GitHub Actions CI on a public mirror', () => {
       'apps/api/test/workflow-systemd-restart.integration.test.ts',
       'apps/api/test/remote-review-production-main-crash.integration.test.ts',
     ]
-    const f = await fixture(Object.fromEntries([...systemd, ...cloud].map(file => [file, ''])), { provider, userSystemd: false })
+    const f = await fixture(Object.fromEntries([...systemd, ...cloud].map(file => [file, ''])), { provider })
     const ordinary = [...cloud, ...['a', 'b', 'c', 'd'].map(name => `apps/api/test/${name}.integration.test.ts`)]
     const inventory = [...ordinary, ...systemd].sort()
     await f.cloud.handle({ operation: 'start', workspaceId: 'ci-workspace', runId: randomUUID(), repository: 'octo/site', commit: f.commit,

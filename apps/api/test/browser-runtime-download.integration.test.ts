@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 
 const { downloadBrowserRuntimeArtifact }: {
-  downloadBrowserRuntimeArtifact(url: string, destination: string, expected?: string, fetchArtifact?: typeof fetch): Promise<{ sha256: string; size: number }>
+  downloadBrowserRuntimeArtifact(url: string, destination: string, expected?: string): Promise<{ sha256: string; size: number }>
 } = await import(new URL('../../../scripts/browser-runtime-install.mjs', import.meta.url).href)
 
 it('refuses to download executable browser bytes without an expected checksum', async () => {
@@ -31,8 +31,7 @@ it('verifies the pinned Chromium archive bytes before they can be extracted', as
   try {
     expect(await downloadBrowserRuntimeArtifact(url, join(directory, 'verified.zip'), digest))
       .toMatchObject({ sha256: digest, size: 195836009 })
-    await expect(downloadBrowserRuntimeArtifact(url, join(directory, 'rejected.zip'), '0'.repeat(64),
-      async () => new Response(await readFile(join(directory, 'verified.zip')))))
+    await expect(downloadBrowserRuntimeArtifact(url, join(directory, 'rejected.zip'), '0'.repeat(64)))
       .rejects.toThrow('upstream artifact checksum mismatch')
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
