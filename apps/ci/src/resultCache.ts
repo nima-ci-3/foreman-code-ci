@@ -82,8 +82,7 @@ function codeMask(text: string) {
  * only finds a path) load nothing. */
 /** Every call that starts a process. Its command is named when it is a literal (a system tool such as git, or a
  * repository script the literals name) or Node running a script a literal names; anything else could run any file. */
-function processCalls(text: string): Analysis['processes'] {
-  const code = codeMask(text)
+function processCalls(text: string, code: Uint8Array): Analysis['processes'] {
   const calls: Analysis['processes'] = []
   for (const match of text.matchAll(/(?<![\w$])(?:(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(|new\s+Worker\s*\()/g)) {
     if (!code[match.index] || (text[match.index - 1] === '.' && !/\b(?:child_process|childProcess|cp)\.$/.test(text.slice(match.index - 20, match.index)))) continue
@@ -93,17 +92,18 @@ function processCalls(text: string): Analysis['processes'] {
     const argument = close < 0 ? text.slice(open + 1) : text.slice(open + 1, close - 1)
     const literals = [...argument.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!)
     const command = /^\s*(['"`])[^'"`$]+\1/.test(argument)
-    const node = /^\s*process\.execPath\b/.test(argument) && literals.some(literal => scriptFile.test(literal))
+    // Node runs inline code or a script; a repository script is reached through the paths the file names, which
+    // join the key on their own.
+    const node = /^\s*process\.execPath\b/.test(argument)
     calls.push({ named: command || node, literals })
   }
   return calls
 }
 
-function computedCalls(text: string): Analysis['computed'] {
+function computedCalls(text: string, code: Uint8Array): Analysis['computed'] {
   const names = [...new Set(['require', ...[...text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*createRequire\s*\(/g)]
     .map(match => match[1]!)])].map(name => name.replace(/\$/g, '\\$')).join('|')
   const call = new RegExp(`(?<![.\\w$])(?:(import)|(?:${names})|createRequire\\s*\\([^()]*(?:\\([^()]*\\)[^()]*)*\\))\\s*\\(`, 'g')
-  const code = codeMask(text)
   const calls: Analysis['computed'] = []
   for (const match of text.matchAll(call)) {
     if (!code[match.index]) continue
@@ -117,8 +117,11 @@ function computedCalls(text: string): Analysis['computed'] {
     // `import(/* ci-key: <specifier> */ path)` names what a runtime path loads: an installed package the lockfile
     // pins, or the repository file a bundle is built from. The named input joins the key like a literal.
     const declared = [...argument.matchAll(/\/\*\s*ci-key:\s*(\S+)\s*\*\//g)].map(found => found[1]!)
-    calls.push({ kind: match[1] ? 'import' : 'require',
-      literals: [...declared, ...[...argument.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!)] })
+    // A path held in a variable is traced one step to the expression that defines it in this file.
+    const defined = [...new Set(argument.match(/(?<![.\w$'"`])[A-Za-z_$][\w$]*/g) ?? [])].flatMap(name =>
+      [...text.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, '\\$')}\\s*=\\s*([^;\\n]+)`, 'g'))].map(found => found[1]!))
+    calls.push({ kind: match[1] ? 'import' : 'require', literals: [...declared,
+      ...[argument, ...defined].flatMap(value => [...value.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!))] })
   }
   return calls
 }
@@ -130,8 +133,11 @@ const TEST_DOUBTS: [RegExp, string][] = [
 const testSupport = /(?:^|\/)(?:test|tests|__tests__|fixtures?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|test-?support|test-?utils/i
 const pathLiteral = /['"`]((?:\.{1,2}\/)*[A-Za-z0-9_@-][A-Za-z0-9_.@-]*(?:\/[A-Za-z0-9_.@-]+)+)['"`]/g
 const scriptFile = /\.[cm]?[jt]sx?$/
+/** Marks an edge whose file joins the key by content only (a file inside a named directory). */
+const DATA = '\0data:'
+/** Marks an edge whose imports are followed without doubts (a script inside a named directory). */
+const LOOSE = '\0loose:'
 const relativeLiteral = /['"`](\.{1,2}\/[^'"`\s$]*)['"`]/g
-const DIRECTORY_FILES_MAX = 2000
 
 /** Share the read limit across manifests and all test closures of the selection. */
 function boundedTree(tree: CiTestTree, signal: AbortSignal): CiTestTree {
@@ -154,14 +160,18 @@ function boundedTree(tree: CiTestTree, signal: AbortSignal): CiTestTree {
 function analyze(path: string, text: string): Analysis {
   const css = path.endsWith('.css')
   const data = css || path.endsWith('.json')
+  const code = data ? new Uint8Array(0) : codeMask(text)
+  // CSS imports name their files like JS imports; one that names no literal could load anything.
+  const cssImports = css ? [...text.matchAll(/@import\s+(?:url\(\s*)?(['"]?)([^'")\s;]+)\1/g)].map(match => match[2]!) : []
   return {
-    specifiers: data ? [] : importSpecifiers(text),
+    specifiers: css ? cssImports.filter(specifier => !/^(?:https?:)?\/\//.test(specifier))
+      : data ? [] : importSpecifiers(text, index => code[index] === 1),
     literals: data ? [] : [...text.matchAll(pathLiteral)].map(match => match[1]!),
     relatives: data ? [] : [...new Set([...text.matchAll(relativeLiteral)].map(match => match[1]!))],
-    computed: data ? [] : computedCalls(text),
-    processes: data || !TEST_DOUBTS[1]![0].test(text) ? [] : processCalls(text),
+    computed: data ? [] : computedCalls(text, code),
+    processes: data || !TEST_DOUBTS[1]![0].test(text) ? [] : processCalls(text, code),
     anchoredDirectories: data ? [] : [...text.matchAll(/new\s+URL\(\s*['"](\.{1,2})\/?['"]\s*,\s*import\.meta\.url\s*\)/g)].map(match => match[1]!),
-    doubt: css ? (/@import\b/.test(text) ? 'imports CSS' : null) : DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
+    doubt: css ? (/@import\b/.test(text) && cssImports.length < (text.match(/@import\b/g) ?? []).length ? 'imports CSS by a computed name' : null) : DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
     testDoubt: data ? null : TEST_DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
   }
 }
@@ -319,14 +329,25 @@ export class CiResultKeys {
    * graph cannot prove; the harness closure follows the same edges and the paths its scripts name. */
   private async closure(roots: string[], strict: boolean) {
     const files = new Set<string>()
+    const walked = new Set<string>()
     let frontier = roots
     while (frontier.length) {
       const next: string[] = []
       for (let start = 0; start < frontier.length; start += 16) {
         await Promise.all(frontier.slice(start, start + 16).map(async file => {
-          if (files.has(file)) return
-          files.add(file)
-          next.push(...await this.edges(file, strict))
+          if (file.startsWith(DATA)) {
+            files.add(file.slice(DATA.length))
+            return
+          }
+          const loose = file.startsWith(LOOSE)
+          const path = loose ? file.slice(LOOSE.length) : file
+          // A file walked strictly needs no loose walk; a loose walk never doubts.
+          const mode = loose || !strict ? 'l' : 's'
+          if (walked.has(`s:${path}`) || walked.has(`${mode}:${path}`)) return
+          walked.add(`${mode}:${path}`)
+          files.add(path)
+          const edges = await this.edges(path, strict && !loose)
+          next.push(...loose ? edges.map(edge => edge.startsWith('\0') ? edge : `${LOOSE}${edge}`) : edges)
         }))
       }
       frontier = next
@@ -357,7 +378,7 @@ export class CiResultKeys {
     const support = testSupport.test(file)
     if (strict && analysis.doubt) throw new CacheDoubt(`${file} ${analysis.doubt}.`)
     // Test support that starts a process must name what it runs; files it reads are proven by the paths it names
-    // (below): named files and small directories join the key, a large directory leaves the test unkeyed.
+    // (below): named files join the key and are followed, files in named directories join it by content.
     if (strict && support && analysis.processes.some(call => !call.named)) {
       throw new CacheDoubt(`${file} starts a process it names by a computed path.`)
     }
@@ -376,6 +397,12 @@ export class CiResultKeys {
       if (relative || workspace || name === '@foreman-code/contracts') {
         const target = specifier.startsWith('/') ? null
           : workspace ? this.workspaceSource(file, specifier, name, workspace) : resolveImport(file, specifier, this.tree.blobs, this.exports)
+        // A relative import of a workspace package's build (`../packages/contracts/dist/x.js`) runs its source.
+        const built = !target && relative ? this.computedTarget(file, specifier).find((value): value is string => value !== true) : undefined
+        if (built) {
+          edges.push(built)
+          continue
+        }
         if (!target) {
           // Runner scripts and configs are hashed by content as environment files; a name they mention that is not a
           // repository file (documentation text, a generated module) adds nothing to follow. A test's own closure
@@ -420,7 +447,9 @@ export class CiResultKeys {
   private computedTarget(file: string, literal: string): (string | true)[] {
     if (literal.startsWith('.')) {
       const target = resolveImport(file, literal, this.tree.blobs, {})
-      return target ? [target] : []
+      if (target) return [target]
+      literal = posix.normalize(posix.join(posix.dirname(file), literal))
+      if (!/^(?:apps|packages)\/[^/]+\/dist\//.test(literal)) return []
     }
     if (this.tree.blobs.has(literal)) return [literal]
     // A built file of a workspace package (`apps/api/dist/x.js`) runs that package's source.
@@ -463,9 +492,10 @@ export class CiResultKeys {
     for (const candidate of candidates) {
       if (this.tree.blobs.has(candidate)) named.push(candidate)
       else if (this.directories.has(candidate)) {
+        // Every file in a named directory joins the key by content; its scripts may be run, so their imports are
+        // followed too, loosely like the harness's (what resolves joins the key, nothing doubts).
         const inside = [...this.tree.blobs.keys()].filter(path => path.startsWith(`${candidate}/`))
-        if (inside.length > DIRECTORY_FILES_MAX) throw new CacheDoubt(`${file} names the large directory ${candidate}.`)
-        named.push(...inside)
+        named.push(...inside.map(path => `${scriptFile.test(path) ? LOOSE : DATA}${path}`))
       }
     }
     return named

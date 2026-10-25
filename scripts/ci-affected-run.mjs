@@ -35,8 +35,11 @@ export function affectedCommands(suite, files) {
         || (file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file)))) {
         throw new Error('Unit scope requires unit test files.')
       }
-      const nodeFiles = selected.filter(file => file.endsWith('.mjs'))
-      const vitestFiles = selected.filter(file => !file.endsWith('.mjs'))
+      // As in full runs (ci-suite.sh): scripts and the Worker test with Node's runner; every other project's .mjs
+      // tests are Vitest files.
+      const nodeRunner = project === 'scripts' || project === 'apps/worker'
+      const nodeFiles = nodeRunner ? selected.filter(file => file.endsWith('.mjs')) : []
+      const vitestFiles = selected.filter(file => !nodeFiles.includes(file))
       // Only API tests use the disposable PostgreSQL server, which CI starts for the unit and unit-api parts alone.
       const database = project === 'apps/api' ? [process.execPath, 'scripts/test-command.mjs', '--'] : []
       if (nodeFiles.length) commands.push([...database, process.execPath, '--test', ...nodeFiles])

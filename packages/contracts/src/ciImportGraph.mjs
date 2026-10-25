@@ -25,12 +25,16 @@ export function ciInfrastructureFile(file) {
 }
 
 /** Literal module specifiers of static imports, re-exports, dynamic imports, requires and Vitest module mocks.
+ * `isCode(index)`, when given, drops matches that start inside a string or comment (code written as fixture text).
  * @param {string} text
+ * @param {(index: number) => boolean} [isCode]
  * @returns {string[]} */
-export function importSpecifiers(text) {
+export function importSpecifiers(text, isCode) {
   const values = []
   const pattern = /\b(?:import|export)\s+(?:[^;'"]*?\s+from\s*)?['"]([^'"]+)['"]|\b(?:import|require|vi\.mock|vi\.doMock|vi\.importActual|vi\.importMock)\s*(?:<[^>]*>)?\s*\(\s*['"]([^'"]+)['"]/g
-  for (const match of text.matchAll(pattern)) values.push(match[1] ?? match[2])
+  for (const match of text.matchAll(pattern)) {
+    if (!isCode || isCode(match.index)) values.push(match[1] ?? match[2])
+  }
   return values
 }
 

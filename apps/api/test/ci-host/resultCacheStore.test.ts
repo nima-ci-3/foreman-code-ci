@@ -67,7 +67,7 @@ it('cancels active Git reads and leaves queued blobs unread when the key budget 
     tree: (signal?: AbortSignal) => commits.testTree(selection.repository, selection.commit, signal) })
   await reading
   await vi.advanceTimersByTimeAsync(20_000)
-  expect(await pending).toEqual({ files: f.files.sort(), keys: {}, cached: [] })
+  expect(await pending).toEqual({ files: f.files.sort(), keys: {}, cached: [], unavailable: true })
   expect(active).toBe(0)
   const stoppedAt = started
   await vi.advanceTimersByTimeAsync(30_000)
