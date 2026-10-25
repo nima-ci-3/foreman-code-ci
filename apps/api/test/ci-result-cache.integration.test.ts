@@ -288,7 +288,7 @@ it('skips files that already passed in a run whose files the selector chose, and
     f.selections.set(commit('1'), [LABEL, PLAIN])
     const first = await f.requestSelected('1')
     expect((await f.read(first.ticketId)).run).toMatchObject({ selectedOnMain: true, files: [LABEL, PLAIN] })
-    expect(await f.sent(first.ticketId)).toEqual([LABEL, PLAIN])
+    expect(await f.sent(first.ticketId), JSON.stringify(await f.read(first.ticketId))).toEqual([LABEL, PLAIN])
     await f.complete(first.ticketId)
     expect(await f.cachedRows()).toEqual([
       { file: LABEL, ticket_id: first.ticketId }, { file: PLAIN, ticket_id: first.ticketId }])
