@@ -54,7 +54,7 @@ it('reconciles an accepted Start on remount without leaving the selected histori
   })
   expect(reopened.router.state.location.search.selectedRunId).toBe(runs.before.run.id)
   expect(screen.getByRole('region', { name: 'Selected Run board' })).toBeVisible()
-  expect(screen.getByText('Selected Run', { selector: 'span' })).toBeVisible()
+  expect(screen.getByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', runs.before.run.id)
   expect(useGraphDraftStore.getState().nextDrafts[key]!.instanceId).toBe(retained.instanceId)
   expect(sent).toEqual([])
 }, 15_000)

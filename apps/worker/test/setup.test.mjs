@@ -35,11 +35,11 @@ async function fixture(t, artifactName = 'fixture') {
 test('setup holds the installation lock until its launchers and proposed service are published', { timeout: 5000 }, async (t) => {
   const first = await fixture(t, 'first');
   const second = await fixture(t, 'second');
-  const node = join(second.home, 'node-22.23.3');
-  await writeFile(node, `#!/bin/sh\nexport APPROVED_NODE_LABEL=22.23.3\nexec '${process.execPath}' "$@"\n`, { mode: 0o700 });
+  const node = join(second.home, 'node-24.22.1');
+  await writeFile(node, `#!/bin/sh\nexport APPROVED_NODE_LABEL=24.22.1\nexec '${process.execPath}' "$@"\n`, { mode: 0o700 });
   second.home = first.home;
   second.node = node;
-  second.facts = { ...facts, node: 'v22.23.3' };
+  second.facts = { ...facts, node: 'v24.22.1' };
   const manifest = JSON.parse(await readFile(join(second.artifact, 'manifest.json'), 'utf8'));
   manifest.version = '1.1.0';
   manifest.target = second.facts;
@@ -81,7 +81,7 @@ test('setup holds the installation lock until its launchers and proposed service
     const child = spawnSync(command, args, { encoding: 'utf8', timeout: 2000 });
     assert.equal(child.status, 0, child.stderr);
     const report = JSON.parse(child.stdout);
-    assert.equal(report.approvedNode, '22.23.3');
+    assert.equal(report.approvedNode, '24.22.1');
     assert.equal(report.artifact, 'second');
   }
 });

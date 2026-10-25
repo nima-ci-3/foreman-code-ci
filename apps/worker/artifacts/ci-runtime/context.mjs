@@ -23,6 +23,7 @@ async function installedRuntimeFiles(offlineSeed) {
   const controlNames = ['Containerfile', 'corepack'];
   if (offlineSeed) controlNames.push('seed-policy.mjs', 'verification-policy.mjs', 'verification-observation.mjs');
   const entries = controlNames.map(name => ({ root: controls, name, destination: name }));
+  entries.push({ root: dirname(controls), name: bundled ? 'node-runtime.json' : 'node-24.22.1-linux-x64.json', destination: 'node-runtime.json' });
   for (const path of verificationRuntimeFiles) {
     const installedPath = bundled ? verificationArtifactPath(path) : path;
     entries.push({ root: join(scripts, '..', dirname(installedPath)), name: basename(installedPath),

@@ -64,6 +64,9 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
         }
         if (next.kind === 'none') delete selected.boardPanel
         else selected.boardPanel = next.kind
+        if (next.kind !== 'agent' || next.nodeId !== previous.boardNodeId || next.runId || next.executionId || next.waitingActivationId) {
+          delete selected.boardChatTarget
+        }
         if (next.kind === 'agent' || next.kind === 'browser') {
           if (next.kind === 'agent' || next.nodeId !== undefined) {
             selected.boardNodeId = next.nodeId
@@ -107,13 +110,13 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
   const selectTeam = useCallback((nodeId?: string) => {
     void navigate({ to: pathname, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous
-        : ({ ...keepRun(previous), boardView: 'overview', boardTeamId: nodeId }) })
+        : ({ ...keepRun(previous), boardView: undefined, boardTeamId: nodeId }) })
   }, [navigate, pathname, workflowId, keepRun])
   const selectExecution = useCallback((target: { runId: string; workflowVersionId: string; nodeId: string; executionId: string }, tab: 'chat' | 'details' = 'details') => {
     releaseBrowser()
     void navigate({ to: '/workspaces/$workspaceId', params: { workspaceId }, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous : ({ ...previous, workflowId,
-        boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: target.workflowVersionId, executionSemanticsVersion: 3,
+        boardChatTarget: undefined, boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: target.workflowVersionId, executionSemanticsVersion: 3,
         boardView: tab === 'details' ? 'graph' : previous.boardView, boardPanel: 'agent', boardAgentTab: tab,
         boardNodeId: target.nodeId, boardExecutionId: target.executionId,
         boardWaitingActivationId: undefined,
@@ -130,7 +133,7 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
     releaseBrowser()
     void navigate({ to: '/workspaces/$workspaceId', params: { workspaceId }, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous : ({ ...previous, workflowId,
-        boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: versionId, executionSemanticsVersion: 3,
+        boardChatTarget: undefined, boardRunId: undefined, selectedRunId: undefined, runId: target.runId, workflowVersionId: versionId, executionSemanticsVersion: 3,
         boardPanel: 'agent', boardAgentTab: 'chat', boardNodeId: target.agent.workflowNodeId,
         boardExecutionId: undefined, boardWaitingActivationId: target.waitingActivationId,
         runNodeId: undefined, runRelationshipId: undefined, runExchangeKey: undefined,
@@ -140,6 +143,7 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
     releaseBrowser()
     void navigate({ to: '/workspaces/$workspaceId', params: { workspaceId }, hash: true,
       search: previous => previous.workflowId && previous.workflowId !== workflowId ? previous : ({ ...previous, workflowId,
+        boardChatTarget: target ? undefined : 'current',
         boardRunId: undefined, selectedRunId: target && !target.workflowVersionId ? target.runId : undefined,
         runId: target?.workflowVersionId ? target.runId : undefined, workflowVersionId: target?.workflowVersionId,
         executionSemanticsVersion: target?.workflowVersionId ? 3 : undefined,
@@ -151,6 +155,7 @@ export function useWorkflowSidePanel(workspaceId: string, workflowId: string, ru
     ? { kind: 'agent', nodeId: search.boardNodeId, ...(search.boardRunId ? { runId: search.boardRunId } : {}), tab: search.boardAgentTab ?? 'chat',
       ...(search.boardExecutionId ? { executionId: search.boardExecutionId } : {}),
       ...(search.boardWaitingActivationId ? { waitingActivationId: search.boardWaitingActivationId } : {}) } : undefined
-  return { scope, opener, panel, selectPanel, agentSelection, releaseBrowser, view: search.boardView ?? 'graph', selectView,
+  return { scope, opener, panel, selectPanel, agentSelection, releaseBrowser, // One Board: the Overview page is gone; old boardView links open the Board.
+    view: 'graph' as const, selectView,
     memoryOpen: search.boardMemory === true, setMemoryOpen, teamNodeId: search.boardTeamId, selectTeam, selectExecution, selectChatTarget, selectChatRun }
 }

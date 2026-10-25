@@ -283,6 +283,16 @@ export class BrowserFileStore {
   async closeSession(sessionId: string, removeDownloads = false): Promise<void> {
     this.closedSessions.add(sessionId)
     await atomicBrowserPrivateJson(join(this.root, 'closed-sessions'), `${browserInputHash(sessionId)}.json`, { closed: true })
+    await this.cleanSession(sessionId, removeDownloads)
+  }
+
+  /** Retire this host's staging without preventing a restarted host from receiving new files. */
+  async suspendSession(sessionId: string): Promise<void> {
+    this.closedSessions.add(sessionId)
+    await this.cleanSession(sessionId, false)
+  }
+
+  private async cleanSession(sessionId: string, removeDownloads: boolean): Promise<void> {
     // Drain admissions that began before the fence; later native events cannot resurrect staging.
     await Promise.allSettled([...(this.sessionActivity.get(sessionId) ?? [])])
     for (const file of await this.list(sessionId, true)) {

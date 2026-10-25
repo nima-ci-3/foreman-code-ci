@@ -10,6 +10,7 @@ export async function copyApiRuntime(repository, output) {
   const controls = ['Containerfile', 'corepack', 'context.mjs', 'seed-policy.mjs',
     'verification-policy.mjs', 'verification-observation.mjs']
   const paths = [
+    'apps/worker/artifacts/node-24.22.1-linux-x64.json',
     ...controls.map(name => `apps/worker/artifacts/ci-runtime/${name}`),
     ...verificationRuntimeFiles,
   ]
