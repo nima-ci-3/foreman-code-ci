@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { CiGetOutputSchema, CiRunOutputSchema, type CiHostRequest, type CiHostRun, type CiTestResults } from '@foreman-code/contracts'
 import { decodeMcpToolResult } from '@foreman-code/contracts/operator-mcp'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { buildApp } from '../src/app.js'
 import type { OperatorServices } from '../src/mcp/operator/types.js'
 import { PostgresAccessService } from '../src/modules/access/postgres.js'
@@ -15,6 +15,10 @@ import { mainCiContext } from '../src/modules/ci/context.js'
 let database: Awaited<ReturnType<typeof migratedDatabase>>
 beforeAll(async () => { database = await migratedDatabase() }, 60_000)
 afterAll(async () => { await database?.close() }, 60_000)
+// The queue and gate reservations span workspaces; each case owns a fresh fleet.
+beforeEach(async () => {
+  await database.pool.query('truncate ci_runs, ci_file_durations, management_command_receipts, management_audit')
+})
 
 const LABEL = 'apps/api/test/label.integration.test.ts'
 const PLAIN = 'apps/api/test/plain.integration.test.ts'
@@ -288,7 +292,7 @@ it('skips files that already passed in a run whose files the selector chose, and
     f.selections.set(commit('1'), [LABEL, PLAIN])
     const first = await f.requestSelected('1')
     expect((await f.read(first.ticketId)).run).toMatchObject({ selectedOnMain: true, files: [LABEL, PLAIN] })
-    expect(await f.sent(first.ticketId)).toEqual([LABEL, PLAIN])
+    expect(await f.sent(first.ticketId), JSON.stringify(await f.read(first.ticketId))).toEqual([LABEL, PLAIN])
     await f.complete(first.ticketId)
     expect(await f.cachedRows()).toEqual([
       { file: LABEL, ticket_id: first.ticketId }, { file: PLAIN, ticket_id: first.ticketId }])

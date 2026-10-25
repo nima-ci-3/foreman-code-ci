@@ -387,14 +387,25 @@ export class HostCiService {
    * hand-picked files proves nothing about the rest; a selector run's cached files were proven by earlier passes). */
   private async passedAncestor(repository: string, suite: string, commit: string) {
     if (!this.commits.coverageAncestors) return undefined
+    // Candidate groups come from ci_runs_passed_suite_idx without reading the large records; one part per group is
+    // read for its commit and selection, and groups with any other outcome are excluded (106 ms for integration).
     const passed = await this.pool.query<{ commit: string }>(
-      `select record->>'commit' as commit from ci_runs
-        where record->>'repository' = $1 and record->>'suite' = $2 and record->>'commit' <> $3
-          and (record->>'scope' = 'full' or record->>'deriveFiles' = 'true' or record->>'selectedOnMain' = 'true')
-        group by group_id, record->>'commit' having bool_and(state = 'passed')
-        order by max(record->>'finishedAt') desc limit 200`, [repository, suite, commit])
-    if (!passed.rows.length) return undefined
-    return (await this.commits.coverageAncestors(repository, commit, passed.rows.map(row => row.commit)))[0]
+      `select r.commit from (
+          select group_id, workspace_id, max(created_at) as at from ci_runs
+          where state = 'passed' and record->>'repository' = $1 and record->>'suite' = $2
+            and created_at > now() - interval '14 days'
+          group by group_id, workspace_id) g
+        cross join lateral (select record->>'commit' as commit, record->>'scope' as scope,
+          record->>'deriveFiles' as derive, record->>'selectedOnMain' as main
+          from ci_runs x where x.workspace_id = g.workspace_id and x.group_id = g.group_id limit 1) r
+        where r.commit <> $3 and (r.scope = 'full' or r.derive = 'true' or r.main = 'true')
+          and not exists (select 1 from ci_runs o where o.workspace_id = g.workspace_id and o.group_id = g.group_id
+            and o.state <> 'passed')
+        order by g.at desc limit 200`, [repository, suite, commit])
+    const candidates = passed.rows.map(row => row.commit)
+    const base = candidates.length ? (await this.commits.coverageAncestors(repository, commit, candidates))[0] : undefined
+    this.context.log.info({ suite, commit, candidates: candidates.length, base: base ?? null }, 'CI passed-ancestor base')
+    return base
   }
 
   private async prepareRuns(caller: ManagementPrincipal, input: CiRunInput,
@@ -498,7 +509,7 @@ export class HostCiService {
     }
     const selectionScope = supportsSelection ? input.scope ?? 'affected' : 'full'
     let deriveFiles = selectionScope === 'affected' && input.files === undefined
-    const coverage = deriveFiles && input.suite === 'integration'
+    let coverage = deriveFiles && input.suite === 'integration'
       ? await this.coverage.selection(repository, commit, this.commits) : undefined
     // Suites select their affected files here, with the selector the runner would use: a part with nothing affected
     // never starts a job, and test files that already passed with identical inputs are skipped and the files this run
@@ -516,7 +527,8 @@ export class HostCiService {
       }
       timing.mark('mainSelectionMs')
     }
-    if (mainSelection) deriveFiles = false
+    // The coverage input was for the selection; a run whose files are chosen no longer waits for runner selection.
+    if (mainSelection) { deriveFiles = false; coverage = undefined }
     const explicitFiles = input.files ?? mainSelection?.files
     const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? explicitFiles : [] }
     // Gates, full scope and smoke runs always run every file; only explicit affected test selections use the cache.

@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { buildWorkerReleaseArtifacts, publishInstalledWorkerArtifacts, publishWorkerArtifactsToGitHub,
+import { buildWorkerReleaseArtifacts, publishInstalledWorkerArtifacts, publishTransitionArtifact, publishWorkerArtifactsToGitHub,
   readCommittedWorkerTargets, runWorkerPublicationCommand, workerPublicationServiceTemplate } from './worker-release-artifacts.mjs'
 import { WorkerArtifactIndexSchema } from '../packages/contracts/src/workerUpdate.ts'
 import { packBrowserRuntime } from './browser-runtime-install.mjs'
@@ -810,4 +810,37 @@ test('runs recovery when the service starts the script through the current relea
   const output = execFileSync(process.execPath, [join(root, 'current', 'scripts', 'worker-release-artifacts.mjs'),
     'recover', release], { encoding: 'utf8' })
   assert.match(output, /Worker artifacts published and verified on GitHub/)
+})
+
+test('publishes Node 22 transition carriers only when a Worker asks for one', async t => {
+  const f = await fixture(t)
+  await writeFile(join(f.repository, 'apps/worker/artifacts/node-24.22.1-linux-x64.json'), '{}')
+  execFileSync('git', ['add', 'apps/worker/artifacts/node-24.22.1-linux-x64.json'], { cwd: f.repository })
+  const commit = commitFixture(f.repository)
+  const index = await buildWorkerReleaseArtifacts({ ...f, expectedCommit: commit })
+  const transitions = index.artifacts.filter(entry => entry.transition)
+  assert.ok(transitions.length > 0)
+  assert.ok(transitions.every(entry => entry.target.node.startsWith('v22.')))
+  assert.ok(index.artifacts.filter(entry => !entry.transition).every(entry => entry.target.node.startsWith('v24.')))
+  const uploads = []
+  const publish = async ({ artifacts }) => {
+    uploads.push(artifacts.map(entry => entry.manifestSha256))
+    return { repository: 'example/worker', tag: `worker-${commit.slice(0, 12)}` }
+  }
+  // The release publish uploads only the bundles Workers on Node 24 use.
+  const published = await publishInstalledWorkerArtifacts({ directory: f.directory, repositoryName: 'example/worker', commit, publish })
+  assert.equal(published.publication.state, 'published')
+  assert.deepEqual(new Set(uploads[0]), new Set(index.artifacts.filter(entry => !entry.transition).map(entry => entry.manifestSha256)))
+  // A Worker on Node 22 asks for its carrier: exactly that one is uploaded and recorded as published.
+  await writeFile(join(f.repository, 'ci-smoke.json'), JSON.stringify({ repository: 'example/worker', commit }))
+  const wanted = transitions[0].manifestSha256
+  await publishTransitionArtifact({ release: f.repository, manifestSha256: wanted, publish })
+  assert.deepEqual(uploads[1], [wanted])
+  const after = JSON.parse(await readFile(join(f.directory, 'index.json'), 'utf8'))
+  WorkerArtifactIndexSchema.parse(after)
+  assert.ok(after.artifacts.find(entry => entry.manifestSha256 === wanted).github)
+  assert.ok(after.artifacts.filter(entry => entry.transition && entry.manifestSha256 !== wanted).every(entry => !entry.github))
+  // Asking again does not upload it twice.
+  await publishTransitionArtifact({ release: f.repository, manifestSha256: wanted, publish })
+  assert.equal(uploads.length, 2)
 })
