@@ -1,3 +1,4 @@
+import { PACKAGE_RELEASE_POLICY, PNPM_VERSION } from '@foreman-code/contracts/package-policy'
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import { errorMessage } from '@foreman-code/contracts-node/server-kit'
 import { deflateSync } from 'node:zlib'
@@ -562,7 +563,7 @@ export function validateIsolationMeasurement(probe: Record<string, unknown>, can
   if(managedHostname)environment.push('HOSTNAME')
   const hostnameMatches=managedHostname?typeof probe.hostname==='string'&&probe.hostname.length>0&&/^[a-f0-9]{64}$/.test(host.containerId??'')
     &&(probe.hostname===host.containerHostname||probe.hostname===host.containerId?.slice(0,12)):probe.hostname==null
-  if (!hostnameMatches || !toolchain || !/^v(?:2[2-9]|[3-9]\d)\./.test(String(toolchain.node)) || toolchain.pnpm !== '11.27.0' || !/^git version \d/.test(String(toolchain.git)) ||
+  if (!hostnameMatches || !toolchain || !/^v(?:2[2-9]|[3-9]\d)\./.test(String(toolchain.node)) || toolchain.pnpm !== PNPM_VERSION || !/^git version \d/.test(String(toolchain.git)) ||
     !/^flock from util-linux \d/.test(String(toolchain.flock)) || !/^\d+\.\d+\.\d+/.test(String(toolchain.corepack)) ||
     typeof probe.pidNamespace !== 'string' || !/^pid:\[\d+\]$/.test(probe.pidNamespace) ||
     typeof probe.networkNamespace !== 'string' || !/^net:\[\d+\]$/.test(probe.networkNamespace) ||
@@ -616,9 +617,7 @@ export function validateVerificationIsolationObservation(input: {
     || typeof observed.shmCapacityBytes !== 'number' || observed.shmCapacityBytes <= 0
     || observed.shmCapacityBytes > resources.shmBytes || typeof observed.controlTempCapacityBytes !== 'number'
     || observed.controlTempCapacityBytes <= 0 || observed.controlTempCapacityBytes > resources.controlTempBytes
-    || canonicalGraphJson(observed.packagePolicy) !== canonicalGraphJson({
-      minimumReleaseAge: 2880, minimumReleaseAgeStrict: true, minimumReleaseAgeIgnoreMissingTime: false,
-    }) || !input.ownerSentinelPaths.length || !Array.isArray(sentinels)
+    || canonicalGraphJson(observed.packagePolicy) !== canonicalGraphJson({ ...PACKAGE_RELEASE_POLICY }) || !input.ownerSentinelPaths.length || !Array.isArray(sentinels)
     || sentinels.length !== input.ownerSentinelPaths.length
     || input.ownerSentinelPaths.some(path => sentinels.filter(value => value?.path === path && value.result === 'ENOENT').length !== 1)) {
     denied()

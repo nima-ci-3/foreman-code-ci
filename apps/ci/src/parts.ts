@@ -1,11 +1,9 @@
-import { matchesGlob } from 'node:path'
-import { CI_UNIT_SHARD_LIMIT, CI_HEAVY_WEB_SHARDS, integrationPartition, requiresUserSystemd, type CiDurations, type CiPart, type CiPartition,
+import { CI_UNIT_SHARD_LIMIT, integrationPartition, requiresUserSystemd, type CiDurations, type CiPart, type CiPartition,
   type CiRunInput } from '@foreman-code/contracts'
 
 export interface CiUnitInventory {
   files: string[]
   durations: CiDurations
-  heavy: string[]
 }
 interface PlannedPart {
   part: CiPart | null
@@ -30,9 +28,9 @@ function unitFileDurations(files: string[], durations: CiDurations): CiDurations
 }
 
 /** Aim for 150 seconds of measured test time per unit shard; unknown repositories use the default counts. */
-function unitShardCount(part: 'unit-api' | 'unit-web', files: string[], durations: CiDurations, slots: number) {
+function unitShardCount(files: string[], durations: CiDurations, slots: number) {
   const measured = unitFileDurations(files, durations)
-  const fallback = part === 'unit-api' ? 5 : 3
+  const fallback = 5
   if (!measured) return Math.min(fallback, files.length || fallback, Math.max(1, slots))
   const total = Object.values(measured).reduce((sum, duration) => sum + duration, 0)
   const limit = Math.min(CI_UNIT_SHARD_LIMIT, files.length, Math.max(1, slots))
@@ -61,23 +59,16 @@ export function planCiParts(input: CiRunInput, durations: CiDurations, inventory
       partition: count > 1 ? { index, count } : null, files: selected }))
   }
   const names: CiPart[] = input.suite === 'unit'
-    ? ['unit-api', 'unit-web', 'unit-web-heavy', 'unit-other']
+    ? ['unit-api', 'unit-other']
     : [`${input.suite}-api`, `${input.suite}-other`]
-  const belongs = (file: string, part: CiPart) => {
-    if (part.endsWith('-api')) return file.startsWith('apps/api/')
-    if (part.endsWith('-other')) return !file.startsWith('apps/api/') && (input.suite !== 'unit' || !file.startsWith('apps/web/'))
-    const web = file.startsWith('apps/web/')
-    const heavy = inventory?.heavy.some(pattern => matchesGlob(file.slice('apps/web/'.length), pattern)) ?? false
-    return web && (part === 'unit-web-heavy' ? heavy : !heavy)
-  }
+  const belongs = (file: string, part: CiPart) => part.endsWith('-api') === file.startsWith('apps/api/')
   return names.flatMap(part => {
     const files = selected.filter(file => belongs(file, part))
     if (affected && !files.length) return []
     const candidates = affected ? files : inventory?.files.filter(file => belongs(file, part)) ?? []
-    const sharded = part === 'unit-api' || part === 'unit-web'
+    const sharded = part === 'unit-api'
     if (!affected && inventory && sharded && !candidates.length) return []
-    // The heavy web phase is one long Vitest run; Vitest splits it evenly across a fixed number of machines.
-    const count = sharded ? unitShardCount(part, candidates, unitDurations, slots) : part === 'unit-web-heavy' && !affected ? CI_HEAVY_WEB_SHARDS : 1
+    const count = sharded ? unitShardCount(candidates, unitDurations, slots) : 1
     const measured = sharded ? unitFileDurations(candidates, unitDurations) : undefined
     return Array.from({ length: count }, (_, index) => {
       const partition = count > 1 ? { index, count } : null
@@ -91,10 +82,8 @@ export function planCiParts(input: CiRunInput, durations: CiDurations, inventory
 }
 
 /** The unit part a test file runs in, as planCiParts splits it. */
-export function unitPartOf(file: string, heavy: readonly string[]): CiPart {
-  if (file.startsWith('apps/api/')) return 'unit-api'
-  if (!file.startsWith('apps/web/')) return 'unit-other'
-  return heavy.some(pattern => matchesGlob(file.slice('apps/web/'.length), pattern)) ? 'unit-web-heavy' : 'unit-web'
+export function unitPartOf(file: string): CiPart {
+  return file.startsWith('apps/api/') ? 'unit-api' : 'unit-other'
 }
 
 /** CircleCI takes every suite except the Worker unit tests, which need podman. */

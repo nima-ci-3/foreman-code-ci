@@ -1,3 +1,4 @@
+// ci-key-inputs: esbuild
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, readlink, stat, symlink, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'

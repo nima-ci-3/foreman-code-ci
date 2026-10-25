@@ -22,6 +22,9 @@ interface GateComputer {
 }
 export interface GatePart {
   suite: CiRunRecord['suite']
+  /** Typecheck, lint and integration parts are full (integration carries its assigned files); a proven gate's unit
+   * parts are affected with the files still to prove. */
+  scope?: CiRunRecord['scope']
   part: CiRunRecord['part']
   partition: CiRunRecord['partition']
   files: string[]
@@ -94,10 +97,10 @@ async function gateComputers(context: CiContext, endpoint: HostCiEndpoint, reser
   return available.filter((value): value is GateComputer => value !== null)
 }
 
-/** Keep free builders eligible; CircleCI takes work only once every eligible GitHub slot has some. */
+/** Other executors take work only once every eligible GitHub slot has some. */
 function preferGithub(items: GateComputer[], unused: (item: GateComputer) => boolean): GateComputer[] {
   const github = items.filter(item => item.computer.hostRef.kind === 'cloud' && item.computer.hostRef.provider === 'github' && unused(item))
-  return github.length ? items.filter(item => item.computer.hostRef.kind !== 'cloud' || github.includes(item)) : items
+  return github.length ? github : items
 }
 
 /** Prefer one wave; GitHub slots can also take integration after checks when that finishes earlier.
@@ -106,18 +109,29 @@ function preferGithub(items: GateComputer[], unused: (item: GateComputer) => boo
 export async function planCiGate(context: CiContext, input: CiRunInput, integration: CiIntegrationInventory,
   unit: CiUnitInventory, durations: CiDurations, endpoint: HostCiEndpoint,
   speeds: ExecutorSpeeds = new Map(), reservedCloudSlots = 0, unitSlots?: number,
-  usedByComputer: ReadonlyMap<string, number> = new Map()): Promise<GatePart[]> {
+  usedByComputer: ReadonlyMap<string, number> = new Map(),
+  /** The unit and integration inventories hold only the files still to prove; a suite with none gets no part. */
+  proven = false): Promise<GatePart[]> {
   const fleet = await gateComputers(context, endpoint, reservedCloudSlots, usedByComputer)
   const hosts = fleet.filter(item => item.computer.hostRef.kind !== 'cloud')
   const clouds = fleet.filter(item => item.computer.hostRef.kind === 'cloud')
   // Build computers are optional: a cloud-only fleet runs the whole gate.
-  if (!clouds.length || !integration.files.length) {
+  if (!clouds.length || (!proven && !integration.files.length)) {
     throw new DomainError('CI_GATE_CAPACITY_REQUIRED', 'A gate needs cloud CI and integration files.', 409)
   }
   const availableSlots = clouds.reduce((sum, item) => sum + item.freeSlots, 0)
   const slots = Math.min(unitSlots ?? availableSlots, availableSlots)
-  const checks = (['typecheck', 'lint', 'unit'] as const).flatMap(suite =>
-    planCiParts({ ...input, gate: false, suite, scope: 'full' }, durations, unit, slots).map(part => ({ ...part, suite })))
+  type Check = ReturnType<typeof planCiParts>[number] & { suite: 'typecheck' | 'lint' | 'unit'; scope: CiRunRecord['scope'] }
+  const checks: Check[] = []
+  for (const suite of ['typecheck', 'lint', 'unit'] as const) {
+    // A proven gate's unit parts run only the files still to prove; none left means no unit part.
+    const provenUnit = proven && suite === 'unit'
+    if (provenUnit && !unit.files.length) continue
+    const scope = provenUnit ? 'affected' as const : 'full' as const
+    const planned = planCiParts({ ...input, gate: false, suite, scope, ...(provenUnit ? { files: [...unit.files] } : {}) },
+      durations, unit, slots)
+    checks.push(...planned.map(part => ({ ...part, suite, scope })))
+  }
   // Checks that only some providers run are placed first, so they still find an empty slot of their own.
   const placed = new Map<(typeof checks)[number], GatePart>()
   for (const part of [...checks].sort((left, right) => Number(runsOnCircleCi(left)) - Number(runsOnCircleCi(right)))) {

@@ -1,12 +1,13 @@
+import { integrationTestFile, unitTestFile } from '@foreman-code/contracts/ci-test-inventory'
 import type { CiContext, GitWorktreePorts } from './environment.js'
 import type { CiCommits } from './service.js'
 import { ciRepositoryCapabilities } from './repository.js'
 import { onlyCiInfrastructure } from './priority.js'
 import type { CiTestTree } from './resultCache.js'
+import { ResultKeyThread } from './resultKeyThread.js'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { CiSelectionSchema, type CiCoverageSelection } from '@foreman-code/contracts'
 
@@ -16,7 +17,18 @@ const run = promisify(execFile)
 export class GitCiCommits implements CiCommits {
   private readonly published = new Map<string, Promise<void>>()
 
-  constructor(private readonly context: CiContext, private readonly git: GitWorktreePorts = context.platform.systemGitWorktreePorts()) {}
+  /** Result cache keys computed on a worker thread from the commit's tree (built code only). */
+  readonly resultKeys: CiCommits['resultKeys']
+
+  constructor(private readonly context: CiContext, private readonly git: GitWorktreePorts = context.platform.systemGitWorktreePorts()) {
+    if (ResultKeyThread.available()) {
+      const thread = new ResultKeyThread()
+      this.resultKeys = async (repository, commit, files, signal) => {
+        const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
+        return thread.keys(clone, commit, files, 60_000)
+      }
+    }
+  }
 
   async infrastructureOnly(repository: string, commit: string) {
     const signal = AbortSignal.timeout(30_000)
@@ -52,13 +64,22 @@ export class GitCiCommits implements CiCommits {
   }
 
   async coverageAncestors(repository: string, commit: string, candidates: string[]): Promise<string[]> {
-    const signal = AbortSignal.timeout(30_000)
+    const signal = AbortSignal.timeout(60_000)
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
-    // Date order keeps descendants ahead of parents, then orders independent branches by commit time.
-    const result = await this.git.git(['rev-list', '--date-order', commit], { cwd: clone, signal })
-    if (result.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'rev-list')
     const retained = new Set(candidates)
-    return result.stdout.trim().split('\n').filter(ancestor => retained.has(ancestor))
+    // Date order keeps descendants ahead of parents, then orders independent branches by commit time.
+    const ancestors = async () => {
+      const result = await this.git.git(['rev-list', '--date-order', commit], { cwd: clone, signal })
+      if (result.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'rev-list')
+      return result.stdout.trim().split('\n').filter(ancestor => retained.has(ancestor))
+    }
+    const found = await ancestors()
+    if (found.length || !candidates.length) return found
+    // A just-fetched commit is a shallow boundary: deepen until any candidate is in its history (the newest candidate
+    // may be on another branch and never connect).
+    await this.context.platform.deepenUntilConnected(this.git, clone, [commit],
+      async () => (await ancestors()).length > 0, signal)
+    return ancestors()
   }
 
   async capabilities(repository: string, commit: string) {
@@ -73,17 +94,10 @@ export class GitCiCommits implements CiCommits {
     const signal = AbortSignal.timeout(30_000)
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
     const read = (args: string[]) => this.git.git(args, { cwd: clone, signal })
-    const [tree, heavy] = await Promise.all([
-      read(['ls-tree', '-r', '--name-only', commit]),
-      read(['show', `${commit}:apps/web/heavy-tests.json`]),
-    ])
+    const tree = await read(['ls-tree', '-r', '--name-only', commit])
     if (tree.code !== 0) throw new Error('Could not read the CI commit inventory.')
-    const files = tree.stdout.trim().split('\n').filter(file => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
-      && !/(?:^|\/)(?:node_modules|dist|\.git)\//.test(file)
-      && !(file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file))
-      && (!file.startsWith('apps/web/') || /^apps\/web\/src\/.*\.(?:test|spec)\.tsx?$/.test(file)))
-    return { files, durations: {},
-      heavy: heavy.code === 0 ? (JSON.parse(heavy.stdout) as { files: string[] }).files : [] }
+    const files = tree.stdout.trim().split('\n').filter(unitTestFile)
+    return { files, durations: {} }
   }
 
   async integrationInventory(repository: string, commit: string) {
@@ -91,8 +105,7 @@ export class GitCiCommits implements CiCommits {
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
     const tree = await this.git.git(['ls-tree', '-r', '--name-only', commit], { cwd: clone, signal })
     if (tree.code !== 0) throw new Error('Could not read the CI integration inventory.')
-    return { files: tree.stdout.trim().split('\n').filter(file =>
-      /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(file)).sort(),
+    return { files: tree.stdout.trim().split('\n').filter(integrationTestFile).sort(),
     durations: {} }
   }
 
@@ -112,7 +125,9 @@ export class GitCiCommits implements CiCommits {
       if (!id) throw new Error(`The CI commit has no file ${path}.`)
       const blob = await this.git.git(['cat-file', 'blob', id], { cwd: clone,
         signal: AbortSignal.any([readSignal, AbortSignal.timeout(30_000)]) })
-      if (blob.code !== 0) throw new Error(`Could not read ${path} from the CI commit.`)
+      if (blob.code !== 0) {
+        throw new Error(`Could not read ${path} from the CI commit (git exit ${blob.code}: ${blob.stderr.trim().slice(0, 200)}).`)
+      }
       return blob.stdout
     } }
   }
@@ -126,13 +141,15 @@ export class GitCiCommits implements CiCommits {
       defaultRef = await this.context.platform.fetchRepositoryBranch(this.git, clone, repository, input.defaultBranch, input.signal)
       await this.context.platform.ensureCommit(this.git, repository, defaultRef, input.signal)
     } else await this.context.platform.ensureCommit(this.git, repository, input.baseCommit, input.signal)
-    const directory = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'ci-main-selection-'))
+    // Beside the clone on disk, not in /tmp (a RAM tmpfs on Main computers).
+    const directory = await mkdtemp(join(dirname(clone), '.ci-main-selection-'))
     try {
       // The selector and the import graph it reads come from the tested commit, as on a runner.
       const code = join(directory, 'code')
       await mkdir(code)
       const archive = await this.git.git(['archive', '--format=tar', '-o', join(directory, 'code.tar'), input.commit,
-        'scripts', 'packages/contracts/src'], { cwd: clone, signal: input.signal })
+        // The selector's import graph: scripts and the workspace packages it reads (contracts, verification runner).
+        'scripts', 'packages'], { cwd: clone, signal: input.signal })
       if (archive.code !== 0) throw this.context.platform.gitFailure('SOURCE_WORKTREE_FAILED', 'archive')
       await run('tar', ['-xf', join(directory, 'code.tar'), '-C', code], { signal: input.signal })
       const coveragePath = join(directory, 'coverage.json')

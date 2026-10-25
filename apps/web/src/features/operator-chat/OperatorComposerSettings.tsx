@@ -7,7 +7,7 @@ import { useHarnessDefaultsQuery } from '../../shared/api/query'
 import { Button, Icon, SearchField, SegmentedControl, Slider, Switch } from '../../shared/ui/nocturne'
 import { useFloatingSurface } from '../../shared/ui/nocturne/useFloatingSurface'
 import { useDismissableSurface } from '../../shared/ui/useDismissableSurface'
-import { harnessNames, supportedEfforts } from '../settings'
+import { harnessNames, modelCapabilities, claudeEffortForModel, codexSelectionForModel } from '../settings'
 
 export function OperatorComposerSettings({ value, onChange, disabled, access, hideThinking = false }: {
   value: OperatorChatSettings; onChange(value: OperatorChatSettings): void; disabled: boolean;
@@ -28,10 +28,8 @@ export function OperatorComposerSettings({ value, onChange, disabled, access, hi
   const models = catalog.data?.models ?? []
   const model = models.find((item) => item.id === value.model)
   const modelName = model?.name || value.model.split('/').at(-1) || value.model
-  const efforts: readonly string[] = value.harness === 'codex' ? supportedEfforts(model)
-    : (model?.reasoningEfforts ?? []).filter((effort) => ClaudeEffortSchema.safeParse(effort).success)
+  const { efforts, fastSupported } = modelCapabilities(value.harness, model)
   const effort = value.harness === 'codex' ? value.reasoningEffort : value.harness === 'claude' ? value.effort ?? '' : ''
-  const fastSupported = model?.serviceTiers.includes('priority') === true
   // A native top-layer surface placed from the trigger, so it can never open outside the viewport or be clipped by the chat.
   useFloatingSurface(open, trigger, panel, 288, 'end')
   // Escape steps back from the model list first; presses outside close the whole panel.
@@ -53,16 +51,12 @@ export function OperatorComposerSettings({ value, onChange, disabled, access, hi
   function chooseModel(id: string) {
     const next = models.find((item) => item.id === id)
     if (!next) return
-    if (value.harness === 'codex') {
-      const allowed = supportedEfforts(next)
-      update({ ...value, model: next.id, reasoningEffort: allowed.includes(value.reasoningEffort) ? value.reasoningEffort : allowed.includes('medium') ? 'medium' : allowed[0] ?? value.reasoningEffort,
-        serviceTier: next.serviceTiers.includes(value.serviceTier) ? value.serviceTier : 'standard' })
-    } else if (value.harness === 'claude') {
-      const effort = ClaudeEffortSchema.safeParse(next.reasoningEfforts.includes(value.effort ?? '') ? value.effort
-        : next.reasoningEfforts.includes('medium') ? 'medium' : next.reasoningEfforts.find((effort) => ClaudeEffortSchema.safeParse(effort).success))
+    if (value.harness === 'codex') update({ ...value, model: next.id, ...codexSelectionForModel(next, value) })
+    else if (value.harness === 'claude') {
+      const effort = claudeEffortForModel(next, value.effort)
       const settings = { ...value }
       delete settings.effort
-      update({ ...settings, model: next.id, ...(effort.success ? { effort: effort.data } : {}) })
+      update({ ...settings, model: next.id, ...(effort ? { effort } : {}) })
     }
     setChoosingModel(false)
   }

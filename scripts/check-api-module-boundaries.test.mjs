@@ -1,3 +1,4 @@
+// ci-key-inputs: scripts/check-api-module-boundaries.mjs
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'

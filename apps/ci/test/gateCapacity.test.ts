@@ -19,7 +19,7 @@ function fleet(builder = true): HostCiEndpoint {
 
 const unitFiles = ['apps/api/src', 'apps/web/src'].flatMap((directory, index) =>
   Array.from({ length: index === 0 ? 24 : 8 }, (_, file) => `${directory}/feature-${file}.test.ts`))
-const unit = { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000])), heavy: [] }
+const unit = { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000]))}
 
 it.each([0, 2])('balances a second integration wave after checks with %i reserved slots', async reserved => {
   const files = Array.from({ length: 901 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
@@ -63,7 +63,7 @@ it('keeps two concurrent builder files when a second cloud boot would lengthen t
   const files = ['apps/api/test/first.integration.test.ts', 'apps/api/test/second.integration.test.ts']
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files, durations: Object.fromEntries(files.map(file => [file, 180_000])) },
-    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}, heavy: [] }, {}, endpoint)
+    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}}, {}, endpoint)
   const checks = parts.filter(part => part.suite !== 'integration')
   expect(checks).toHaveLength(9)
   expect(new Set(checks.map(part => part.plannedHostKey)).size).toBe(9)
@@ -97,7 +97,7 @@ it('revisits an earlier builder after a later builder stops determining the crit
   ])
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files, durations: Object.fromEntries(files.map(file => [file, 60_000])) },
-    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}, heavy: [] },
+    { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}},
     {}, endpoint, speeds)
   const ends = computers.map(computer => parts.filter(part => part.plannedHostKey === computer.key)
     .reduce((sum, part) => sum + part.expectedDurationMs, 0))

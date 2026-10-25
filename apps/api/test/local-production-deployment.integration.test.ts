@@ -1,3 +1,4 @@
+// ci-key-inputs: scripts/local-production-runtime.mjs
 import { execFile, type ExecFileException } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { cp, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'

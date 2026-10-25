@@ -23,11 +23,17 @@ const providerQueued = () => CiRunRecordSchema.parse({ id: runId, workspaceId: '
 function service(options: { computers: HostCiComputer[]; executorState: 'running' | 'queued' }) {
   const store = ticketStore([providerQueued()], { [runId]: github.key })
   const reads: Extract<CiHostRequest, { operation: 'read' }>[] = []
+  const starts: { computer: HostCiComputer; request: Extract<CiHostRequest, { operation: 'start' }> }[] = []
   const endpoint = { computers: async () => options.computers,
-    request: async (_computer: HostCiComputer, request: CiHostRequest): Promise<CiHostReply> => {
+    request: async (computer: HostCiComputer, request: CiHostRequest): Promise<CiHostReply> => {
       if (request.operation === 'status') {
         return { operation: 'status', ready: true, reasons: [], cpuCount: 4, memoryBytes: 2 ** 33,
           slotsUsed: 0, slotsTotal: 1, runs: [] }
+      }
+      if (request.operation === 'start') {
+        starts.push({ computer, request })
+        return { operation: 'start', run: { runId: request.runId, state: 'running', step: 'lint',
+          exitCode: null, startedAt: new Date().toISOString(), finishedAt: null, logBytes: 0, message: null } }
       }
       if (request.operation !== 'read') throw new Error(`Unexpected ${request.operation}`)
       reads.push(request)
@@ -38,7 +44,7 @@ function service(options: { computers: HostCiComputer[]; executorState: 'running
   const authority: CiAuthority = { resolve: async principal => ({ principal, workspaceId: 'workspace' }) }
   const ci = new HostCiService(mainCiContext, store.pool, new PostgresCommandCoordinator(store.pool), authority, {} as CiCommits, endpoint)
   const pass = async () => { await ci.dispatch(); await ci.drain() }
-  return { ci, store, reads, pass }
+  return { ci, store, reads, starts, pass }
 }
 
 it('asks the cloud executor to move a provider-queued workflow only once another computer has a free slot', async () => {
@@ -71,6 +77,10 @@ it('does not rule the provider out after moving a ticket its queue held without 
     const record = f.store.read(runId).record
     expect(record.unstartedProviders).toBeUndefined()
     expect(record.message ?? '').not.toContain('dispatch retries exhausted')
+    expect(f.starts).toHaveLength(1)
+    expect(f.starts[0]?.computer).toEqual(github)
+    expect(record).toMatchObject({ state: 'running', computer: { hostRef: github.hostRef } })
+    expect(f.starts[0]?.request.runId).not.toBe(runId)
   } finally {
     await f.ci.close()
   }

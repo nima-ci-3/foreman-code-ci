@@ -1,3 +1,4 @@
+// ci-key-inputs: apps/worker scripts/worker-snapshot-policy.mjs scripts/browser-runtime-install.mjs
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';

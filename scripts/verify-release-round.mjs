@@ -11,6 +11,7 @@
 // optionally FOREMAN_CODE_WORKSPACE_ID.
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mcpClient, workspaceFor } from './ci-remote.mjs'
+import { integrationTestFile, unitTestFile } from '../packages/contracts/src/ciTestInventory.mjs'
 
 export const RELEASE_SUITES = ['typecheck', 'lint', 'unit', 'integration']
 
@@ -84,7 +85,9 @@ export async function releaseRoundProblems(call, workspaceId, commit, cwd = proc
   return problems
 }
 
-/** A full gate covers every release suite; each part passed or has a validated explicit rerun. */
+/** A gate covers every release suite; each part passed or has a validated explicit rerun. A proven gate (the default)
+ * runs typecheck and lint in full and only the unit and integration files without a passing result at their current
+ * inputs: a suite whose files were all proven has no part, and the group records the proofs in cachedFiles. */
 export async function gateRoundProblems(call, workspaceId, tickets, parent, { reruns = new Map(), cwd = process.cwd() } = {}) {
   if (!tickets.length) return ['No clean gate round is recorded.']
   const found = await call('ci_get', { workspaceId, ticketId: tickets[0] }).catch(error => ({ error }))
@@ -98,10 +101,14 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
   for (const failed of reruns.keys()) {
     if (!ids.includes(failed)) problems.push(`Rerun ticket ${failed} is not in the gate group.`)
   }
+  // Main plans typecheck, lint and integration parts with full scope (integration carries its assigned files); a proven
+  // gate's unit parts are affected with the files still to prove.
   for (const run of group) {
     const label = `gate ${run.suite} ticket ${run.id}`
     if (run.gate !== true) problems.push(`${label} is not a gate run.`)
-    if (run.scope !== 'full') problems.push(`${label} ran with ${run.scope} scope, not full.`)
+    if (run.scope !== 'full' && !(run.suite === 'unit' && run.scope === 'affected')) {
+      problems.push(`${label} ran with ${run.scope} scope, not full.`)
+    }
     if (run.commit !== parent) problems.push(`${label} tested ${run.commit}, not the released code ${parent}.`)
     const replacement = reruns.get(run.id)
     if (replacement) {
@@ -111,10 +118,29 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
       problems.push(`${label} ${run.state}.`)
     }
   }
-  for (const suite of RELEASE_SUITES) {
-    if (!group.some(run => run.suite === suite)) problems.push(`The gate round has no ${suite} part.`)
+  if (!group.some(run => run.suite === 'typecheck')) problems.push('The gate round has no typecheck part.')
+  if (!group.some(run => run.suite === 'lint')) problems.push('The gate round has no lint part.')
+  // Every test file of the released code either ran in a gate part or was proven by an earlier pass at identical inputs.
+  const cached = new Set(group.flatMap(run => run.cachedFiles ?? []).map(item => item.file))
+  const inventory = testInventory(parent, cwd)
+  for (const suite of ['unit', 'integration']) {
+    const parts = group.filter(run => run.suite === suite)
+    // A full-scope unit part runs its whole share of the inventory.
+    if (suite === 'unit' && parts.length && parts.every(run => run.scope === 'full')) continue
+    const ran = new Set(parts.flatMap(run => Array.isArray(run.files) && run.deriveFiles !== true ? run.files : []))
+    const missing = inventory[suite].filter(file => !ran.has(file) && !cached.has(file))
+    if (missing.length) {
+      problems.push(`The gate round neither ran nor proved ${missing.length} ${suite} test file(s): ${missing.slice(0, 5).join(', ')}`
+        + (missing.length > 5 ? ', ...' : ''))
+    }
   }
   return problems
+}
+
+/** The unit and integration test files of a commit, by the inventory rules Main uses. */
+function testInventory(commit, cwd) {
+  const files = git(['ls-tree', '-r', '--name-only', commit], cwd).split('\n').filter(Boolean)
+  return { unit: files.filter(unitTestFile), integration: files.filter(integrationTestFile) }
 }
 
 async function rerunProblems(call, workspaceId, failed, ticketId, parent, cwd) {

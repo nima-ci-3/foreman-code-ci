@@ -5,9 +5,9 @@ export function isGitHubComputer(computer: HostCiComputer): boolean {
   return computer.hostRef.kind === 'cloud' && computer.hostRef.provider === 'github'
 }
 
-/** Free builders first, then GitHub Actions before paid cloud capacity. */
+/** GitHub Actions slots are used before CircleCI and build computers. */
 export function ciComputerPreference(computer: HostCiComputer): number {
-  return computer.hostRef.kind !== 'cloud' ? 3 : isGitHubComputer(computer) ? 2 : 1
+  return isGitHubComputer(computer) ? 3 : computer.hostRef.kind === 'cloud' ? 2 : 1
 }
 
 export function supportsUserSystemd(computer: HostCiComputer): boolean {

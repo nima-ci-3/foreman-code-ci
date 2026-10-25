@@ -67,7 +67,7 @@ async function fixture(options: { creditsRemaining?: number; creditRefused?: boo
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
     integrationInventory: async () => ({ files, durations: Object.fromEntries(files.map(file => [file, 120_000])) }),
     unitInventory: async () => options.unitInventory ?? ({ files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.ts'],
-      durations: {}, heavy: [] }),
+      durations: {}}),
   }, {
     statusKey: computer => productionEndpoint.statusKey(computer),
     computers: async () => computers,
@@ -192,7 +192,7 @@ it('persists a second GitHub integration wave through MCP while CircleCI orgs re
   const unitFiles = ['apps/api/src', 'apps/web/src'].flatMap((directory, index) =>
     Array.from({ length: index === 0 ? 24 : 8 }, (_, file) => `${directory}/feature-${file}.test.ts`))
   const f = await fixture({ creditsRemaining: 0, creditRefused: true,
-    unitInventory: { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000])), heavy: [] } })
+    unitInventory: { files: unitFiles, durations: Object.fromEntries(unitFiles.map(file => [file, 50_000]))} })
   try {
     const listed = CiComputersOutputSchema.parse(await f.value('ci_computers_list'))
     const circle = listed.computers.filter(computer => computer.hostRef.provider === 'circleci')

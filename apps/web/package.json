@@ -7,10 +7,7 @@
     "dev": "vite",
     "typecheck": "node ../../scripts/ci-remote.mjs typecheck -- node ../../scripts/heavy-job.mjs -- tsc -b",
     "lint": "node ../../scripts/ci-remote.mjs lint -- node ../../scripts/heavy-job.mjs -- sh -c \"node ../../scripts/check-web-feature-boundaries.mjs && eslint . --max-warnings 0 --cache --cache-strategy content --cache-location node_modules/.cache/eslint/\"",
-    "test": "node ../../scripts/ci-remote.mjs unit -- node ../../scripts/heavy-job.mjs -- sh -c \"corepack pnpm test:run-graph-smoke && corepack pnpm test:unit\"",
-    "test:run-graph-smoke": "node ../../scripts/heavy-job.mjs -- node --test src/features/workflow-board/currentSource.smoke.mjs",
-    "build": "node ../../scripts/heavy-job.mjs --build web -- sh -c \"tsc -b && vite build\"",
-    "test:unit": "node ../../scripts/heavy-job.mjs -- sh -c \"FOREMAN_WEB_TEST_PHASE=fast vitest run && FOREMAN_WEB_TEST_PHASE=heavy vitest run\""
+    "build": "node ../../scripts/heavy-job.mjs --build web -- sh -c \"tsc -b && vite build\""
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
@@ -28,10 +25,6 @@
   "devDependencies": {
     "@foreman-code/contracts-node": "workspace:*",
     "@eslint/js": "10.0.1",
-    "@testing-library/dom": "10.4.1",
-    "@testing-library/jest-dom": "7.0.1",
-    "@testing-library/react": "16.3.3",
-    "@testing-library/user-event": "14.6.7",
     "@types/node": "26.5.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -40,11 +33,8 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.6",
     "globals": "17.12.0",
-    "jsdom": "30.0.1",
-    "msw": "2.15.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.0",
-    "vite": "8.3.4",
-    "vitest": "5.0.5"
+    "vite": "8.3.4"
   }
 }

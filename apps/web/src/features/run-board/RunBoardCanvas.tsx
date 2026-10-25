@@ -7,9 +7,9 @@ import { Button, useReducedMotion, type AgentPanel } from '../../shared/ui/noctu
 import type { ActivitySnapshotV1, ExecutionQueueEntry, Agent, WorkflowHierarchyReadResult } from '@foreman-code/contracts'
 import type { WorkflowDefinitionCurrent } from '@foreman-code/contracts/current'
 import {
-  useGraphDraftStore, SignalEdgeShape, RESPONSIVE_FIT_OPTIONS, RESPONSIVE_MIN_ZOOM, useResponsiveGraphViewport,
-  boardViewportKey,
+  useGraphDraftStore, SignalEdgeShape, boardViewportKey,
 } from '../graph'
+import { RESPONSIVE_FIT_OPTIONS, RESPONSIVE_MIN_ZOOM, useResponsiveGraphViewport } from '../graph/useResponsiveGraphViewport'
 import { nextDraftKey, editorAgents, useFloatingCurve, useWorkflowBoard, withTeamPositionChanges } from '../board-core'
 import {
   CiServerNode, CiTransferEdge, type CiServerFlowNode, type CiTransferFlowEdge, CI_SERVER_NODE_ID,
