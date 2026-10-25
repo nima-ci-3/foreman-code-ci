@@ -21,10 +21,9 @@ export function BoardNavigationControls({ workspaceId, workflowId, selection, ru
     {/* A live Run painted on this Board needs no page to show it: Running is only a status here. */}
     {board?.liveRunId && selection.identity.runId === null ? board.liveRunId === board.paintedRunId
       ? <span role="status" className="board-live-run"><span className="board-live-run-dot" aria-hidden="true" />{stopping ? 'Stopping' : 'Running'}</span>
-      : <Button size="sm" className="board-live-run board-live-run-elsewhere"
-        title="This workflow is running. Show the Run; your draft is kept and Return to workflow brings it back."
-        onClick={() => void selection.selectRun(board.liveRunId!)}>
-        <span className="board-live-run-dot" aria-hidden="true" />{stopping ? 'Stopping' : 'Workflow running · Show run'}</Button> : null}
+      : <Button size="sm" variant="ghost" className="board-live-run"
+        title="A Run of an earlier saved version is running. Show it." onClick={() => void selection.selectRun(board.liveRunId!)}>
+        <span className="board-live-run-dot" aria-hidden="true" />{stopping ? 'Stopping' : 'Running'}</Button> : null}
     <RunsSelector selection={selection} triggerLabel={runsLabel} />
     <ScheduleClockButton workspaceId={workspaceId} workflowId={workflowId} isSaved={Boolean(saved.data?.draft.baseWorkflowVersionId)}
       onSelectRun={runId => void selection.selectRun(runId)} onReviewWorkflow={authoring?.openWorkflowSettings} />
