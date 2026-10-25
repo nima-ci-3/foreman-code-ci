@@ -108,6 +108,48 @@ describe('Worker output validation', () => {
     }
   })
 
+  it('settles a Stop that arrives during a corrective turn', async () => {
+    const f = await runningInstalledFixture('generation', { deferTurn: true })
+    let sequence = f.history.nextSequence!
+    f.turns.mockImplementation(async function* (session, input) {
+      const turnId = `turn-${input.clientCorrelationId}`
+      await input.onSubmitted?.(turnId)
+      const event = { sequence: sequence++, type: 'turn.started', occurredAt: new Date().toISOString(),
+        payload: { threadId: session.nativeSessionId, turnId, clientCorrelationId: input.clientCorrelationId } }
+      const corrective = input.clientCorrelationId.includes(':result-repair:')
+      const result = { outcome: 'succeeded' as const, output: { text: 'not the requested JSON' } }
+      Object.assign(f.history, { events: [...f.history.events, event], nextSequence: sequence,
+        correlationId: input.clientCorrelationId, nativeTurnId: turnId })
+      // The corrective turn is still working when Stop arrives.
+      if (!corrective) Object.assign(f.history, { terminalResult: result,
+        terminalTurn: { correlationId: input.clientCorrelationId, providerId: turnId, result } })
+      else { delete f.history.terminalResult; delete f.history.terminalTurn }
+      yield event
+    })
+    try {
+      await f.call('start-turn', { prompt: 'answer', correlationId: 'execution:execution', deferSettlement: true })
+      await readUntil(async () => (await f.call('history', { correlationId: 'execution:execution' })).payload,
+        value => (value as { history?: NativeHistory }).history?.terminalTurn?.correlationId === 'execution:execution',
+        { timeoutMs: 2000, description: 'original native terminal awaiting validation' })
+      const correlationId = 'execution:execution:result-repair:1'
+      await f.call('start-turn', { prompt: 'answer with JSON', correlationId, deferSettlement: true })
+      await readUntil(async () => f.journal.status(f.intent.operationId),
+        value => value.status === 'known' && value.receipt.native?.turnId === `turn-${correlationId}`,
+        { timeoutMs: 2000, description: 'corrective turn submitted' })
+      const current = await f.journal.status(f.intent.operationId)
+      if (current.status !== 'known') throw new Error('Expected the corrective turn')
+      await f.call('control', { command: { schemaVersion: 1, protocolVersion: 1, commandId: 'stop-correction',
+        operationId: f.intent.operationId, attemptId: f.intent.attemptId, executionId: f.intent.executionId,
+        bindingHash: f.intent.bindingHash, owner: f.intent.owner, native: current.receipt.native, action: { kind: 'stop' } } })
+      await f.settled
+      expect(f.closeOwner).toHaveBeenCalledTimes(1)
+      expect(await f.journal.status(f.intent.operationId)).toMatchObject({ receipt: { terminal: { kind: 'cancelled' } } })
+    } finally {
+      f.finish('succeeded')
+      await f.host.close()
+    }
+  })
+
   it('journals two corrective turns, deduplicates replay and refuses a third', async () => {
     const f = await runningInstalledFixture('generation', { deferTurn: true })
     let sequence = f.history.nextSequence!
