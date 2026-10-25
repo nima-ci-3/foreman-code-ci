@@ -25,7 +25,7 @@ test('merges Vitest reports into repository files with per-test status, duration
       { title: 'b waits', status: 'pending' }, { fullName: 'b later', status: 'todo' },
     ] },
   ] }], root)
-  assert.deepEqual(results, { summary: { passed: 1, failed: 1, skipped: 2 }, truncated: false, files: [
+  assert.deepEqual(results, { summary: { passed: 1, failed: 1, skipped: 2 }, proven: [], truncated: false, files: [
     { file: 'apps/api/test/a.test.ts', status: 'failed', durationMs: 250, tests: [
       { name: 'a saves', status: 'passed', durationMs: 12 },
       { name: 'a rejects', status: 'failed', durationMs: 30, message: 'AssertionError: expected 1 to be 2\n  at a.test.ts:4' }] },
@@ -64,6 +64,8 @@ test('keeps failed tests first within the bounds and still counts every test', (
   assert.equal(results.truncated, true)
   assert.deepEqual(results.summary, { passed: passing.length * 3, failed: 1, skipped: 0 })
   assert.equal(results.files.length, CI_TEST_RESULT_LIMITS.files)
+  // The result cache needs every passed file, not only the ones the bounded list keeps.
+  assert.deepEqual(results.proven, passing.map(file => file.name))
   assert.equal(results.files[0].file, 'apps/web/src/z.test.tsx')
   assert.equal(kept.length, CI_TEST_RESULT_LIMITS.tests)
   assert.equal(kept[0].name, 'z breaks')
@@ -81,7 +83,7 @@ test('fails expected collection without publishing partial reports', t => {
   assert.throws(() => writeCiTestResults(output, [join(directory, 'missing.json'), join(directory, 'report.json')]), /missing.json/)
   assert.equal(existsSync(output), false)
   assert.equal(writeCiTestResults(output, [join(directory, 'report.json')]), true)
-  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), { summary: { passed: 0, failed: 0, skipped: 0 }, truncated: false, files: [] })
+  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), { summary: { passed: 0, failed: 0, skipped: 0 }, proven: [], truncated: false, files: [] })
 })
 
 test('a unit slice records its test results without handing the results path to the tests', t => {

@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto'
 import { expect, it } from 'vitest'
-import { CiResultKeys, type CiTestTree } from './resultCache.js'
+import { CiResultKeys, type CiTestTree } from '../src/resultCache.js'
 
 function tree(files: Record<string, string>): CiTestTree {
-  return { blobs: new Map(Object.entries(files).map(([path, text]) => [path, `100644:${Buffer.from(text).toString('hex').slice(0, 40)}`])),
+  return { blobs: new Map(Object.entries(files).map(([path, text]) => [path, `100644:${createHash('sha1').update(text).digest('hex')}`])),
     read: async path => files[path]! }
 }
 const base = {
@@ -48,4 +49,18 @@ it('keys files with a fresh deadline after the deadline that built the graph has
   built.abort(new Error('build deadline passed'))
   expect((await keys.bounded(AbortSignal.timeout(10_000)).key('apps/api/test/label.test.ts', 'unit', 'unit-api')).key)
     .toMatch(/^[a-f0-9]{64}$/)
+})
+
+it('changes a test key when a child process entrypoint the tested code names by path changes', async () => {
+  // Production: formats/supervisor.ts forks "./worker.ts" through a computed URL; editing only the worker kept the key.
+  const files = { ...base,
+    'apps/api/src/process.ts': "import { fork } from 'node:child_process'\nexport const forkProcess = (path: string) => fork(path)\n",
+    'apps/api/src/supervisor.ts': "import { fileURLToPath } from 'node:url'\nimport { forkProcess } from './process.js'\n"
+      + 'export const run = () => forkProcess(fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url)))\n',
+    'apps/api/src/worker.ts': 'process.send?.(1)\n',
+    'apps/api/test/supervisor.test.ts': "import { run } from '../src/supervisor.js'\nexport const value = run\n" }
+  const first = (await (await CiResultKeys.create(tree(files), AbortSignal.timeout(10_000))).key('apps/api/test/supervisor.test.ts', 'unit', 'unit-api')).key
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  const changed = await CiResultKeys.create(tree({ ...files, 'apps/api/src/worker.ts': 'process.send?.(2)\n' }), AbortSignal.timeout(10_000))
+  expect((await changed.key('apps/api/test/supervisor.test.ts', 'unit', 'unit-api')).key).not.toBe(first)
 })

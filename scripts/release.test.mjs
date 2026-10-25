@@ -25,8 +25,9 @@ async function fakeMain(t, outcome = () => 'passed', beforeWait = () => {}) {
       const suites = gate ? ['typecheck', 'typecheck', 'lint', 'lint', 'unit', 'unit', 'unit', 'integration', 'integration', 'integration']
         : Array.from({ length: partitions ?? (suite === 'unit' ? 2 : 1) }, () => suite)
       const count = suites.length
+      // Like Main, a gate's typecheck, lint and integration parts are full; its unit parts are proven (affected) by default.
       const group = suites.map((value, index) => ({ id: randomUUID(), workspaceId, suite: value, commit,
-        scope: scope ?? 'affected', groupId, part: null, partition: count > 1 ? { index, count } : null, computer: null,
+        scope: gate && value !== 'unit' ? 'full' : scope ?? 'affected', ...(gate ? { files: [] } : {}), groupId, part: null, partition: count > 1 ? { index, count } : null, computer: null,
         message: null, ...(gate ? { gate: true } : {}) }))
       for (const run of group) runs.set(run.id, { ...run, state: outcome(run) })
       groups.set(groupId, group.map(run => run.id))
@@ -248,6 +249,31 @@ test('refuses to release from a dirty worktree without starting CI', async t => 
 })
 
 /** A release commit on top of the tested code whose trailers list the given groups. */
+test('the verifier rejects a proven gate that neither ran nor proved every test file of the released code', async t => {
+  const main = await fakeMain(t)
+  const { work, git, env } = repository(t)
+  mkdirSync(join(work, 'apps/api/test'), { recursive: true })
+  mkdirSync(join(work, 'apps/web/src'), { recursive: true })
+  writeFileSync(join(work, 'apps/api/test/flow.integration.test.ts'), 'export {}\n')
+  writeFileSync(join(work, 'apps/web/src/view.test.ts'), 'export {}\n')
+  git('add', '.'); git('commit', '-qm', 'tests')
+  const tested = git('rev-parse', 'HEAD')
+  const response = await fetch(`${main.url}/mcp`, { method: 'POST', headers: { authorization: 'Bearer release-test-token' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ci_run', arguments: {
+      workspaceId, commit: tested, suite: 'integration', gate: true, commandId: `gate-${tested}` } } }) })
+  const gate = JSON.parse((await response.json()).result.content[0].text).partitions.map(value => value.ticketId)
+  const parts = gate.map(id => main.runs.get(id))
+  parts.find(part => part.suite === 'integration').files = ['apps/api/test/flow.integration.test.ts']
+  releaseCommit(git, work, [['gate', gate]])
+  let result = await run(verifyScript, ['HEAD'], work, main, env)
+  assert.equal(result.status, 1)
+  assert.match(result.output, /neither ran nor proved 1 unit test file\(s\): apps\/web\/src\/view\.test\.ts/)
+  // An earlier pass at identical inputs proves the file the gate skipped.
+  parts[0].cachedFiles = [{ file: 'apps/web/src/view.test.ts', ticketId: randomUUID(), commit: tested }]
+  result = await run(verifyScript, ['HEAD'], work, main, env)
+  assert.equal(result.status, 0, result.output)
+})
+
 function releaseCommit(git, work, groups, reruns = []) {
   writeFileSync(join(work, 'package.json'), '{\n  "name": "app",\n  "version": "1.1.0"\n}\n')
   const trailers = groups.map(([suite, ids]) => `Clean-Round: ${suite}=${ids.join(',')}`)

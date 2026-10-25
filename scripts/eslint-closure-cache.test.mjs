@@ -39,8 +39,9 @@ function project(realLint = false) {
   if (realLint) writeFileSync(join(directory, 'node_modules/eslint/bin/eslint.js'), `
     const { ESLint } = require(${JSON.stringify(require.resolve('eslint'))})
     const tseslint = require(${JSON.stringify(require.resolve('typescript-eslint'))})
-    const { appendFileSync } = require('node:fs')
-    const files = process.argv.slice(2).filter(argument => argument.endsWith('.ts'))
+    const { appendFileSync, writeFileSync } = require('node:fs')
+    const args = process.argv.slice(2)
+    const files = args.filter(argument => argument.endsWith('.ts'))
     appendFileSync(${JSON.stringify(join(directory, 'linted.log'))}, JSON.stringify(files.map(file => file.replace(/^src\\//, '')).sort()) + '\\n')
     const lint = new ESLint({ cwd: ${JSON.stringify(directory)}, overrideConfigFile: true,
       overrideConfig: tseslint.config(...tseslint.configs.recommended, { files: ['**/*.ts'],
@@ -48,6 +49,7 @@ function project(realLint = false) {
         rules: { '@typescript-eslint/no-floating-promises': 'error' } }) })
     lint.lintFiles(files).then(results => {
       for (const result of results) for (const message of result.messages) console.error(message.ruleId, message.message)
+      writeFileSync(args[args.indexOf('--output-file') + 1], JSON.stringify(results))
       process.exit(results.some(result => result.errorCount || result.warningCount) ? 1 : 0)
     }).catch(error => { console.error(error); process.exit(1) })`)
   writeFileSync(join(directory, 'package.json'), '{"name":"closure-fixture"}')
