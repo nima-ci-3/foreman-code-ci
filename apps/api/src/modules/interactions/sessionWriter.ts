@@ -360,6 +360,10 @@ export class SingleWriterSessionManager implements NativeHarnessSessionManager {
   }
 
   async acquire(session: NativeSessionReference, correlationId: string, signal?: AbortSignal): Promise<SessionWriteLease> {
+    // The observer leaves the active map before its persisted lease is released.
+    // Every successor must join that release before reading the revision to claim.
+    const releasing = this.releasing.get(session.nativeSessionId)
+    if (releasing) await (signal ? waitForSignal(releasing, signal) : releasing)
     signal?.throwIfAborted()
     if (this.closing) throw new DomainError('NATIVE_MANAGER_DISPOSED', 'The captured native manager is disposed.', 409)
     const finishTiming = beginRuntimeTiming('harness', 'lease.acquire', {

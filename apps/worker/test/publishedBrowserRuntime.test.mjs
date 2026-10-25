@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { readCommittedWorkerTargets } from '../../../scripts/worker-release-artifacts.mjs';
+import { collectBrowserRuntimeArtifacts } from '../../../scripts/browser-runtime-install.mjs';
 import { inspectQuotaHelperAbi } from '../../../scripts/quota-helper-abi.mjs';
 import { installVersion, readInstalledRelease } from '../src/installation.mjs';
 import { matchesBrowserRuntimeTarget, readBrowserRuntimeStatus, checkBrowserRuntimeReadiness,
@@ -22,10 +23,12 @@ test('a published native Worker installs its real Chromium runtime and loads its
   const reviewed = readCommittedWorkerTargets(repository, commit);
   const selected = reviewed.find(entry => matchesBrowserRuntimeTarget(entry.target, browser.target));
   assert.ok(selected, 'The native runner must have a published Worker target');
+  const artifacts = join(browser.directory, 'collected');
+  await collectBrowserRuntimeArtifacts({ directories: [join(browser.directory, 'artifact')], output: artifacts, commit });
   const output = join(browser.directory, 'worker');
   execFileSync(process.execPath, ['scripts/build-worker-artifact.mjs', selected.path, output], {
     cwd: repository, encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env, FOREMAN_CODE_BROWSER_RUNTIME_ARTIFACTS: artifacts },
   });
   const bytes = await readFile(join(output, 'manifest.json'));
   const manifest = JSON.parse(bytes);
