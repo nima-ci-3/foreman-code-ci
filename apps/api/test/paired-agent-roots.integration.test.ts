@@ -10,6 +10,7 @@ import { WorkspaceRootListResultSchema } from '@foreman-code/contracts/workspace
 import { WorkspaceBoundLocationSetResultSchema } from '@foreman-code/contracts/workspace-bound-location'
 import { describe, expect, it } from 'vitest'
 import { sourceSha256 } from '../src/modules/sources/manifest.js'
+import { DomainError } from '../src/modules/errors.js'
 import { postgresEnabled } from './helpers/database.js'
 import { pairedAgentRootsFixture } from './helpers/pairedAgentRootsFixture.js'
 
@@ -78,10 +79,12 @@ describe.skipIf(!postgresEnabled)('paired Agent workspace roots', () => {
     const preparedHosts: unknown[] = []
     const f = await pairedAgentRootsFixture({ harnessInstances: { prepareWorkerConfiguration: async (_principal, _source, _harness, target) => {
       preparedHosts.push(target.hostRef)
-      return { reason: 'Checking the harness on this computer.', pending: true }
+      throw new DomainError('HARNESS_PROFILE_CHECK_PENDING', 'Checking the harness on this computer.', 409)
     } } })
     try {
       // A freshly paired Worker: the harness is installed there, but no profile or project root exists yet.
+      await f.base.db.pool.query(`delete from harness_instance_profile_evidence where (instance_id,instance_revision) in
+        (select instance_id,revision from harness_instance_settings where record#>>'{target,hostRef,kind}'='device')`)
       await f.base.db.pool.query(`delete from harness_instance_settings where record#>>'{target,hostRef,kind}'='device'`)
       const owner = await f.connect()
       const result = NodePlacementChoicesResultSchema.parse(decodeMcpToolResult(
