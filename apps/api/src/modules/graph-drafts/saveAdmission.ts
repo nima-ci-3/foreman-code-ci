@@ -105,7 +105,9 @@ const currentInteractions = `exists (
     or i.record->>'status' is distinct from i.status or i.record->>'revision' is distinct from i.revision::text
     or i.record->>'requestingAgentId' is distinct from e.agent_id
     or i.record->>'nativeSessionId' is distinct from e.record->>'nativeSessionId'
-    or i.record->'approval' is distinct from r.record->'approval'
+    -- An owner work direction is always user-handled, whatever the workflow's approval handler.
+    or (i.record->>'kind' is distinct from 'work_direction' and i.record->'approval' is distinct from r.record->'approval')
+    or (i.record->>'kind'='work_direction' and i.record->'approval' is distinct from '{"handler":"user"}'::jsonb)
     -- Owner work directions settle without native approval callbacks or graph-resume records.
     or (i.status='delivered' and i.record->>'kind' is distinct from 'work_direction' and (
       i.record->>'deliveryState' is distinct from 'delivered' or i.record->>'deliveredAt' is null
