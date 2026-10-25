@@ -12,7 +12,7 @@ const deviceTarget = { hostRef: device, applicationInstallationId: '30000000-000
 
 function graphWithWorkerNode() {
   const fixture = makeCurrentWorkflowFixture('staged-profile', 'single')
-  const graph = structuredClone(fixture.graph)
+  const graph = structuredClone(fixture.version.definition)
   const node = graph.nodes.find(value => value.kind !== 'job')!
   if (node.kind === 'job') throw new Error('Expected an Agent node')
   node.placement = { schemaVersion: 1, hostRef: device, rootPolicyId: 'policy', rootPolicyRevision: '1', locationRevision: '1',
