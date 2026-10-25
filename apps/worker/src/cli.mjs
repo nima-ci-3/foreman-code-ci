@@ -152,7 +152,8 @@ async function main() {
 }
 main().catch((error) => {
   const fallback = command === 'cleanup-job-before-entry' ? 'job_cleanup_failed' : 'worker_start_failed';
+  // The service journal is the only place an operator sees why startup failed, so keep the cause beside the code.
   console.error(command === 'pair' && pairingErrorMessage ? pairingErrorMessage(error)
-    : error instanceof WorkerError ? error.code : fallback);
+    : error instanceof WorkerError ? error.code : `${fallback}: ${error?.message ?? String(error)}`);
   process.exitCode = 1;
 });

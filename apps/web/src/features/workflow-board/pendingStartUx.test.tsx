@@ -107,6 +107,7 @@ it('resolves an unaccepted Start from an earlier session on load and saves Agent
   await userEvent.click(panel.getByText('More settings'))
   const prompt = panel.getByRole('textbox', { name: 'Initial prompt' })
   await userEvent.clear(prompt)
+  // One paste keeps this full-suite test inside its timeout; typing key by key added nothing it checks.
   await userEvent.paste('Saved after resolving the earlier start')
   await userEvent.click(panel.getByRole('button', { name: 'Save agent settings and workflow' }))
   expect(await screen.findByText('Saved.')).toBeVisible()

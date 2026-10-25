@@ -65,3 +65,16 @@ it.each([
   expect(await f.service.preflight(f.input)).toMatchObject({ detection: f.detection, runnerId: f.input.runnerId,
     workingDirectory: f.input.workingDirectory })
 })
+
+it('accepts a Worker Claude HTTP route before its scoped header is delivered, but not a mismatched endpoint', async () => {
+  const detection: McpDetection = { harness: 'claude', serverName: 'graphql', state: 'connected', endpointMatches: true,
+    credentialEnvironmentVariable: null, credentialArrangement: { kind: 'unknown' }, checkedAt: new Date().toISOString() }
+  const manager = { harness: 'claude', inspectMcp: vi.fn(async () => detection),
+    capabilities: vi.fn(async () => ({ provider: 'claude', providerVersion: '2.1.310' } as NativeHarnessCapabilities)) }
+  const context = { harness: 'claude', workingDirectory: '/accepted/worker/tree' } as NativeManagerResolutionContext
+  const service = remoteMcpPreflight(manager as unknown as NativeHarnessSessionManager, context)
+  const input = { harness: 'claude' as const, runnerId: 'worker', workingDirectory: context.workingDirectory }
+  expect(await service.preflight(input)).toMatchObject({ detection, providerVersion: '2.1.310' })
+  detection.endpointMatches = false
+  await expect(service.preflight(input)).rejects.toMatchObject({ code: 'APP_MCP_PREFLIGHT_FAILED' })
+})
