@@ -163,7 +163,7 @@ it.each(['github', 'circleci'] as const)('keeps an oversized gate check off %s a
   const f = await operatorApp(ci, commands)
   try {
     const groupId = randomUUID()
-    const ticket = (part: 'unit-api' | 'unit-other', expectedDurationMs: number, plannedHostKey: string) =>
+    const ticket = (part: 'unit-api', expectedDurationMs: number, plannedHostKey: string) =>
       CiRunRecordSchema.parse({ id: randomUUID(), workspaceId: f.workspaceId, groupId, suite: 'unit', part,
         expectedDurationMs, plannedHostKey, gate: true, noSupersede: true, scope: 'full', files: [],
         repository: 'octo/site', ciMirror: 'octo/site-ci', commit: 'a'.repeat(40), partition: null,
@@ -171,7 +171,8 @@ it.each(['github', 'circleci'] as const)('keeps an oversized gate check off %s a
         queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
         initiator: { principalId: 'operator', executionId: null } })
     const oversized = ticket('unit-api', 4_000_000, builders[0]!.key)
-    const safe = ticket('unit-other', 150_000, clouds[0]!.key)
+    // unit-other carries the Worker tests, which CircleCI cannot run; the safe check is an API part.
+    const safe = ticket('unit-api', 150_000, clouds[0]!.key)
     await insertTicket(oversized)
     await insertTicket(safe)
     await ci.dispatch()
@@ -270,7 +271,8 @@ it.each(['github', 'circleci'] as const)('tries another provider when the first 
 })
 
 it('starts cloud integration on a new ticket after the slot finishes its gate check', async () => {
-  const clouds = cloudSlots(8)
+  // One cloud slot per gate check (typecheck, lint and unit for the API and the rest).
+  const clouds = cloudSlots(6)
   const fleet = executor()
   const commands = new PostgresCommandCoordinator(database.pool)
   const files = Array.from({ length: 96 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
@@ -292,7 +294,7 @@ it('starts cloud integration on a new ticket after the slot finishes its gate ch
     expect(initial.partitions!.filter(run => run.suite === 'integration').flatMap(run => run.files).sort())
       .toEqual([...files].sort())
     const firstCloud = fleet.started.filter(run => run.key.startsWith('cloud-'))
-    expect(firstCloud).toHaveLength(8)
+    expect(firstCloud).toHaveLength(6)
     for (const started of firstCloud) expect(checks.some(run => run.id === started.runId)).toBe(true)
     expect(initial.partitions!.filter(run => run.suite === 'integration' && run.state === 'running')
       .every(run => run.computer!.hostRef.kind === 'main')).toBe(true)
