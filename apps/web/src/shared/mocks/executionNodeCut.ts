@@ -8,10 +8,11 @@ export function executionNodeCut(input: unknown) {
   return RepeatGraphCurrentStateSchema.parse({ ...cut, state: { ...cut.state,
     nodes: cut.topology.nodes.map(({ workflowNodeId }) => {
       const execution = executions.get(workflowNodeId)
+      const { occurrence: _occurrence, ...identity } = execution?.identity ?? {}
       return {
         state: { workflowNodeId, lifecycle: execution
           ? execution.state === 'completed' ? execution.resultOutcome ?? 'unknown' : execution.state : 'not_activated',
-          ...(execution ? { execution: execution.identity } : {}) },
+          ...(execution ? { execution: identity } : {}) },
         activity: { workflowNodeId, status: 'none' },
         attention: { workflowNodeId, pendingInteractionCount: 0, unsettledReviewCount: 0, cleanupPending: false, telemetry: 'current' },
       }
