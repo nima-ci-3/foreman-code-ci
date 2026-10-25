@@ -403,6 +403,7 @@ test('refuses to publish an Ubuntu 24.04 Worker without a verified native browse
   }
   await assert.rejects(buildWorkerReleaseArtifacts({ ...f, run }), /Ubuntu 24.04 Worker publication requires a verified browser runtime/)
   await assert.rejects(stat(f.directory), { code: 'ENOENT' })
+})
 
 test('publishes exact-target Node 22 transition bundles beside the current Node 24 bundle', async t => {
   const f = await fixture(t)
