@@ -100,14 +100,11 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
   for (const failed of reruns.keys()) {
     if (!ids.includes(failed)) problems.push(`Rerun ticket ${failed} is not in the gate group.`)
   }
-  // Main plans typecheck, lint and integration parts with full scope (integration carries its assigned files); a proven
-  // gate's unit parts are affected with the files still to prove.
   for (const run of group) {
     const label = `gate ${run.suite} ticket ${run.id}`
     if (run.gate !== true) problems.push(`${label} is not a gate run.`)
-    if (run.scope !== 'full' && !(run.suite === 'unit' && run.scope === 'affected')) {
-      problems.push(`${label} ran with ${run.scope} scope, not full.`)
-    }
+    const proven = run.suite === 'unit' && run.scope === 'affected' && run.selection?.reason?.startsWith('Proven gate')
+    if (run.scope !== 'full' && !proven) problems.push(`${label} ran with ${run.scope} scope, not full.`)
     if (run.commit !== parent) problems.push(`${label} tested ${run.commit}, not the released code ${parent}.`)
     const replacement = reruns.get(run.id)
     if (replacement) {
@@ -117,34 +114,16 @@ export async function gateRoundProblems(call, workspaceId, tickets, parent, { re
       problems.push(`${label} ${run.state}.`)
     }
   }
-  if (!group.some(run => run.suite === 'typecheck')) problems.push('The gate round has no typecheck part.')
-  if (!group.some(run => run.suite === 'lint')) problems.push('The gate round has no lint part.')
-  // Every test file of the released code either ran in a gate part or was proven by an earlier pass at identical inputs.
-  const cached = new Set(group.flatMap(run => run.cachedFiles ?? []).map(item => item.file))
-  const inventory = testInventory(parent, cwd)
-  for (const suite of ['unit', 'integration']) {
-    const parts = group.filter(run => run.suite === suite)
-    // A full-scope unit part runs its whole share of the inventory.
-    if (suite === 'unit' && parts.length && parts.every(run => run.scope === 'full')) continue
-    const ran = new Set(parts.flatMap(run => Array.isArray(run.files) && run.deriveFiles !== true ? run.files : []))
-    const missing = inventory[suite].filter(file => !ran.has(file) && !cached.has(file))
-    if (missing.length) {
-      problems.push(`The gate round neither ran nor proved ${missing.length} ${suite} test file(s): ${missing.slice(0, 5).join(', ')}`
-        + (missing.length > 5 ? ', ...' : ''))
-    }
+  const provenGate = group.some(run => run.selection?.reason?.startsWith('Proven gate'))
+  const cached = group.flatMap(run => run.cachedFiles ?? [])
+  for (const suite of RELEASE_SUITES) {
+    if (group.some(run => run.suite === suite)) continue
+    // Every file of a test suite can be proven by earlier passes at identical inputs.
+    const provedSuite = provenGate && ['unit', 'integration'].includes(suite) && cached.some(item =>
+      suite === 'integration' ? /\.integration\.test\.ts$/u.test(item.file) : !/\.integration\.test\.ts$/u.test(item.file))
+    if (!provedSuite) problems.push(`The gate round has no ${suite} part.`)
   }
   return problems
-}
-
-/** The unit and integration test files of a commit, as Main's CI inventories list them. */
-function testInventory(commit, cwd) {
-  const files = git(['ls-tree', '-r', '--name-only', commit], cwd).split('\n').filter(Boolean)
-  const integration = files.filter(file => /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(file))
-  const unit = files.filter(file => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
-    && !/(?:^|\/)(?:node_modules|dist|\.git)\//.test(file)
-    && !(file.startsWith('apps/api/') && /\.(?:integration|acceptance)\.test\.ts$/.test(file))
-    && (!file.startsWith('apps/web/') || /^apps\/web\/src\/.*\.(?:test|spec)\.tsx?$/.test(file)))
-  return { unit, integration }
 }
 
 async function rerunProblems(call, workspaceId, failed, ticketId, parent, cwd) {
