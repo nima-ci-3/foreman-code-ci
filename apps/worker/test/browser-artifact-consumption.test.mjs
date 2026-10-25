@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,9 @@ import { readBrowserRuntimeArtifact } from '../src/browserRuntimeInstall.mjs';
 
 for (const release of ['24.04', '26.04']) {
   test(`Ubuntu ${release} Worker release is code-sized and ships an approved recipe without browser binaries`, async t => {
-    const directory = await mkdtemp(join(homedir(), '.cache', 'foreman-tmp', 'worker-recipe-build-'));
+    const parent = join(homedir(), '.cache', 'foreman-tmp');
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    const directory = await mkdtemp(join(parent, 'worker-recipe-build-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const repository = fileURLToPath(new URL('../../../', import.meta.url));
     const output = join(directory, 'artifact');

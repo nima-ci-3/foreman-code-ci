@@ -14,7 +14,9 @@ const target = { os: 'ubuntu', osRelease: '24.04', arch: 'x64', libc: 'glibc-2.3
 const ready = async () => ({ ready: true });
 
 async function fixture(t) {
-  const directory = await mkdtemp(join(homedir(), '.cache', 'foreman-tmp', 'browser-recipe-'));
+  const parent = join(homedir(), '.cache', 'foreman-tmp');
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(join(parent, 'browser-recipe-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const archives = { 'https://github.com/python.tar.gz': 'pinned Python',
     'https://files.pythonhosted.org/example.whl': 'pinned wheel', 'https://cdn.playwright.dev/chromium.zip': 'pinned Chromium' };

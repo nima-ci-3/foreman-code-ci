@@ -55,7 +55,9 @@ test('retains the pinned supplemental notice for the schema validator bundled in
 });
 
 test('credits capture waits for the complete document instead of accepting a partially parsed license page', async t => {
-  const directory = await mkdtemp(join(homedir(), '.cache', 'foreman-tmp', 'credits-document-'));
+  const parent = join(homedir(), '.cache', 'foreman-tmp');
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(join(parent, 'credits-document-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
