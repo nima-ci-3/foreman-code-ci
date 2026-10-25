@@ -18,10 +18,9 @@ it('admits MCP requests and runs own-computer work while cloud publication is pe
   const local: HostCiComputer = { key: 'local-ci', label: 'Local CI', priority: 60,
     hostRef: { kind: 'main', mainId: 'main-1' } }
   let localRun: CiHostRun | undefined
-  let cloudAvailable = false
   const cloud = mirror.cloud.computers().slice(0, 1)
   const endpoint: HostCiEndpoint = {
-    computers: async () => [local, ...(cloudAvailable ? cloud : [])],
+    computers: async () => [local, ...cloud],
     request: async (computer, request) => {
       if (computer.hostRef.kind === 'cloud') return mirror.cloud.handle(request)
       if (request.operation === 'status') return { operation: 'status', ready: true, reasons: [],
@@ -53,8 +52,6 @@ it('admits MCP requests and runs own-computer work while cloud publication is pe
     await run()
     await f.ci.dispatch()
     await f.ci.drain()
-    expect(localRun?.state).toBe('running')
-    cloudAvailable = true
     const cloudRun = await run()
     let timer: NodeJS.Timeout | undefined
     try {

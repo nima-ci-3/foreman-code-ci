@@ -35,10 +35,7 @@ export function databaseReadFailure(error: unknown): unknown {
   if (error instanceof DomainError) return error
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   const readTimeout = error instanceof Error && error.message === 'Query read timeout'
-  // 57014 also covers an explicit cancellation, which a retry must not repeat; only a statement timeout is transient
-  // (the rule isDatabaseTimeout in contracts/failure applies).
-  const statementTimeout = code === '57014' && error instanceof Error && /time(d)? ?out/i.test(error.message)
-  if (!statementTimeout && code !== '55P03' && !readTimeout) return error
+  if (code !== '57014' && code !== '55P03' && !readTimeout) return error
   const failure = new DomainError('DATABASE_READ_TIMEOUT',
     'The database read exceeded its deadline. Retry the request.', 503, {
       retryable: true,

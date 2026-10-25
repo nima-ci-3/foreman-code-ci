@@ -8,7 +8,7 @@ import type { HostCiComputer, HostCiEndpoint } from '../src/serviceTypes.js'
 import { testCiContext } from './helpers/ciContext.js'
 
 const budgetMs = 45 * 60_000
-const unit = { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}}
+const unit = { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.ts'], durations: {}, heavy: [] }
 
 function fleet(provider: 'github' | 'circleci'): HostCiEndpoint {
   const github: HostCiComputer = { key: 'github:checks', label: 'GitHub checks', priority: 30,
@@ -58,7 +58,7 @@ it('keeps an indivisible check exceeding the cloud job budget on a builder', asy
   const unitFile = 'apps/api/src/long.test.ts'
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files: [file], durations: { [file]: 10_000 } },
-    { files: [unitFile], durations: { [unitFile]: 3_000_000 }}, {}, fleet('github'))
+    { files: [unitFile], durations: { [unitFile]: 3_000_000 }, heavy: [] }, {}, fleet('github'))
   expect(parts.find(part => part.part === 'unit-api')).toMatchObject({ plannedHostKey: 'builder' })
   for (const part of parts.filter(part => part.plannedHostKey.startsWith('github:'))) {
     expect(part.expectedDurationMs).toBeLessThanOrEqual(budgetMs)
@@ -127,12 +127,12 @@ it('uses GitHub after checks when the unused CircleCI slots exceed a file job bu
   ])
 })
 
-it('uses an unused eligible GitHub slot before a faster free builder', async () => {
+it('keeps a faster free builder eligible while GitHub has an unused slot', async () => {
   const file = 'apps/api/test/feature.integration.test.ts'
   const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
     { files: [file], durations: { [file]: 300_000 } }, unit, {}, fleet('github'),
     new Map([['builder', 0.5], ['cloud:github', 3]]))
   expect(parts.filter(part => part.suite === 'integration')).toEqual([
-    expect.objectContaining({ plannedHostKey: 'github:9', files: [file], expectedDurationMs: 1_170_000 }),
+    expect.objectContaining({ plannedHostKey: 'builder', files: [file], expectedDurationMs: 195_000 }),
   ])
 })

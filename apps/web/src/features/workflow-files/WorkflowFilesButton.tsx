@@ -14,8 +14,7 @@ import { useFileDrop } from '../../shared/ui/useFileDrop'
 import { sessionGeneration } from '../../shared/api/sessionBoundary'
 import { ATTACHMENT_ACCEPT, inspectAttachment } from '../attachments'
 import { createWorkflowFilesHttpClient, type WorkflowFilesClient } from './workflowFilesClient'
-import { formatFileSize } from '../../shared/ui/formatters'
-import { referenceScopeKey, visibleReferenceRows, type WorkflowFilesIdentity } from './workflowFilesModel'
+import { referenceFileSize, referenceScopeKey, visibleReferenceRows, type WorkflowFilesIdentity } from './workflowFilesModel'
 import { createWorkflowFilesStore } from './workflowFilesStore'
 import { useWorkflowFiles } from './useWorkflowFiles'
 import './workflowFiles.css'
@@ -145,7 +144,7 @@ function FileGroup({ query, scope, files, label, emptyLabel = 'No files', onRemo
           && referenceScopeKey(files.download.variables.scope) === referenceScopeKey(scope)
         return <li key={row.file.fileId} className="workflow-files-row">
           <div className="workflow-files-name"><span title={row.revision.filename}>{row.revision.filename}</span>
-            <small>{formatFileSize(row.revision.byteSize)}{row.file.state === 'pending' ? ' · Pending' : ''}</small>
+            <small>{referenceFileSize(row.revision.byteSize)}{row.file.state === 'pending' ? ' · Pending' : ''}</small>
           </div>
           <div className="workflow-files-actions">
             {row.file.state === 'ready' && <Tooltip content="Download"><IconButton size="sm" variant="ghost"

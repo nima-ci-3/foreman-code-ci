@@ -24,8 +24,7 @@ export async function cloudSuiteRunner(checkout: string, command: string[], prov
     'scripts/worker-snapshot-policy.mjs', 'packages/verification-runner/runtime-files.mjs',
     'packages/ci-protocol/src/testResults.mjs',
     'packages/contracts/src/ciPartition.mjs', 'packages/contracts/src/ciCoverage.mjs',
-    'packages/contracts/src/integrationScheduling.mjs', 'packages/contracts/src/ciImportGraph.mjs',
-    'packages/contracts/src/ciTestInventory.mjs']) {
+    'packages/contracts/src/integrationScheduling.mjs', 'packages/contracts/src/ciImportGraph.mjs']) {
     await mkdir(dirname(join(checkout, file)), { recursive: true })
     await copyFile(join(root, file), join(checkout, file))
   }

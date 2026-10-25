@@ -1,4 +1,3 @@
-// ci-key-inputs: scripts/emit-production-api.mjs
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'

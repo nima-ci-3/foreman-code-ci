@@ -1,4 +1,3 @@
-// ci-key-inputs: apps/worker runtime/browser scripts/build-worker-artifact.mjs scripts/worker-snapshot-policy.mjs scripts/build-ci-runtime-context.mjs
 import { homedir } from 'node:os';
 const fixtureGitEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
 import { persistentFixtureRoot } from './fixtureStorage.mjs';

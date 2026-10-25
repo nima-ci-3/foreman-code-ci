@@ -4,8 +4,8 @@
 #   scripts/ci-suite.sh        — after `pnpm install`: waits for them, then runs the suite
 #   scripts/ci-suite.sh prepare — after `pnpm install` on a build computer: prepares prerequisites synchronously
 # SUITE: install, typecheck, lint, unit, build or integration, or one part of a check so the parts run on separate
-# machines: unit-api, unit-other, lint-api, lint-other, typecheck-api, typecheck-other,
-# build-api, build-other. For unit-api, SLICE is
+# machines: unit-api, unit-web, unit-web-heavy, unit-other, lint-api, lint-other, typecheck-api, typecheck-other,
+# build-api, build-other. For unit-api and unit-web, SLICE is
 # a duration-balanced shard such as 2/3 (scripts/ci-unit-files.mjs). SLICE: an integration partition's file indexes
 # (scripts/ci-files.mjs); empty runs every file. DURATIONS_OUTPUT: where measured file durations go.
 # TEST_RESULTS_OUTPUT: where structured test results go for unit and integration (scripts/ci-test-results.mjs).
@@ -58,6 +58,7 @@ if [ -z "${1:-}" ] && [ -n "${FOREMAN_CODE_CI_TYPECHECK_CACHE:-}" ] \
 fi
 
 if [ "${1:-}" = start ] || [ "${1:-}" = prepare ]; then
+  case "$SUITE" in unit-web|unit-web-heavy) exit 0 ;; esac
   case "$SUITE" in unit|unit-*|integration) ;; *) exit 0 ;; esac
   clis="npm install --global ${clis_prefix:+--prefix $clis_prefix }--silent --before=$(date -u -d '-2 days' +%Y-%m-%dT%H:%M:%SZ) @openai/codex @anthropic-ai/claude-code"
   if [ "$1" = prepare ]; then
@@ -126,7 +127,11 @@ unit_slice() {
   local files=() reporters=(--reporter=default --reporter=json "--reporter=$(realpath scripts/ci-progress-reporter.mjs)" "--outputFile.json=$output.vitest.json")
   mapfile -d '' -t files < "$state/unit-files"
   rm -f "$output" "$output.vitest.json"
-  (cd "$package" && pnpm test "${files[@]}" "${reporters[@]}") || code=$?
+  if [ "$suite" = unit-api ]; then
+    (cd "$package" && pnpm test "${files[@]}" "${reporters[@]}") || code=$?
+  else
+    (cd "$package" && FOREMAN_WEB_TEST_PHASE=fast pnpm exec vitest run "${files[@]}" "${reporters[@]}") || code=$?
+  fi
   if [ -f "$output.vitest.json" ]; then
     node scripts/ci-unit-files.mjs record "$suite" "$output.vitest.json" "$output"
   fi
@@ -247,6 +252,7 @@ fi
 if [ "$scope" = affected ] && [ "$SUITE" != integration ]; then
   case "$SUITE" in
     unit|unit-api) ready db; ready clis; delegate_cgroup ;;
+    unit-web|unit-web-heavy) ;;
     unit-other) ready db ;;
     lint|lint-api|lint-other|typecheck|typecheck-api|typecheck-other) ;;
     *) echo "Unsupported affected suite $SUITE"; exit 2 ;;
@@ -264,6 +270,15 @@ case "$SUITE" in
   unit) ready db; ready clis; delegate_cgroup; pnpm test ;;
   unit-api) ready db; ready clis; delegate_cgroup; build_contracts
     unit_slice unit-api apps/api ;;
+  unit-web) build_contracts
+    unit_slice unit-web apps/web ;;
+  # SLICE i/n splits the heavy phase across machines; the run-graph smoke runs once, in the first shard.
+  unit-web-heavy) build_contracts
+    case "${SLICE:-1/1}" in 1/*) pnpm --filter @foreman-code/web test:run-graph-smoke ;; esac
+    mkdir -p "$state"; heavy_report="$(realpath -m "$state/unit-web-heavy.vitest.json")"; progress_reporter="$PWD/scripts/ci-progress-reporter.mjs"; code=0
+    (cd apps/web && FOREMAN_WEB_TEST_PHASE=heavy pnpm exec vitest run ${SLICE:+--shard=$SLICE} \
+      --reporter=default --reporter=json "--reporter=$progress_reporter" "--outputFile.json=$heavy_report") || code=$?
+    record_tests "$heavy_report" || { if [ "$code" = 0 ]; then code=1; fi; }; exit "$code" ;;
   unit-other) ready db; unit_other ;;
   lint-api) build_contracts && pnpm --filter @foreman-code/api lint ;;
   lint-other) build_contracts \

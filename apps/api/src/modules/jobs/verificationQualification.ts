@@ -1,4 +1,3 @@
-import { PNPM_VERSION, RELEASE_AGE_MINUTES } from '@foreman-code/contracts/package-policy'
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import { errorMessage } from '@foreman-code/contracts-node/server-kit'
 import { captureVerificationInventory } from '../../shared/verificationRunner.js'
@@ -273,8 +272,8 @@ function suiteRepositoryContext(input: {
       logsArchiveBytes: maxBytes, logBytes: Math.min(maxBytes, candidate.profile.spec.policy.maxLogBytes) },
     mutableDirectory: '/job-scratch', storeDirectory: '/job-scratch/pnpm-store',
     preseedReceipt: { lockfileSha256: seed.dependencyInputs.find(file => file.path === 'pnpm-lock.yaml')!.sha256,
-      pnpmVersion: PNPM_VERSION, platform: 'linux', architecture: 'x64', provenanceDigest: seed.provenanceDigest,
-      minimumReleaseAgeMinutes: RELEASE_AGE_MINUTES, releaseAgeVerified: true },
+      pnpmVersion: '11.27.0', platform: 'linux', architecture: 'x64', provenanceDigest: seed.provenanceDigest,
+      minimumReleaseAgeMinutes: 2880, releaseAgeVerified: true },
     unitCodex: fingerprint.tools.filter(tool => tool.kind === 'codex').map(({ executable, binarySha256, version }) =>
       ({ executable, binarySha256, version }))[0],
   })

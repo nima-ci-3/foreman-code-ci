@@ -54,7 +54,7 @@ function fixture() {
   const commits: CiCommits = {
     resolve: async () => 'a'.repeat(40),
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
-    unitInventory: async () => ({ files, durations: Object.fromEntries(files.map(file => [file, 100_000]))}),
+    unitInventory: async () => ({ files, durations: Object.fromEntries(files.map(file => [file, 100_000])), heavy: [] }),
   }
   const service = new HostCiService(mainCiContext, pool, commands, authority, commits, endpoint)
   // Keep the regression focused on admission; dispatch has its own live-status tests.

@@ -97,7 +97,7 @@ async function stageRelease({ source: buildSource, commit }, runBuild, previousR
     await copyVerificationRuntime(buildSource, release)
     const contractsSource = join(release, 'packages/contracts/src')
     await mkdir(contractsSource, { recursive: true })
-    for (const name of ['productEnvironment.mjs', 'installationNames.mjs', 'productionMaintenance.mjs', 'workerPublication.mjs', 'packagePolicy.mjs']) {
+    for (const name of ['productEnvironment.mjs', 'installationNames.mjs', 'productionMaintenance.mjs']) {
       await copyFile(join(buildSource, 'packages/contracts/src', name), join(contractsSource, name))
     }
     await mkdir(join(release, 'apps/worker/src'), { recursive: true })
@@ -200,9 +200,9 @@ async function runAuthenticatedCiSmoke(release, environment) {
     return
   }
   const api = join(release, 'apps/api/dist')
-  const { loadConfig } = await import(/* ci-key: apps/api/src/config.ts */ pathToFileURL(join(api, 'config.js')))
-  const { createDatabase } = await import(/* ci-key: apps/api/src/infrastructure/database.ts */ pathToFileURL(join(api, 'infrastructure/database.js')))
-  const { withInstallSmokeCredential } = await import(/* ci-key: apps/api/src/cli/installSmokeCredential.ts */ pathToFileURL(join(api, 'cli/installSmokeCredential.js')))
+  const { loadConfig } = await import(pathToFileURL(join(api, 'config.js')))
+  const { createDatabase } = await import(pathToFileURL(join(api, 'infrastructure/database.js')))
+  const { withInstallSmokeCredential } = await import(pathToFileURL(join(api, 'cli/installSmokeCredential.js')))
   const database = createDatabase(loadConfig({ ...process.env, ...environment }).database)
   try {
     await withInstallSmokeCredential(database.pool, token => runProductionCiSmoke({ origin, release, token }))

@@ -41,8 +41,8 @@ const commits: CiCommits = {
     const files = Array.from({ length: 24 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
     return { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) }
   },
-  unitInventory: async () => ({ files: ['apps/api/src/site.test.ts', 'packages/contracts/src/site.test.ts'],
-    durations: {}}),
+  unitInventory: async () => ({ files: ['apps/api/src/site.test.ts', 'apps/web/src/site.test.tsx'],
+    durations: {}, heavy: [] }),
 }
 
 it('keeps an abandoned cloud slot reserved after its ticket moves to another executor', async () => {
@@ -163,7 +163,7 @@ it.each(['github', 'circleci'] as const)('keeps an oversized gate check off %s a
   const f = await operatorApp(ci, commands)
   try {
     const groupId = randomUUID()
-    const ticket = (part: 'unit-api' | 'unit-other', expectedDurationMs: number, plannedHostKey: string) =>
+    const ticket = (part: 'unit-api' | 'unit-web', expectedDurationMs: number, plannedHostKey: string) =>
       CiRunRecordSchema.parse({ id: randomUUID(), workspaceId: f.workspaceId, groupId, suite: 'unit', part,
         expectedDurationMs, plannedHostKey, gate: true, noSupersede: true, scope: 'full', files: [],
         repository: 'octo/site', ciMirror: 'octo/site-ci', commit: 'a'.repeat(40), partition: null,
@@ -171,7 +171,7 @@ it.each(['github', 'circleci'] as const)('keeps an oversized gate check off %s a
         queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
         initiator: { principalId: 'operator', executionId: null } })
     const oversized = ticket('unit-api', 4_000_000, builders[0]!.key)
-    const safe = ticket('unit-other', 150_000, clouds[0]!.key)
+    const safe = ticket('unit-web', 150_000, clouds[0]!.key)
     await insertTicket(oversized)
     await insertTicket(safe)
     await ci.dispatch()

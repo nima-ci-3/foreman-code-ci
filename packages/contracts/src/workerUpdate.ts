@@ -1,4 +1,3 @@
-import { PACKAGE_MANAGER } from './packagePolicy.mjs'
 import { z } from 'zod'
 
 export const WORKER_UPDATE_NAMESPACE = 'worker-update-v1'
@@ -7,7 +6,8 @@ export const WORKER_UPDATE_MAX_JSON_BYTES = 1_048_576
 export const WORKER_UPDATE_MAX_BINARY_BYTES = 0
 export const WORKER_UPDATE_DRAIN_TIMEOUT_MS = 30 * 60_000
 export const WORKER_UPDATE_ATTEMPT_TIMEOUT_MS = 45 * 60_000
-export { WORKER_PUBLICATION_DEADLINE_MS } from './workerPublication.mjs'
+/** Publication retries share one deadline from when publication becomes pending. */
+export const WORKER_PUBLICATION_DEADLINE_MS = 2 * 60 * 60_000
 
 const WorkerUpdatePhaseSchema = z.enum([
   'current', 'pending', 'draining', 'downloading', 'installing', 'restarting', 'rolled-back', 'failed',
@@ -72,7 +72,7 @@ export const WorkerArtifactManifestSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/u),
   commit: z.string().regex(/^[a-f0-9]{40}$/u),
   lockfileSha256: digest,
-  packageManager: z.literal(PACKAGE_MANAGER),
+  packageManager: z.literal('pnpm@11.27.0'),
   protocolVersion: z.literal(1),
   identityFormat: z.literal(1),
   target: WorkerArtifactTargetSchema,
@@ -131,8 +131,6 @@ export const WorkerArtifactIndexSchema = z.object({
     contentSha256: digest.optional(),
     /** Verified publication retained when this target's bundle is unchanged. */
     github: WorkerArtifactGitHubSchema.optional(),
-    /** A Node 22 transition carrier: published on demand when a Worker on Node 22 asks for its update. */
-    transition: z.literal(true).optional(),
   }).strict()).max(100),
 }).strict()
 

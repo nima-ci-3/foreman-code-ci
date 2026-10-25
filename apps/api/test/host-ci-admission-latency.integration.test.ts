@@ -12,7 +12,7 @@ function deferred() {
 
 it('admits and reads back a gate through authenticated MCP while an executor read is pending', async () => {
   const f = await fixture({ cloud: { github: 8, circleci: 0 },
-    unitInventory: { files: ['apps/api/src/site.test.ts'], durations: {}},
+    unitInventory: { files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] },
     integrationInventory: { files: ['apps/api/test/site.integration.test.ts'], durations: {} },
     supersession: { branch: () => 'feature', isAncestor: () => true },
   })

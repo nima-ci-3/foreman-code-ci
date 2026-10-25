@@ -2,7 +2,6 @@ import type { Message, OperatorActivity } from '@foreman-code/contracts'
 import type { HarnessOptions } from '@foreman-code/contracts/management'
 import { ChatMessageFiles, TextTruncationNotice, messageTextPartKey, savedTextPartKeys, selectLiveTextTimeline } from '../chat-core'
 import { MessageBubble } from '../../shared/ui/nocturne'
-import { ChatMessageBody } from '../conversations/ChatMessageBody'
 import { OperatorActivityList } from './OperatorActivityList'
 import { OperatorThinking } from './OperatorThinking'
 import type { OperatorTextProjection } from './operatorTextProjection'
@@ -118,10 +117,10 @@ export function OperatorMessages({ messages, activities, activeRequestId, workin
               {live && thinkingText && !entries.some((entry) => entry.kind === 'thinking') ? <OperatorThinking text={thinkingText} onBrowse={onBrowse} /> : null}
               {orderedTimeline ? orderedTimeline.map((item) => item.kind === 'activity'
                 ? <OperatorActivityList key={item.id} entries={entries.filter((entry) => entry.id === item.id)} activeRequestId={activeRequestId} parts={parts} onBrowse={onBrowse} />
-                : <div className="operator-answer" key={item.id}><ChatMessageBody content={item.text} /></div>) : null}
+                : <div className="operator-answer" key={item.id}><p className="conversation-message-content">{item.text}</p></div>) : null}
             </> : null}
             {!orderedTimeline && (content || live && (partialText || working)) ? <div className={assistant ? 'operator-answer' : undefined}>
-              {content || live && partialText ? <ChatMessageBody content={content || partialText} role={assistant ? 'assistant' : role} /> : null}
+              {content || live && partialText ? <p className="conversation-message-content">{content || partialText}</p> : null}
               {live && working && !partialText ? <div className="operator-chat-typing" role="status" aria-label="Operator is typing"><span /><span /><span /><span className="n-sr-only">Operator is typing…</span></div> : null}
             </div> : null}
             {orderedTimeline && live && working && !partialText ? <div className="operator-chat-typing" role="status" aria-label="Operator is typing"><span /><span /><span /><span className="n-sr-only">Operator is typing…</span></div> : null}

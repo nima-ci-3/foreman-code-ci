@@ -84,7 +84,7 @@ it('publishes the unit mirror snapshot with the learned durations the queued tic
   const commits: CiCommits = {
     resolve: async () => 'a'.repeat(40),
     capabilities: async () => ({ parts: true, integrationPartitions: false, affected: true }),
-    unitInventory: async () => ({ files, durations: { 'apps/api/src/b.test.ts': 40_000 }}),
+    unitInventory: async () => ({ files, durations: { 'apps/api/src/b.test.ts': 40_000 }, heavy: [] }),
   }
   const service = new HostCiService(mainCiContext, pool, commands, authority, commits, endpoint)
   vi.spyOn(service, 'dispatch').mockResolvedValue(undefined)

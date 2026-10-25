@@ -5,7 +5,7 @@ import {
 } from '@foreman-code/contracts'
 import { Combobox, Select, Switch } from '../../shared/ui/nocturne'
 import { useProviderHarnessModels } from '../provider-accounts'
-import { selectNativeModel, modelCapabilities, claudeAccessOptions, fieldMessage, type FieldIssue } from '../settings'
+import { selectNativeModel, supportedEfforts, claudeAccessOptions, fieldMessage, type FieldIssue } from '../settings'
 import { memoryAccess, memoryToolNames, replaceMemoryAccess } from '../memory-boards'
 import type { DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
 import { modelLabel } from './modelLabel'
@@ -35,11 +35,13 @@ function EditableAgentHarnessRows({ value, onChange, issues = [], accountHost }:
   if (!modelOptions.some(option => option.value === value.model)) modelOptions.unshift({ value: value.model,
     label: value.model ? modelLabel(value.model) : 'Choose a model', description: query.isPending ? 'Loading models…' : 'Saved model', disabled: true })
   const modelsNote = query.isError ? `Model list unavailable: ${query.error?.message ?? 'try again shortly.'}` : undefined
-  // An unknown model offers no efforts and no Fast mode; only the saved choice stays visible.
-  const { efforts: knownEfforts, fastSupported } = modelCapabilities(value.harness, selected)
+  const knownEfforts = value.harness === 'claude'
+    ? selected?.reasoningEfforts?.filter(effort => ClaudeEffortSchema.safeParse(effort).success) ?? ClaudeEffortSchema.options
+    : selected ? supportedEfforts(selected) : AgentEffortSchema.options.filter(effort => !['none', 'minimal', 'ultra'].includes(effort))
   const effort = value.harness === 'claude' ? value.effort ?? '' : value.reasoningEffort
   const effortOptions = [...(value.harness === 'claude' ? [{ value: '', label: 'Default' }] : []),
     ...[...new Set([...knownEfforts, ...(effort ? [effort] : [])])].map(item => ({ value: item, label: item }))]
+  const fastSupported = value.harness === 'codex' && (!selected || selected.serviceTiers.includes('priority'))
   return <>
     <NodeRow label="Model" note={modelsNote} tone="warning">
       <Combobox label="Model" value={value.model} options={modelOptions} error={fieldMessage(issues, 'model')}

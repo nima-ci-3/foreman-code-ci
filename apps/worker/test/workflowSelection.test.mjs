@@ -1,4 +1,3 @@
-// ci-key-inputs: apps/worker scripts/worker-snapshot-policy.mjs
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

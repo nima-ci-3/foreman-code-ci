@@ -8,7 +8,7 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
   const files = Array.from({ length: 64 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const f = await fixture({ cloud: { github: 8, circleci: 0 },
     unitInventory: { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.tsx'],
-      durations: {}},
+      durations: {}, heavy: [] },
     integrationInventory: { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) } })
   const worker = f.computers[1]!
   const start = vi.spyOn(f.ci, 'start').mockImplementation(() => {

@@ -48,20 +48,18 @@ test('tracks contracts exports across packages and handles cycles', () => {
   const shared = 'packages/contracts/src/feature.ts'
   const graph = new Map([...sources, [shared, 'export const value = 1'],
     [source, "import { value } from '@foreman-code/contracts/feature'; import './bridge.js'"],
-    ['apps/worker/test/shared.test.mjs', "import { value } from '@foreman-code/contracts/feature'"],
-    // The web interface has no unit tests; a test file there is never selected.
     ['apps/web/src/shared.test.tsx', "import { value } from '@foreman-code/contracts/feature'"]])
   const result = selectAffectedFiles({ suite: 'unit', changedFiles: [shared], sources: graph,
     exports: { './feature': { import: './dist/feature.js' } } })
-  assert.deepEqual(result.files, [unit, 'apps/worker/test/shared.test.mjs'])
+  assert.deepEqual(result.files, [unit, 'apps/web/src/shared.test.tsx'])
 })
 
-test('selects tests that depend on a changed asset import', () => {
-  const asset = 'apps/api/src/icon.svg'
-  const assetTest = 'apps/api/src/view.test.ts'
-  const graph = new Map([[asset, ''], ['apps/api/src/view.ts', "import './icon.svg?raw'"],
-    [assetTest, "import './view'"]])
-  assert.deepEqual(selectAffectedFiles({ suite: 'unit', changedFiles: [asset], sources: graph }).files, [assetTest])
+test('keeps web integration-named unit tests and asset import dependents', () => {
+  const asset = 'apps/web/src/icon.svg'
+  const webTest = 'apps/web/src/view.integration.test.tsx'
+  const graph = new Map([[asset, ''], ['apps/web/src/view.tsx', "import './icon.svg?raw'"],
+    [webTest, "import './view'"]])
+  assert.deepEqual(selectAffectedFiles({ suite: 'unit', changedFiles: [asset], sources: graph }).files, [webTest])
 })
 
 test('falls back to full for shared infrastructure and removed sources', () => {
@@ -76,7 +74,7 @@ test('falls back to full for shared infrastructure and removed sources', () => {
 
 test('shared lint implementation and test configuration data invalidate their consumers', () => {
   for (const file of ['scripts/eslint-plugin-foreman/index.mjs', 'scripts/eslint-closure-cache.mjs', 'scripts/lint-allowlist.json',
-    'scripts/check-web-feature-boundaries.mjs']) {
+    'scripts/check-web-feature-boundaries.mjs', 'apps/web/heavy-tests.json']) {
     for (const suite of ['lint', 'unit', 'typecheck']) {
       assert.equal(selectAffectedFiles({ suite, changedFiles: [file], sources: new Map([...sources, [file, '{}']]) }).scope,
         'full', `${suite}: ${file}`)
@@ -141,8 +139,8 @@ test('lint and typecheck include consumers reached by imports', () => {
   ])
   assert.deepEqual(affectedCommands('unit', [unit]), [[process.execPath, 'scripts/test-command.mjs', '--',
     'corepack', 'pnpm', '--dir', 'apps/api', 'exec', 'vitest', 'run', 'src/feature.test.ts']])
-  assert.deepEqual(affectedCommands('unit', ['packages/contracts/src/view.test.ts', 'scripts/tool.test.mjs']), [
-    ['corepack', 'pnpm', '--dir', 'packages/contracts', 'exec', 'vitest', 'run', 'src/view.test.ts'],
+  assert.deepEqual(affectedCommands('unit', ['apps/web/src/view.test.tsx', 'scripts/tool.test.mjs']), [
+    ['env', 'FOREMAN_WEB_TEST_PHASE=fast', 'corepack', 'pnpm', '--dir', 'apps/web', 'exec', 'vitest', 'run', 'src/view.test.tsx'],
     [process.execPath, '--test', 'scripts/tool.test.mjs']])
   assert.deepEqual(selectByIndexes(['a', 'b', 'c'], 's:0,2'), ['a', 'c'])
   assert.throws(() => selectByIndexes(['a', 'b', 'c'], '-1'), /Invalid/)
@@ -154,6 +152,13 @@ test('lint and typecheck include consumers reached by imports', () => {
   for (const bad of ['d:-1', 'd:A', 'd:1.', 'd:.1', 'd:1.2.3', `d:${(100).toString(36)}`, 'd:0.2s', 'd:50,1z']) {
     assert.throws(() => selectByIndexes(names, bad), /Invalid/, bad)
   }
+})
+
+test('affected load-sensitive web suites run in the heavy phase with its workers and timeouts', () => {
+  assert.deepEqual(affectedCommands('unit', ['apps/web/src/board.integration.test.tsx', 'apps/web/src/view.test.tsx']), [
+    ['env', 'FOREMAN_WEB_TEST_PHASE=fast', 'corepack', 'pnpm', '--dir', 'apps/web', 'exec', 'vitest', 'run', 'src/view.test.tsx'],
+    ['env', 'FOREMAN_WEB_TEST_PHASE=heavy', 'corepack', 'pnpm', '--dir', 'apps/web', 'exec', 'vitest', 'run',
+      'src/board.integration.test.tsx']])
 })
 
 test('runs affected commands without leaking dispatch selections into nested commands', t => {
@@ -175,14 +180,15 @@ test('runs affected commands without leaking dispatch selections into nested com
 })
 
 for (const progress of ['', 'parent-progress.jsonl']) {
-  test(`runs selected tests independently of the parent progress reporter (${progress || 'disabled'})`, t => {
+  test(`runs selected web tests independently of the parent progress reporter (${progress || 'disabled'})`, t => {
     const base = join(homedir(), '.cache', 'foreman-tmp')
     mkdirSync(base, { recursive: true })
-    const root = mkdtempSync(join(base, 'affected-contracts-'))
+    const root = mkdtempSync(join(base, 'affected-web-'))
     t.after(() => rmSync(root, { recursive: true, force: true }))
-    const file = 'packages/contracts/src/view.test.ts'
-    mkdirSync(join(root, 'packages/contracts/src'), { recursive: true })
+    const file = 'apps/web/src/view.test.tsx'
+    mkdirSync(join(root, 'apps/web/src'), { recursive: true })
     writeFileSync(join(root, file), 'export {}')
+    writeFileSync(join(root, 'apps/web/heavy-tests.json'), JSON.stringify({ files: ['src/**/*.integration.test.tsx'] }))
     const selection = join(root, 'selected.json')
     writeFileSync(selection, JSON.stringify([file]))
     writeFileSync(join(root, 'corepack'), `#!${process.execPath}\n`
@@ -198,7 +204,7 @@ for (const progress of ['', 'parent-progress.jsonl']) {
       ['pnpm', '--filter', '@foreman-code/contracts', 'build'],
       ['pnpm', '--filter', '@foreman-code/contracts-node', 'build'],
       ['pnpm', '--filter', '@foreman-code/ci', 'build'],
-      ['pnpm', '--dir', 'packages/contracts', 'exec', 'vitest', 'run', 'src/view.test.ts'],
+      ['pnpm', '--dir', 'apps/web', 'exec', 'vitest', 'run', 'src/view.test.tsx'],
     ])
   })
 }

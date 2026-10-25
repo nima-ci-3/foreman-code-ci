@@ -73,6 +73,8 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
   await writeFile(join(origin, 'scripts/integration-durations.json'), JSON.stringify({
     'apps/api/test/a.integration.test.ts': 400, 'apps/api/test/b.integration.test.ts': 300,
     'apps/api/test/c.integration.test.ts': 200, 'apps/api/test/d.integration.test.ts': 100 }))
+  await mkdir(join(origin, 'apps/web/src'), { recursive: true })
+  await writeFile(join(origin, 'apps/web/heavy-tests.json'), JSON.stringify({ files: [] }))
   await copyFile(new URL('../../../scripts/ci-unit-files.mjs', import.meta.url),
     join(origin, 'scripts/ci-unit-files.mjs'))
   const suiteFiles = ['ci-affected-run.mjs', 'ci-files.mjs', 'ci-suite.sh',
@@ -86,7 +88,8 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
   await writeFile(join(origin, 'scripts/test-command.mjs'),
     "import { spawnSync } from 'node:child_process'; const [, command, ...args] = process.argv.slice(2);"
       + " const result = spawnSync(command, args, { stdio: 'inherit' }); process.exit(result.status ?? 1);\n")
-  const unitFiles = ['apps/api/test/first.test.ts', 'apps/api/test/second.test.ts']
+  const unitFiles = ['apps/api/test/first.test.ts', 'apps/api/test/second.test.ts',
+    'apps/web/src/first.test.tsx', 'apps/web/src/second.test.tsx']
   for (const file of unitFiles) await writeFile(join(origin, file), '')
   if (options.selector) {
     await copyFile(new URL('../../../scripts/ci-affected.mjs', import.meta.url),
@@ -97,7 +100,7 @@ async function computer(options: { github?: boolean; suiteExit?: number; watchdo
     await copyFile(new URL('../../../packages/verification-runner/runtime-files.mjs', import.meta.url),
       join(origin, 'packages/verification-runner/runtime-files.mjs'))
     await mkdir(join(origin, 'packages/contracts/src'), { recursive: true })
-    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs', 'ciTestInventory.mjs']) {
+    for (const file of ['ciImportGraph.mjs', 'ciCoverage.mjs']) {
       await copyFile(new URL(`../../../packages/contracts/src/${file}`, import.meta.url),
         join(origin, 'packages/contracts/src', file))
     }
@@ -425,7 +428,7 @@ describe('host CI runner', () => {
   })
   it.each([
     ['unit', undefined, true], ['unit', 'unit-api', true], ['integration', undefined, true],
-    ['unit', 'unit-other', true],
+    ['unit', 'unit-web', false], ['unit', 'unit-web-heavy', false], ['unit', 'unit-other', true],
     ['lint', 'lint-api', false], ['typecheck', 'typecheck-api', false], ['build', 'build-api', false],
   ])('prepares the database for %s/%s only when needed', async (suite, part, databaseRequired) => {
     const f = await computer()
@@ -475,7 +478,7 @@ describe('host CI runner', () => {
     expect(done.text).toContain(`corepack pnpm ${command}`)
   })
 
-  it.each(['unit-api'])('executes every file once across %s shards and reports timings', async part => {
+  it.each(['unit-api', 'unit-web'])('executes every file once across %s shards and reports timings', async part => {
     const f = await computer()
     const measured: string[] = []
     for (const index of [0, 1]) {
@@ -487,7 +490,9 @@ describe('host CI runner', () => {
       expect(result.operation).toBe('read')
       if (result.operation === 'read') measured.push(...Object.keys(result.durations!))
     }
-    expect(measured.sort()).toEqual(['apps/api/test/first.test.ts', 'apps/api/test/second.test.ts'])
+    const project = part === 'unit-api' ? 'apps/api/test' : 'apps/web/src'
+    const extension = part === 'unit-api' ? 'ts' : 'tsx'
+    expect(measured.sort()).toEqual([`${project}/first.test.${extension}`, `${project}/second.test.${extension}`])
   })
 
   it.each([['full part', {}], ['affected selection', { scope: 'affected' as const,
@@ -499,7 +504,7 @@ describe('host CI runner', () => {
     expect((await f.settle(runId)).run).toMatchObject({ state: 'passed', step: 'unit-api' })
     const result = await f.runner.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1, testResults: true })
     expect(result.operation === 'read' && result.testResults).toEqual({ summary: { passed: 2, failed: 0, skipped: 0 },
-      proven: ['apps/api/test/first.test.ts', 'apps/api/test/second.test.ts'], truncated: false, files: ['first', 'second'].map(name => ({ file: `apps/api/test/${name}.test.ts`, status: 'passed',
+      truncated: false, files: ['first', 'second'].map(name => ({ file: `apps/api/test/${name}.test.ts`, status: 'passed',
         durationMs: 5, tests: [{ name: `${name}.test.ts works`, status: 'passed', durationMs: 4 }] })) })
     // A Main from before test results asks only for durations and gets the reply shape it knows.
     const durations = await f.runner.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1, durations: true })
@@ -510,8 +515,8 @@ describe('host CI runner', () => {
     const f = await computer({ suiteExit: 7 })
     const runId = randomUUID()
     await f.runner.handle({ operation: 'start', runId, repository: 'octo/site', commit: f.commit,
-      suite: 'unit', part: 'unit-api', partition: { index: 0, count: 2 } })
-    expect((await f.settle(runId)).run).toMatchObject({ state: 'failed', exitCode: 7, step: 'unit-api' })
+      suite: 'unit', part: 'unit-web', partition: { index: 0, count: 2 } })
+    expect((await f.settle(runId)).run).toMatchObject({ state: 'failed', exitCode: 7, step: 'unit-web' })
   })
 
   it('executes an affected unit part selection without slicing it again', async () => {

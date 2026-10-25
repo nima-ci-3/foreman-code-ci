@@ -1,11 +1,10 @@
 // Prints the integration files an index list selects: node scripts/ci-files.mjs 0,4,9-12
 // Indexes point into the commit's sorted integration file list, so a slice fits in a short CI parameter.
 import { execFileSync } from 'node:child_process'
-import { integrationTestFile } from '../packages/contracts/src/ciTestInventory.mjs'
 
 export function integrationFileList(cwd) {
-  return execFileSync('git', ['ls-files', '--', 'apps/api'], { cwd, encoding: 'utf8' }).split('\n')
-    .filter(integrationTestFile).sort()
+  return execFileSync('git', ['ls-files', '--', 'apps/api/test'], { cwd, encoding: 'utf8' }).split('\n')
+    .filter(path => /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/.test(path)).sort()
 }
 
 export function repositoryFileList(cwd) {
