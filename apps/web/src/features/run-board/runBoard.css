@@ -91,3 +91,6 @@
 .run-execution-inspector code { overflow-wrap: anywhere; }
 .run-execution-inspector > p, .run-execution-inspector > section > p { margin: 0; color: var(--text-muted); font: var(--type-caption); }
 .run-board > .run-board-stale { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-4); color: var(--warning); }
+/* React Flow turns off pointer events on read-only nodes; the Board's selectable Agent takes them back, like the
+ * Inspect button, while presses still bubble to the node's drag handling. */
+.run-board-agent.nopan { pointer-events: auto; }

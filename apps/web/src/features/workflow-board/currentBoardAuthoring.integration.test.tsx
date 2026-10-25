@@ -702,7 +702,7 @@ describe('ENG-S3-ONLY actual registered Board / shared current HTTP', () => {
     const mock = newBoardMock({ allowSimulatedStart: true }), user = userEvent.setup(), mounted = await mount(mock)
     const { key } = await create(mock, user); stageShape(key, 'single', mock); await save(mock, user, 1)
     const run = await start(mock, user), scope = mock.currents.get(run.id)!.scope
-    // A saved Run link still opens its exact details; choosing the painted Run from Runs keeps the draft Board.
+    // A saved Run link opens its exact details while retaining the draft editor.
     await act(async () => { await mounted.router.navigate({ to: '/workspaces/$workspaceId', params: { workspaceId: mock.workspaceId },
       search: { workflowId: scope.workflowId, selectedRunId: run.id } }) })
     await screen.findByRole('region', { name: 'Selected Run board' })
@@ -810,7 +810,7 @@ describe('latest Run on the draft Board', () => {
     expect(canvasNode(nodeId).querySelector('.n-agent')).not.toHaveAttribute('data-state', 'completed')
   }, 30_000)
 
-  it.each(['Runs', 'Running'] as const)('choosing the painted latest Run through %s keeps the draft Board while an older Run opens history', async navigation => {
+  it.each(['Runs', 'Running'] as const)('retains the draft while %s honors its Run navigation behavior', async navigation => {
     const mock = newBoardMock({ allowSimulatedStart: true }), user = userEvent.setup(), mounted = await mount(mock)
     const { key } = await create(mock, user); stageShape(key, 'single', mock); await save(mock, user, 1)
     const older = await start(mock, user)
@@ -821,10 +821,18 @@ describe('latest Run on the draft Board', () => {
     const node = useGraphDraftStore.getState().nextDrafts[key]!.graph.nodes[0]!
     await waitFor(() => expect(canvasNode(node.id)).toHaveTextContent('Running'))
     const editor = authoring(), paintedNode = canvasNode(node.id)
-    if (navigation === 'Runs') await chooseRun(user, latest.id)
-    else await user.click(within(screen.getByRole('group', { name: 'Board controls' })).getByText('Running'))
-    expect(mounted.router.state.location.search.selectedRunId).toBeUndefined()
-    expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
+    if (navigation === 'Runs') {
+      await chooseRun(user, latest.id)
+      expect(await screen.findByRole('region', { name: 'Selected Run board' })).toHaveAttribute('data-run-id', latest.id)
+      expect(mounted.router.state.location.search.selectedRunId).toBe(latest.id)
+      expect(await screen.findByRole('group', { name: `${node.name}, saved agent, read only` })).toBeVisible()
+      expect(editor).not.toBeVisible()
+      await returnToDraft(user)
+    } else {
+      await user.click(within(screen.getByRole('group', { name: 'Board controls' })).getByText('Running'))
+      expect(mounted.router.state.location.search.selectedRunId).toBeUndefined()
+      expect(screen.queryByRole('region', { name: 'Selected Run board' })).not.toBeInTheDocument()
+    }
     expect(editor).toBeVisible()
     expect(canvasNode(node.id)).toBe(paintedNode)
     expect(within(screen.getByRole('group', { name: 'Board controls' })).getByRole('status')).toHaveTextContent('Running')
@@ -835,7 +843,7 @@ describe('latest Run on the draft Board', () => {
     expect(editor).not.toBeVisible()
   }, 30_000)
 
-  it('keeps the live Board Stop visible in Overview and returns it to the Graph Run slot', async () => {
+  it('keeps one live Board Stop in its Run slot through legacy view links', async () => {
     const mock = newBoardMock({ allowSimulatedStart: true }), user = userEvent.setup(), mounted = await mount(mock)
     const { key } = await create(mock, user); stageShape(key, 'single', mock); await save(mock, user, 1)
     const slot = controls(), runSlot = control('Start saved version').parentElement!
@@ -844,13 +852,13 @@ describe('latest Run on the draft Board', () => {
     await waitFor(() => expect(control('Stop')).toBeEnabled())
     expect(control('Stop')).toBeVisible()
     expect(runSlot).toContainElement(control('Stop'))
-    const views = within(screen.getByRole('navigation', { name: 'Workflow views' }))
-    await user.click(views.getByRole('button', { name: 'Overview' }))
+    await act(async () => { await mounted.router.navigate({ to: '/workspaces/$workspaceId',
+      params: { workspaceId: mock.workspaceId }, search: previous => ({ ...previous, boardView: 'overview' }) }) })
     const toolbar = await screen.findByRole('banner', { name: 'Board toolbar' })
     await waitFor(() => expect(within(toolbar).getByRole('button', { name: 'Stop' })).toBeEnabled())
     expect(within(toolbar).getByRole('button', { name: 'Stop' })).toBeVisible()
     expect(screen.getAllByRole('button', { name: 'Stop' })).toHaveLength(1)
-    await user.click(views.getByRole('button', { name: 'Graph' }))
+    await act(async () => { mounted.router.history.back() })
     await waitFor(() => expect(control('Stop')).toBeEnabled())
     expect(control('Stop')).toBeVisible()
     expect(controls()).toBe(slot)
@@ -1028,7 +1036,7 @@ describe('latest Run on the draft Board', () => {
       expect(panel.querySelectorAll('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')).toHaveLength(0)
     } else if (action === 'keyboard undo' || action === 'keyboard redo') {
       const before = structuredClone(useGraphDraftStore.getState().nextDrafts[key]!.graph)
-      await user.click(screen.getByRole('button', { name: 'Graph' }))
+      act(() => { (document.activeElement as HTMLElement | null)?.blur() })
       await user.keyboard(action === 'keyboard undo' ? '{Control>}z{/Control}' : '{Control>}y{/Control}')
       expect(useGraphDraftStore.getState().nextDrafts[key]!.graph).toEqual(before)
     } else expect(screen.getByRole('button', { name: action })).toBeDisabled()
@@ -1359,6 +1367,10 @@ describe('latest Run inspection on the retained Board', () => {
       Object.defineProperty(event, 'view', { value: window })
       fireEvent(jobButton, event)
     }
+    await waitFor(() => expect(jobButton).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.queryByRole('button', { name: 'Attempt 1 · job-node-execution' })).not.toBeInTheDocument()
+    await user.hover(jobButton)
+    await user.click(within(canvasNode(job.id)).getByRole('button', { name: 'Open Build information' }))
     await user.click(await screen.findByRole('button', { name: 'Attempt 1 · job-node-execution' }))
     expect(await screen.findByRole('region', { name: 'Job logs' })).toBeVisible()
     expect(await screen.findByRole('region', { name: 'Job artifacts' })).toBeVisible()

@@ -70,7 +70,7 @@ export async function readProtectedInstalledRsyncSelection(path: string, signal:
   } finally { await file.close() }
 }
 const MAX_INSTALLED_FILE_BYTES = 64 * 1024 * 1024
-// The reviewed Node 22.23.3 executable is 124,827,920 bytes. Other installation files keep their existing bound.
+// The reviewed Node 24.22.1 executable is 126,879,696 bytes. Other installation files keep their existing bound.
 const MAX_INSTALLED_NODE_BINARY_BYTES = 128 * 1024 * 1024
 async function precheckInstalledFile(pin: { path: string; sha256: string }, signal: AbortSignal,
   kind: 'executable' | 'node' | 'script' = 'executable'): Promise<void> {

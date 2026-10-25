@@ -21,7 +21,7 @@ function safePath(path) {
 }
 export function matchesBrowserRuntimeTarget(actual, expected) {
   return ['os', 'osRelease', 'arch', 'libc'].every(key => actual?.[key] === expected?.[key])
-    && /^v22\./.test(actual?.node ?? '') && /^v22\./.test(expected?.node ?? '');
+    && /^v24\./.test(actual?.node ?? '') && /^v24\./.test(expected?.node ?? '');
 }
 
 export function validateBrowserRuntimeManifest(manifest, target) {
