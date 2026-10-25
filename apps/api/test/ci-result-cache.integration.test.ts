@@ -84,6 +84,8 @@ async function fixture() {
     read: async (path: string) => files[path]! }
   }
   const integrationFiles = [DYNAMIC, LABEL, PLAIN]
+  /** What the repository selector picks at each commit; a missing commit makes it fail. */
+  const selections = new Map<string, string[]>()
   const commits: CiCommits & { testTree: (repository: string, sha: string) => Promise<ReturnType<typeof tree>> } = {
     resolve: async (_repository, _branch, sha) => sha!,
     capabilities: async () => ({ parts: true, integrationPartitions: true, affected: true }),
@@ -91,6 +93,12 @@ async function fixture() {
       durations: Object.fromEntries(integrationFiles.map(file => [file, 1000])) }),
     unitInventory: async () => ({ files: ['apps/api/src/site.test.ts'], durations: {}, heavy: [] }),
     testTree: async (_repository, sha) => tree(sha),
+    // The repository's affected selector, as Main runs it for a caller that names no files.
+    affectedSelection: async (_repository, input) => {
+      const files = selections.get(input.commit)
+      if (!files) throw new Error('The selector failed')
+      return { scope: 'affected', files, reason: 'Selected by the repository selector.' }
+    },
   }
   const ci = new HostCiService(mainCiContext, pool, commands, new RunCiAuthority(pool), commits, {
     computers: async () => computers,
@@ -136,6 +144,8 @@ async function fixture() {
   const request = async (sha: string, files: string[]) => CiRunOutputSchema.parse(await call('ci_run', {
     suite: 'integration', commit: commit(sha), scope: 'affected', files, commandId: randomUUID() }))
   const read = async (ticketId: string) => CiGetOutputSchema.parse(await call('ci_get', { ticketId }))
+  const requestSelected = async (sha: string) => CiRunOutputSchema.parse(await call('ci_run', {
+    suite: 'integration', commit: commit(sha), scope: 'affected', commandId: randomUUID() }))
   /** Starts the request on the builder, finishes it and collects its results. */
   // ci_run also starts a background dispatch; observations run in the background, so wait for them to finish.
   const settle = async () => { await ci.dispatch(); await ci.drain() }
@@ -158,7 +168,7 @@ async function fixture() {
   }
   const cachedRows = async () => (await pool.query<{ file: string; ticket_id: string }>(
     'select file,ticket_id from ci_test_result_cache where workspace_id=$1 order by file', [workspaceId])).rows
-  return { workspaceId, connect, call, request, read, complete, sent, starts, outcomes, cachedRows, close: async () => {
+  return { workspaceId, connect, call, request, requestSelected, selections, read, complete, sent, starts, outcomes, cachedRows, close: async () => {
     await Promise.all(clients.map(client => client.close()))
     await ci.close()
     await app.close()
@@ -269,5 +279,54 @@ it('never skips cached files in full-scope runs or gates', async () => {
       .toBe(true)
     expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
       .toEqual([DYNAMIC, LABEL, PLAIN])
+  } finally { await f.close() }
+})
+
+it('skips files that already passed in a run whose files the selector chose, and records the files it proves', async () => {
+  const f = await fixture()
+  try {
+    f.selections.set(commit('1'), [LABEL, PLAIN])
+    const first = await f.requestSelected('1')
+    expect((await f.read(first.ticketId)).run).toMatchObject({ selectedOnMain: true, files: [LABEL, PLAIN] })
+    expect(await f.sent(first.ticketId)).toEqual([LABEL, PLAIN])
+    await f.complete(first.ticketId)
+    expect(await f.cachedRows()).toEqual([
+      { file: LABEL, ticket_id: first.ticketId }, { file: PLAIN, ticket_id: first.ticketId }])
+
+    // An unrelated change: the selector still picks both files, and both are proven with identical inputs.
+    f.selections.set(commit('2'), [LABEL, PLAIN])
+    const startsBefore = f.starts.length
+    const second = await f.requestSelected('2')
+    expect(second.cachedFiles?.map(item => item.file)).toEqual([LABEL, PLAIN])
+    expect(await f.sent(second.ticketId)).toBeNull()
+    expect(f.starts).toHaveLength(startsBefore)
+
+    // A changed import: only the file that depends on it runs again.
+    f.selections.set(commit('3'), [LABEL, PLAIN])
+    const third = await f.requestSelected('3')
+    expect(third.cachedFiles?.map(item => item.file)).toEqual([PLAIN])
+    expect(await f.sent(third.ticketId)).toEqual([LABEL])
+  } finally { await f.close() }
+})
+
+it('leaves the selection to the runner when the selector cannot run on Main', async () => {
+  const f = await fixture()
+  try {
+    const started = await f.requestSelected('4')
+    expect((await f.read(started.ticketId)).run).toMatchObject({ deriveFiles: true })
+    expect((await f.read(started.ticketId)).run).not.toHaveProperty('selectedOnMain')
+  } finally { await f.close() }
+})
+
+it('starts no job for a check whose selector finds nothing affected', async () => {
+  const f = await fixture()
+  try {
+    f.selections.set(commit('2'), [])
+    const startsBefore = f.starts.length
+    const started = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'typecheck', commit: commit('2'), scope: 'affected',
+      commandId: randomUUID() }))
+    expect((await f.read(started.ticketId)).run).toMatchObject({ state: 'passed', selectedOnMain: true, files: [] })
+    expect(await f.sent(started.ticketId)).toBeNull()
+    expect(f.starts).toHaveLength(startsBefore)
   } finally { await f.close() }
 })
