@@ -498,7 +498,7 @@ export class HostCiService {
     }
     const selectionScope = supportsSelection ? input.scope ?? 'affected' : 'full'
     let deriveFiles = selectionScope === 'affected' && input.files === undefined
-    const coverage = deriveFiles && input.suite === 'integration'
+    let coverage = deriveFiles && input.suite === 'integration'
       ? await this.coverage.selection(repository, commit, this.commits) : undefined
     // Suites select their affected files here, with the selector the runner would use: a part with nothing affected
     // never starts a job, and test files that already passed with identical inputs are skipped and the files this run
@@ -516,7 +516,8 @@ export class HostCiService {
       }
       timing.mark('mainSelectionMs')
     }
-    if (mainSelection) deriveFiles = false
+    // The coverage input was for the selection; a run whose files are chosen no longer waits for runner selection.
+    if (mainSelection) { deriveFiles = false; coverage = undefined }
     const explicitFiles = input.files ?? mainSelection?.files
     const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? explicitFiles : [] }
     // Gates, full scope and smoke runs always run every file; only explicit affected test selections use the cache.
