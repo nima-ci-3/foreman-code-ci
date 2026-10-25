@@ -152,6 +152,19 @@ export function WorkflowBoard({ workspaceId, workflowId, run: requestedRun, sele
     ? boardSnapshot.workflowVersionId : undefined
   const boardStatusScope: RepeatGraphScopeCurrent | undefined = boardRunId && boardVersionId
     ? { workspaceId, workflowId, runId: boardRunId, workflowVersionId: boardVersionId, executionSemanticsVersion: 3 } : undefined
+  // Opening a workflow while it runs shows that Run, whichever computer started it. A draft kept from another
+  // saved version has its own nodes, so the live Run opens in its own view; Return to workflow brings the draft back.
+  const draftBaseVersionId = useGraphDraftStore(state => {
+    const context = state.nextDrafts[nextDraftKey(workspaceId, workflowId)]?.context
+    return (context?.savedDraft ?? context?.draft)?.baseWorkflowVersionId ?? undefined
+  })
+  const openedLiveRun = useRef<string>(undefined)
+  useEffect(() => {
+    if (!current || !liveRunId || boardRunId !== liveRunId || !boardVersionId || !draftBaseVersionId
+      || boardVersionId === draftBaseVersionId || openedLiveRun.current === liveRunId) return
+    openedLiveRun.current = liveRunId
+    void navigationSelection.selectRun(liveRunId)
+  }, [current, liveRunId, boardRunId, boardVersionId, draftBaseVersionId, navigationSelection])
   const boardCurrent = useCurrentRunQuery(current && !side.memoryOpen ? boardStatusScope : undefined, boardRunLive)
   const boardRunState = !boardCurrent.isError ? boardCurrent.data?.state.run : undefined
   const boardRunStopping = !!boardRunState && (boardRunState.stopRequested || boardRunState.cleanupPending)
