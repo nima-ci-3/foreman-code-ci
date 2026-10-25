@@ -131,7 +131,7 @@ it.each([
   { driver: 'codex', host: 'main', availability: 'ready' },
   { driver: 'codex', host: 'device', availability: 'ready' },
   { driver: 'claude', host: 'main', availability: 'ready' },
-  { driver: 'claude', host: 'device', availability: 'unavailable' },
+  { driver: 'claude', host: 'device', availability: 'ready' },
 ] as const)('matches workflow driver support for $driver on $host', async ({ driver, host, availability }) => {
   const f = fixture({ driver, host })
 
