@@ -163,11 +163,18 @@ for (const outcome of ['current', 'rolled-back', 'closed']) {
     await mkdir(profileStateRoot, { recursive: true, mode: 0o700 });
     await writeFile(join(profileStateRoot, 'profile'), 'old browser profile');
     await writeFile(join(profileStateRoot, 'checkpoint'), 'retained old checkpoint');
-    const first = await f.stage(await f.recipe('first'));
+    const first = await f.stage(await f.recipe('first', { nativeHost: `
+      export async function createBrowserRuntimeProfileCheckpoint() { return {}; }
+      export async function restoreBrowserRuntimeProfiles() {}
+    ` }));
     const legacyManifest = JSON.parse(await readFile(join(first.rootDirectory, 'manifest.json')));
     delete legacyManifest.recipeSha256;
     delete legacyManifest.files;
-    const bundled = await packBrowserRuntime({ unit: first.rootDirectory,
+    const legacyUnit = join(f.directory, 'legacy-unit');
+    await cp(first.rootDirectory, legacyUnit, { recursive: true });
+    await rm(join(legacyUnit, 'manifest.json'));
+    await rm(join(legacyUnit, 'readiness.json'));
+    const bundled = await packBrowserRuntime({ unit: legacyUnit,
       output: join(f.directory, 'bundled'), manifest: legacyManifest });
     const legacy = await stageBrowserRuntime({ runtimeRoot: f.runtimeRoot, artifact: join(f.directory, 'bundled'),
       expectedSha256: bundled.descriptorSha256, target, readiness: ready, activate: false });
