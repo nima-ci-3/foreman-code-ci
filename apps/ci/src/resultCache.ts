@@ -90,7 +90,7 @@ export class CiResultKeys {
   private readonly environments = new Map<string, string[]>()
   private readonly directories = new Set<string>()
 
-  private constructor(private readonly source: CiTestTree, private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
+  private constructor(private readonly tree: CiTestTree, private readonly exports: Record<string, unknown>,
     private readonly workspacePackages: ReadonlyMap<string, { directory: string; exports: Record<string, unknown> }>,
     private readonly packages: ReadonlySet<string>, private readonly signal: AbortSignal) {
     for (const path of tree.blobs.keys()) {
@@ -120,12 +120,7 @@ export class CiResultKeys {
     // Every workspace package resolves through its own exports to its sources, as tests run them.
     const workspacePackages = new Map(manifests.flatMap(manifest => typeof manifest.value.name === 'string'
       ? [[manifest.value.name, { directory: posix.dirname(manifest.path), exports: exportsOf(manifests, manifest.path) }] as const] : []))
-    return new CiResultKeys(input, tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
-  }
-
-  /** The same commit's keys under another deadline, for a graph that outlives the work that built it. */
-  bounded(signal: AbortSignal) {
-    return new CiResultKeys(this.source, boundedTree(this.source, signal), this.exports, this.workspacePackages, this.packages, signal)
+    return new CiResultKeys(tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
   }
 
   /** The file's key for the suite and part, or null with the reason it must run. */

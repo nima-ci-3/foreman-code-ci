@@ -417,17 +417,10 @@ export class HostCiService {
         this.keyGraphs.set(id, graph)
         if (this.keyGraphs.size > 8) this.keyGraphs.delete(this.keyGraphs.keys().next().value!)
       }
+      const keys = await graph
       const part = run.part ?? run.suite
-      try {
-        // The shared graph's build deadline has passed by the time later parts finish; each call gets its own.
-        const keys = (await graph).bounded(AbortSignal.timeout(60_000))
-        return Object.fromEntries((await Promise.all(files.map(async file => [file, (await keys.key(file, run.suite, part)).key] as const)))
-          .flatMap(([file, key]) => key ? [[file, key]] : []))
-      } catch (error) {
-        // The part's admitted keys are still recorded; these files run again next time.
-        this.context.log.warn({ err: error, ticketId: run.id }, 'CI result cache keys failed for a finished part')
-        return {}
-      }
+      return Object.fromEntries((await Promise.all(files.map(async file => [file, (await keys.key(file, run.suite, part)).key] as const)))
+        .flatMap(([file, key]) => key ? [[file, key]] : []))
     }
   }
 
