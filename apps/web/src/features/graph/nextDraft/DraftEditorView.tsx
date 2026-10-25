@@ -116,6 +116,13 @@ export function DraftEditorView({ draftKey, edit, updateFailures, controller }: 
           else openPanel('workflow')
         }} />
       <div className="board-notices" aria-live="polite">
+        {managedWorkflow.data?.currentVersionId && edit.context.draft.baseWorkflowVersionId
+          && managedWorkflow.data.currentVersionId !== edit.context.draft.baseWorkflowVersionId ? <BoardNotice tone="warning"
+          title="This draft is based on an older saved version of this workflow."
+          action={<Button size="sm" disabled={reloading || edit.busy} onClick={() => {
+            if (nextDraftDirty(edit)) setConfirm('reload'); else void reload()
+          }}>Open saved workflow</Button>}>
+          Runs use the saved workflow, so its Agents, computers and chats can differ from this draft. Your draft is kept.</BoardNotice> : null}
         {scheduleWrite.unconfirmed && scheduleWrite.command?.history ? <BoardNotice tone="warning"
           title="The schedule change may have gone through."
           action={<Button size="sm" disabled={scheduleWrite.pending || historyPending}
