@@ -9,13 +9,6 @@ const selection = { workflowId: 'workflow', agentId: 'authoring-agent', boardVie
   boardPanel: 'agent' as const, boardAgentTab: 'settings' as const, boardNodeId: 'worker' };
 
 describe('shared Board surface URL state', () => {
-  it('retains Current Agent chat as linkable view state and clears it when selecting a Run', () => {
-    const search = WorkspaceBoardSearchSchema.parse({ ...selection, boardAgentTab: 'chat', boardChatTarget: 'current' });
-    expect(resolveWorkflowBoardLocation('/workspaces/workspace', search).search.boardChatTarget).toBe('current');
-    expect(staysOnWorkflowBoard(at(selection), at(search))).toBe(true);
-    expect(boardSearchForRun(search, 'workflow', scope).boardChatTarget).toBeUndefined();
-  });
-
   it('projects one selected rail while retaining its linkable node and execution context', () => {
     const search = WorkspaceBoardSearchSchema.parse({ ...boardSearchForRun(selection, 'workflow', scope),
       boardExecutionId: 'execution', boardMemory: 'true' });

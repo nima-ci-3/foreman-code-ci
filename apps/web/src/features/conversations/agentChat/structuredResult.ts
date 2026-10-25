@@ -40,10 +40,3 @@ function findSummary(value: unknown, depth: number): string | undefined {
   }
   return undefined
 }
-
-/** An answer that is still streaming a structured result (an unfinished JSON object with result keys). */
-export function partialStructuredResult(content: string): boolean {
-  const text = content.trim().replace(/^```(?:json)?\s*/, '')
-  return text.startsWith('{') && structuredResult(content) === undefined
-    && /^\{\s*"(?:routing|board|result|data|summary)"/.test(text)
-}

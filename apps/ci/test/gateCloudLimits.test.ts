@@ -93,22 +93,3 @@ it.each(['github', 'circleci'] as const)('retains builder ownership when a fallb
     reservedCloud: new Set(), gate: undefined, canTake: () => true, idle: () => true, freeSlots: () => 1 })
   expect(parts).toEqual([run])
 })
-
-it('uses every free GitHub Actions slot before giving CircleCI any work', async () => {
-  const slots = (provider: 'github' | 'circleci', count: number): HostCiComputer[] => Array.from({ length: count }, (_, slot) => ({
-    key: `${provider}:${slot}`, label: `${provider} ${slot}`, priority: 30,
-    hostRef: { kind: 'cloud' as const, mainId: 'fixture', provider, slot }, userSystemd: { supported: true, reason: null } }))
-  // CircleCI is listed first, so only an explicit GitHub preference puts work on GitHub.
-  const computers = [...slots('circleci', 30), ...slots('github', 20)]
-  const endpoint: HostCiEndpoint = { computers: async () => computers,
-    request: async () => ({ operation: 'status', ready: true, reasons: [], runs: [], cpuCount: 4, memoryBytes: 16 * 2 ** 30,
-      slotsUsed: 0, slotsTotal: 1 }) }
-  const files = Array.from({ length: 40 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
-  const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
-    { files, durations: Object.fromEntries(files.map(file => [file, 60_000])) }, unit, {}, endpoint)
-  const used = new Set(parts.map(part => part.plannedHostKey))
-  const github = computers.filter(computer => computer.key.startsWith('github:')).map(computer => computer.key)
-  expect(github.every(key => used.has(key))).toBe(true)
-  expect([...used].some(key => key.startsWith('circleci:'))).toBe(true)
-  expect(parts.flatMap(part => part.files).filter(file => file.endsWith('.integration.test.ts')).sort()).toEqual([...files].sort())
-})

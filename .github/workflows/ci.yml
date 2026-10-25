@@ -168,12 +168,8 @@ jobs:
             apps/*/node_modules/.cache
             packages/*/node_modules/.cache
             !apps/web/node_modules/.cache/tsc
-          # One entry per run: TypeScript and ESLint state keeps advancing, and the newest earlier entry is restored.
-          # A fixed key would save once and leave every later run re-checking against that first state.
-          key: ci-v3-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.cache-inputs.outputs.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            ci-v3-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.cache-inputs.outputs.shard }}-
-            ci-v3-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-
+          key: ci-v2-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.cache-inputs.outputs.shard }}
+          restore-keys: ci-v2-${{ runner.os }}-node22.23.2-${{ inputs.suite }}-${{ hashFiles('pnpm-lock.yaml') }}-
       - name: Suite
         # The output is also kept as an artifact, so Main settles the result without downloading the provider log.
         shell: bash
