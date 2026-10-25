@@ -137,8 +137,6 @@ export interface ClaudeNativeSessionManagerOptions {
   responseDeliveries?: (session: NativeSessionReference) => NonNullable<NativeHistory['responseDeliveries']>
     | Promise<NonNullable<NativeHistory['responseDeliveries']>>
   messageSubmitted?: (correlationId: string) => Promise<boolean>
-  /** A paired Worker reports its session before the first input, so it chooses the new session's ID up front. */
-  newSessionId?: string
 }
 
 export interface CallbackWaiter {

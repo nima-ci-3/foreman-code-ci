@@ -8,7 +8,7 @@ import {
 import { PageNotFound } from '../shared/ui/PageNotFound'
 import { ComputerSettingsTabs, type ComputerSettingsTab } from '../features/settings'
 import { ApprovalInboxSearchSchema, UrlSearchSelectionSchema, BrowserProfilesSettingsSearchSchema } from '@foreman-code/contracts'
-import { RunsSelectorSearchSchema, knownWorkspaceSearch } from '../features/runs-selector'
+import { RunsSelectorSearchSchema } from '../features/runs-selector'
 import { RootShell } from './RootShell'
 import { ComputersSettingsSearchSchema, AgentSettingsSearchSchema, BugsSettingsSearchSchema, SkillSettingsSearchSchema } from '@foreman-code/contracts/management'
 import { AppearanceSettingsRouteEntry, BugsSettingsRouteEntry, GeneralSettingsRouteEntry, NewSkillRouteEntry, SkillDetailRouteEntry, SkillsSettingsRouteEntry, SystemPromptSettingsRouteEntry, WorkspaceDefaultsSettingsRouteEntry } from '../routes/SettingsExperienceRoutes'
@@ -54,7 +54,7 @@ const workspacesRoute = createRoute({
 const workspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/workspaces/$workspaceId',
-  validateSearch: (search: Record<string, unknown>) => RunsSelectorSearchSchema.parse(knownWorkspaceSearch(search)),
+  validateSearch: RunsSelectorSearchSchema,
   component: WorkspaceRouteEntry,
 })
 

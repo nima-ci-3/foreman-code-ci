@@ -2,9 +2,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readInstalledRelease } from './installation.mjs';
 import { readInstalledBrowserRuntime, readBrowserRuntimeStatus, writeBrowserRuntimeStatus,
-  stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime } from './browserRuntimeInstall.mjs';
+  stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
 
-const digest = /^[a-f0-9]{64}$/;
 const importHost = path => import(pathToFileURL(path).href);
 
 function unavailable(message, cause) {
@@ -14,8 +13,7 @@ function unavailable(message, cause) {
 }
 
 function approveRuntime(release, runtime) {
-  const approved = release?.manifest?.browserRuntime?.manifestSha256;
-  if (!digest.test(approved ?? '') || approved !== runtime.manifestSha256) {
+  if (!browserRuntimeMatchesRelease(release?.manifest, runtime)) {
     throw unavailable('The managed browser runtime does not match the selected Worker release.');
   }
 }
@@ -106,7 +104,7 @@ export function createWorkerBrowserRuntime(options) {
     try {
       const staged = await stageBundledBrowserRuntime({ root, artifact: release.directory, manifest: release.manifest,
         target: facts, readiness: options.browserRuntimeReadiness });
-      if (!staged) throw unavailable('This release needs a verified browser artifact from a matching target runner.');
+      if (!staged) throw unavailable('This release has no approved browser runtime recipe.');
       const selected = await readSelectedRelease({ root, facts, expected });
       if (selected.manifestSha256 !== release.manifestSha256 || closed) {
         throw unavailable('The Worker release changed while repairing its browser runtime.');
