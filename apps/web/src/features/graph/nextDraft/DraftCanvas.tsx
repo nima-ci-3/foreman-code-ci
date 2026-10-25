@@ -9,7 +9,7 @@ import { createGraphTopologyProjector } from '../topology'
 import {
   GRAPH_NODE_DEFAULT_SIZE, createGraphGeometryAdapter, type GraphGeometryChange, agentNodeFacts, edgeBend,
   relationshipLines, useFloatingCurve, type GraphNode, type AgentGraphNode, type JobGraphNode, nodeTitle,
-  putRelationship, removeRelationship, setWorkConnectionLimit, useBoardSelection, RunLiveNodes, RunLivePulses, RunLiveCi, withTeamPositionChanges,
+  putRelationship, removeRelationship, setWorkConnectionLimit, useBoardSelection, RunLiveNodes, RunLivePulses, RunLiveCi,
 } from '../../board-core'
 import { CircularNodeResizer } from '../CircularNodeResizer'
 import { useGraphDraftStore } from '../store'
@@ -121,19 +121,13 @@ const TypedEdge = memo(function TypedEdge({ id, source, target, data, selected }
 })
 const DraftJob=memo(function DraftJob({id,data,selected}:NodeProps<JobGraphNode>) {
   const {draftKey,inspect,open,setOpen,selectNode}=useContext(CanvasContext)
-  const presentation = useGraphPresentationStore()
   const entry=useGraphDraftStore(state=>state.nextDrafts[draftKey]?.graph.entryNodeId===id)
   const panel=open?.nodeId===id?open.panel:undefined
   const live = useContext(RunLiveNodes)?.get(id)
   return <AgentNodeView name={data.label} harnessLabel="Job" statusLabel={live?.label ?? 'Saved job'}
     state={live?.state} transition={live?.transition} transitionKey={live?.transitionKey} selected={selected} entry={entry} openPanel={panel}
     ariaLabel={`${data.label}, job, ${live?.label ?? `saved revision ${data.jobDefinitionRevision}`}`}
-    actionPanels={['settings', 'info']}
-    onSelect={(event)=>{event.stopPropagation();selectNode?.(id)}}
-    onAction={next => inspect(() => {
-      presentation.getState().setFocusedNodeId(id); presentation.getState().setFocusedEdgeId(undefined)
-      setOpen(panel === next ? undefined : { nodeId: id, panel: next })
-    })}
+    onSelect={(event)=>{event.stopPropagation();inspect(()=>{selectNode?.(id);setOpen({nodeId:id,panel:'info'})})}}
 ><AgentHandles name={data.label}/></AgentNodeView>
 })
 const nodeTypes = { agent: DraftAgent, job: DraftJob, ciServer: CiServerNode, boardKanban: BoardKanbanNode }
@@ -234,6 +228,37 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
       id: `ci-transfer:${nodeId}`, type: 'ciTransfer' as const, source: nodeId, target: CI_SERVER_NODE_ID,
       sourceHandle: 'right', targetHandle: 'left', selectable: false, focusable: false, deletable: false, data: { pulses } })) : [])],
   [edges, kanban.edges, ci.node, transfers, nodes])
+  const roleOf = (nodeId: string) => {
+    const node = graph.nodes.find(item => item.id === nodeId)
+    return node && node.kind !== 'job' ? agents.find(agent => agent.id === node.agentId)?.productRole : undefined
+  }
+  // Who moves along: the members reporting to a node; without a Master, Workers connected to an Orchestrator.
+  const followersOf = (parent: string): string[] => graph.hierarchy
+    ? graph.hierarchy.parents.filter(member => member.parentNodeId === parent).map(member => member.workflowNodeId)
+    : roleOf(parent) !== 'orchestrator' ? [] : graph.edges.filter(edge => edge.kind === 'execution' && (edge.source === parent || edge.target === parent))
+      .map(edge => edge.source === parent ? edge.target : edge.source).filter(id => roleOf(id) === 'coder')
+  /** Moving an Orchestrator (or the Master) moves its team by the same distance, in the same gesture. */
+  const withFollowers = (changes: NodeChange<GraphNode>[]): NodeChange<GraphNode>[] => {
+    const moving = new Set(changes.flatMap(change => change.type === 'position' ? [change.id] : []))
+    const extra: NodeChange<GraphNode>[] = []
+    for (const change of changes) {
+      if (change.type !== 'position') continue
+      const leader = nodes.find(node => node.id === change.id)
+      if (!leader) continue
+      const delta = change.position ? { x: change.position.x - leader.position.x, y: change.position.y - leader.position.y } : undefined
+      const pending = followersOf(change.id), seen = new Set<string>()
+      while (pending.length) {
+        const id = pending.pop()!
+        if (seen.has(id) || moving.has(id)) continue
+        seen.add(id); pending.push(...followersOf(id))
+        const follower = nodes.find(node => node.id === id)
+        if (!follower) continue
+        extra.push({ type: 'position', id, ...(change.dragging === undefined ? {} : { dragging: change.dragging }),
+          ...(delta ? { position: { x: follower.position.x + delta.x, y: follower.position.y + delta.y } } : {}) })
+      }
+    }
+    return extra.length ? [...changes, ...extra] : changes
+  }
   const onNodesChange = (allChanges: NodeChange<GraphNode | CiServerFlowNode | KanbanFlowNode>[]) => {
     kanban.applyChanges(allChanges)
     ci.place.applyChanges(allChanges)
@@ -244,7 +269,7 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
       if (item.selected) nextSelection.add(item.id); else nextSelection.delete(item.id)
     }
     presentation.getState().setSelectedNodeIds(nextSelection)
-    const result = adapter.update(withTeamPositionChanges(changes, graph, agents, nodes))
+    const result = adapter.update(withFollowers(changes))
     setNodes(result.nodes); pending(result.pending)
     if (result.finished) flush()
   }

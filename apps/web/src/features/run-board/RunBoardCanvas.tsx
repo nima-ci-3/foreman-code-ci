@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, type EdgeProps, type NodeChange, type NodeProps } from '@xyflow/react'
@@ -147,6 +147,10 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
       connect(picked, nodeId); setPicked(undefined)
     } else setPicked(picked === nodeId ? undefined : nodeId)
   }
+  const pickNode = (event: MouseEvent, node: SavedBoardNode | CiServerFlowNode | KanbanFlowNode) => {
+    if (event.target instanceof Element && event.target.closest('button')) return
+    if (node.type === 'savedBoardNode') node.data.pick?.()
+  }
   const docked = board?.sidePanel?.kind === 'agent' ? board.sidePanel : undefined
   const shownPanel = docked ? { nodeId: docked.nodeId, panel: docked.tab === 'details' ? 'info' as const : docked.tab } : undefined
   const actRef = useRef<(nodeId: string, panel: AgentPanel) => void>(undefined)
@@ -241,6 +245,9 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
           }
         }} fitView={fitOnMount} defaultViewport={defaultViewport} fitViewOptions={fitViewOptions} minZoom={RESPONSIVE_MIN_ZOOM} maxZoom={1.6}
         onInit={onInit} onMove={onMove} onMoveEnd={onMoveEnd} onPaneClick={() => setPicked(undefined)}
+        // Without a node click handler React Flow turns off pointer events on read-only nodes; on the Board a click
+        // anywhere on an Agent selects it, as on the draft.
+        {...(board?.selectSidePanel ? { onNodeClick: pickNode } : {})}
         proOptions={proOptions} aria-label="Saved Run graph"
         ariaLabelConfig={{ 'node.a11yDescription.default': 'Saved agent, read only.', 'edge.a11yDescription.default': 'Saved connection, read only.' }}>
         <RunSubagentsOverlay scope={snapshot} nodes={snapshot.nodes} visible={visible} />
