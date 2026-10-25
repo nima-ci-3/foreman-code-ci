@@ -9,7 +9,7 @@ import { PostgresApprovalBudgetRepository } from '../src/modules/interactions/bu
 import { RespondToInteractionResponseSchema, WorkDirectionRequestSchema } from '@foreman-code/contracts'
 import { workDirectionInteractionId } from '../src/modules/runs/workDirectionInteraction.js'
 import {
-  useSettlementFixtures, timeout, handoffs, seedDirectionWait, directionApi, finish,
+  useSettlementFixtures, timeout, handoffs, seedDirectionWait, directionApi,
 } from './helpers/workflowSettlementTestSupport.js'
 import { postgresEnabled } from './helpers/database.js'
 import { readAffectedGraphRuns } from '../src/modules/graph-drafts/saveAdmission.js'
@@ -136,7 +136,8 @@ describe.skipIf(!postgresEnabled)('workflow settlement direction', () => {
     await withFixture((graph) => ({ ...handoffs(1)(graph), approval: { handler: 'native' },
       executionPolicy: { maxParallelism: 1, maxNodeExecutions: 1 },
     }), async (f) => {
-      await seedDirectionWait(f, finish())
+      await seedDirectionWait(f, { outcome: 'succeeded', output: { routing: { kind: 'finish' },
+        data: { latestDeliverable: { revision: 1 }, remainingFindings: ['Review is incomplete'] } } })
       const api = await directionApi(f)
       try {
         const interaction = await api.repository.get(workDirectionInteractionId(f.run.id))
