@@ -46,9 +46,9 @@ function folderChoices(choices: NodePlacementChoice[]): NodePlacementChoice[] {
 
 function matchesConfiguration(profile: HostHarnessOverride, configuration: AgentConfigurationVersion): boolean {
   const requested = configuration.harnessProfileSelection
-  if (requested && (profile.instanceId !== requested.instanceId
+  // A saved profile pins the Agent's profile on its own computer; other computers match by configuration.
+  if (requested && sameWorkflowValue(profile.target.hostRef, requested.target.hostRef) && (profile.instanceId !== requested.instanceId
     || profile.instanceRevision !== requested.instanceRevision
-    || !sameWorkflowValue(profile.target.hostRef, requested.target.hostRef)
     || profile.target.applicationInstallationId !== requested.target.applicationInstallationId)) {
     return false
   }
@@ -196,8 +196,7 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
     const results = new Map<string, ComputerAvailability>()
     const harnessInstances = services.harnessInstances
     const driver = configuration.harness.harness
-    if (!harnessInstances || (driver !== 'codex' && driver !== 'claude') || configuration.harnessProfileSelection
-      || !isAuthorized(principal, 'harnesses:update')) return results
+    if (!harnessInstances || (driver !== 'codex' && driver !== 'claude') || !isAuthorized(principal, 'harnesses:update')) return results
     const roots = [...policies ? policies.map(policy => ({ selection: { hostRef: policy.hostRef },
       binding: { workerInstallationId: policy.registration?.workerInstallationId ?? null } }))
       : await withTransaction(this.pool, sql => this.sourceRoots(sql, workspaceId)),
@@ -206,7 +205,8 @@ export class ProductionPlacementChoiceDiscovery implements PlacementChoiceDiscov
     for (const root of roots) {
       const host = root.selection.hostRef
       const key = commandInputHash(host)
-      if (host.kind !== 'device' || results.has(key) || services.computerOnline && !services.computerOnline(host)) continue
+      if (host.kind !== 'device' || results.has(key) || services.computerOnline && !services.computerOnline(host)
+        || configuration.harnessProfileSelection && sameWorkflowValue(configuration.harnessProfileSelection.target.hostRef, host)) continue
       const installation = services.registry.installations.list().find(value => value.installed
         && value.driverId === driver && value.installationFingerprint && sameWorkflowValue(value.hostRef, host))
       const applicationInstallationId = root.binding.workerInstallationId
