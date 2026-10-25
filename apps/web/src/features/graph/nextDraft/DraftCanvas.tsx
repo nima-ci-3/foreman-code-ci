@@ -1,6 +1,6 @@
 import { useHoverControls } from '../../../shared/ui/useHoverControls'
 import type { JobWorkflowAdmissionReference } from '@foreman-code/contracts/job-workflow'
-import { createContext, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Background, ConnectionMode, ReactFlow, type Edge, type EdgeProps, type NodeChange, type NodeProps } from '@xyflow/react'
 import { WorkflowRelationshipSchema, type WorkflowDefinitionCurrent, type WorkflowRelationship } from '@foreman-code/contracts/current'
 import { isHierarchyReportingRoute, type Agent } from '@foreman-code/contracts'
@@ -135,7 +135,7 @@ const edgeTypes = { typed: TypedEdge, ciTransfer: CiTransferEdge, kanbanActivity
 const noNames: ReadonlyMap<string, string> = new Map()
 const fitViewOptions = RESPONSIVE_FIT_OPTIONS
 const proOptions = { hideAttribution: true }
-export type DraftCanvasHandle = { flush(): void; cancel(): void }
+export type DraftCanvasHandle = { flush(): void; cancel(): void; connect(source: string, target: string): void }
 
 export const DraftCanvas = forwardRef<DraftCanvasHandle, {
   draftKey: string; graph: WorkflowDefinitionCurrent; agents: readonly Agent[]; kind: WorkflowRelationship['kind']
@@ -185,6 +185,8 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
     setConnecting(false)
   }
   const beginResize = () => {
+    // A resize is an action on the agent, not a selection to connect from.
+    picked.current = undefined
     prepareResize()
     adapter.beginResize()
   }
@@ -192,7 +194,7 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
     setNodes(adapter.finishResize(id, width, height, position))
     flush()
   }
-  useImperativeHandle(ref, () => ({ flush, cancel: () => { setNodes(adapter.cancel()); pending(false) } }))
+  useImperativeHandle(ref, () => ({ flush, cancel: () => { setNodes(adapter.cancel()); pending(false) }, connect: (source, target) => connectNodes(source, target) }))
   const edges = useMemo<DraftEdge[]>(() => {
     const counts = new Map<string, number>()
     // One line per agent pair: an approval beside a handoff is drawn on the handoff's line.
@@ -289,7 +291,18 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
     }) }
     catch (error) { report(error) }
   }
+  // Only plain selections connect: opening an agent's chat or settings starts over.
+  const picked = useRef<string>(undefined)
   const selectNode = (nodeId: string) => inspect(() => {
+    // Selecting one agent and then another connects them, as drawing a line between them does.
+    const previous = picked.current
+    picked.current = nodeId
+    if (previous && previous !== nodeId && previous === presentation.getState().focusedNodeId && !semanticLocked
+      && [previous, nodeId].every(id => graph.nodes.some(node => node.id === id && node.kind !== 'job'))) {
+      connectNodes(previous, nodeId); picked.current = undefined
+      presentation.getState().setFocusedNodeId(undefined); presentation.getState().setSelectedNodeIds(new Set())
+      return
+    }
     presentation.getState().setFocusedNodeId(nodeId)
     presentation.getState().setSelectedNodeIds(new Set([nodeId]))
     presentation.getState().setFocusedEdgeId(undefined)
@@ -304,6 +317,7 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
   }
   const selectSidePanel = board?.selectSidePanel
   const openChat = useCallback((nodeId: string) => {
+    picked.current = undefined
     selectSidePanel?.({ kind: 'agent', nodeId, tab: 'chat' })
   }, [selectSidePanel])
   // Other code asks for a node's chat through the single open-panel state; chat opens in the Board side panel.
@@ -311,6 +325,7 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
   const docked = board?.sidePanel?.kind === 'agent' ? board.sidePanel : undefined
   const shown = docked ? { nodeId: docked.nodeId, panel: docked.tab === 'details' ? 'info' as const : docked.tab } : undefined
   const setPanel = (next?: OpenAgentPanel) => {
+    picked.current = undefined
     if (board?.selectSidePanel) board.selectSidePanel(next
       ? { kind: 'agent', nodeId: next.nodeId, tab: next.panel === 'info' ? 'details' : next.panel } : { kind: 'none' })
     else setOpen(next)
@@ -335,7 +350,7 @@ export const DraftCanvas = forwardRef<DraftCanvasHandle, {
           if (event.target instanceof Element && event.target.closest('.react-flow__handle')) return
           if (node.type !== 'ciServer' && node.type !== 'boardKanban') selectNode(node.id)
         }}
-        onPaneClick={() => inspect(() => { setOpen(undefined); presentation.getState().setFocusedNodeId(undefined); presentation.getState().setFocusedEdgeId(undefined) })}
+        onPaneClick={() => inspect(() => { picked.current = undefined; setOpen(undefined); presentation.getState().setFocusedNodeId(undefined); presentation.getState().setFocusedEdgeId(undefined) })}
         onConnect={(connection) => {
           connectNodes(connection.source, connection.target)
         }}>
