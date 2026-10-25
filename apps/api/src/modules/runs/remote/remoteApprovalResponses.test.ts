@@ -238,6 +238,24 @@ it('delivers the second concurrent approval to its own callback and leaves the f
   expect(delivered).toEqual(['second'])
 })
 
+it('delivers a response to a pending question that Claude names by its input message', async () => {
+  const f = await pendingApprovals()
+  const status = await f.journal.status(f.intent.operationId)
+  if (status.status !== 'known') throw new Error('Missing native receipt')
+  // The journal recorded the acknowledged input message ID as the turn, as it does for Claude.
+  f.pending.splice(0, 2, ...f.pending.map(pending => ({ ...pending,
+    turn: { nativeMessageId: 'native-turn', nativeRequestId: pending.turn.nativeRequestId! } })))
+  const delivered: string[] = []
+  f.manager.respond = async (_session, requestId) => { delivered.push(requestId) }
+  const command = RemoteOwnerControlSchema.parse({ schemaVersion: 1, protocolVersion: 1,
+    commandId: 'message-response', operationId: f.intent.operationId, attemptId: f.intent.attemptId,
+    executionId: f.intent.executionId, bindingHash: f.intent.bindingHash, owner: f.intent.owner,
+    native: status.receipt.native, action: { kind: 'respond', interactionId: 'first-interaction',
+      interactionRevision: '1', nativeInteractionId: 'first', response: f.pending[0]!.responseOptions[0] },
+  })
+  await f.host.handle({ method: 'control', intent: f.intent, placement: f.placement, command })
+  expect(delivered).toEqual(['first'])
+})
 
 it('rejects remote inspection for a stale session or revoked caller', async () => {
   const f = await pendingApprovals()

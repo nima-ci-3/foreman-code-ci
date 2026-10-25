@@ -34,20 +34,26 @@ export async function expireCloudDispatch(context: CiContext, endpoint: HostCiEn
   run: CiRunRecord, observed?: CiHostRun): Promise<CiRunSettlement | null> {
   if (observed?.mirrorPublication?.state === 'pending') return observed
   const at = cloudDispatchStartedAt(run, observed)
-  if ((observed?.state ?? run.state) !== 'starting'
-    || Date.now() - at < CLOUD_START_TIMEOUT_MS * CI_START_MAX_ATTEMPTS) return observed ?? null
-  try {
-    const reply = CiHostReplySchema.parse(await requestCloud(endpoint, computer,
-      { operation: 'cancel', runId: ciExecutionRunId(run) }))
-    if (reply.operation !== 'cancel' || reply.run.runId !== ciExecutionRunId(run)
-      || ['queued', 'starting', 'running'].includes(reply.run.state)) {
-      throw new DomainError('CI_CLOUD_CLEANUP_PENDING', 'Cloud cancellation was not confirmed; ownership retained.', 503)
+  // An expiry cancellation can finish after the request that asked for it. With no cancellation on the ticket,
+  // a canceled cloud run of a still-starting ticket is that expiry, so the ticket starts elsewhere.
+  const expiryCanceled = run.state === 'starting' && !run.cancellation && observed?.state === 'canceled'
+    && !observed.executorCleanupPending
+  if (!expiryCanceled && ((observed?.state ?? run.state) !== 'starting'
+    || Date.now() - at < CLOUD_START_TIMEOUT_MS * CI_START_MAX_ATTEMPTS)) return observed ?? null
+  if (!expiryCanceled) {
+    try {
+      const reply = CiHostReplySchema.parse(await requestCloud(endpoint, computer,
+        { operation: 'cancel', runId: ciExecutionRunId(run) }))
+      if (reply.operation !== 'cancel' || reply.run.runId !== ciExecutionRunId(run)
+        || ['queued', 'starting', 'running'].includes(reply.run.state)) {
+        throw new DomainError('CI_CLOUD_CLEANUP_PENDING', 'Cloud cancellation was not confirmed; ownership retained.', 503)
+      }
+      if (reply.run.state !== 'canceled' || reply.run.executorCleanupPending) return reply.run
+    } catch (error) {
+      context.log.warn({ runId: run.id }, 'Expired cloud dispatch cleanup remains pending; ownership retained')
+      if (error instanceof DomainError && error.code === 'CI_CLOUD_CLEANUP_PENDING') throw error
+      throw new DomainError('CI_CLOUD_CLEANUP_PENDING', 'Cloud cancellation failed; ownership retained.', 503, undefined, { cause: error })
     }
-    if (reply.run.state !== 'canceled' || reply.run.executorCleanupPending) return reply.run
-  } catch (error) {
-    context.log.warn({ runId: run.id }, 'Expired cloud dispatch cleanup remains pending; ownership retained')
-    if (error instanceof DomainError && error.code === 'CI_CLOUD_CLEANUP_PENDING') throw error
-    throw new DomainError('CI_CLOUD_CLEANUP_PENDING', 'Cloud cancellation failed; ownership retained.', 503, undefined, { cause: error })
   }
   const reason = observed?.message ?? run.message
   return unstarted(run, 'queued', ['Cloud dispatch created no workflow after recovery attempts; queued for another computer.',
