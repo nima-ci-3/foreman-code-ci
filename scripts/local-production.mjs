@@ -21,7 +21,7 @@ import {
   launchProduction, launchBrowser, parseRunWaitMinutes, readReleaseSelection,
   needsStartupConfiguration, recordStartupConfiguration, withProductionSourceSnapshot, buildProductionSource,
   readPendingMigrations, runReleaseCutover, recoverReleaseCutover,
-  measureProductionStep, installProductionDependencies,
+  measureProductionStep, installProductionDependencies, checkProductionService,
   stageProductionBrowserRuntime, productionBrowserRuntimeLifecycle,
 } from './local-production-runtime.mjs'
 
@@ -191,7 +191,7 @@ async function waitForReady({ timeoutMs = 90_000, selectedRelease, ...checks } =
   if (!environment) throw new Error('Production configuration is missing.')
   const release = selectedRelease ?? await realpath(current)
   const expected = await readProductionIdentity(release, environment.DATABASE_URL)
-  await waitForProductionReady({ origin, expected, timeoutMs, ...checks })
+  await waitForProductionReady({ origin, expected, timeoutMs, checkService: checkProductionService, ...checks })
 }
 
 async function runAuthenticatedCiSmoke(release, environment) {

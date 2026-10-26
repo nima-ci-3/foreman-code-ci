@@ -899,14 +899,22 @@ export async function readProductionIdentity(release, databaseUrl) {
 export async function waitForProductionReady(options) {
   try {
     const controller = new AbortController()
-    const start = Promise.resolve().then(() => options.start?.()).catch(error => {
+    const timeoutMs = options.timeoutMs ?? 90_000
+    // systemctl has its own start-job timeout. Its ExecStartPost health check must not consume
+    // the installer's readiness window before the API even listens.
+    const startup = { deadline: options.start ? Infinity : Date.now() + timeoutMs }
+    const start = Promise.resolve().then(() => options.start?.()).then(() => {
+      if (options.start) startup.deadline = Date.now() + timeoutMs
+    }).catch(error => {
       controller.abort(error)
       throw error
     })
     // systemctl's start job also checks health; polling concurrently avoids a second serialized readiness wait.
-    const results = await Promise.allSettled([start, pollProductionReady({ ...options, signal: controller.signal })])
+    // Settle the start job before rollback so its saved cutover phase cannot race recovery.
+    const results = await Promise.allSettled([start, pollProductionReady({ ...options, startup, signal: controller.signal })])
     const failed = results.find(result => result.status === 'rejected')
     if (failed) throw failed.reason
+    await options.checkService?.()
     await options.smoke?.()
   } catch (error) {
     try { await options.rollback?.(error) }
@@ -915,34 +923,62 @@ export async function waitForProductionReady(options) {
   }
 }
 
-async function pollProductionReady({ origin, expected, timeoutMs = 90_000, signal }) {
-  const deadline = Date.now() + timeoutMs
-  let failure = 'API has not responded.'
-  const identityMatches = async () => {
-    const response = await fetch(`${origin}/health/identity`, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) })
-    const actual = await response.json()
-    return response.ok && ['installationId', 'databaseId', 'checkoutId'].every(key => actual[key] === expected[key])
+export async function checkProductionService(run = promisify(execFile)) {
+  const { stdout } = await run('/usr/bin/systemctl', ['--user', 'show',
+    '--property=ActiveState', '--property=SubState', INSTALLATION_NAMES.services.api], { timeout: 5000 })
+  const state = Object.fromEntries(stdout.trim().split('\n').map(line => line.split('=')))
+  if (['failed', 'inactive', 'deactivating'].includes(state.ActiveState) || state.SubState === 'auto-restart') {
+    throw new Error(`Production API unit failed/exited (${state.ActiveState}/${state.SubState}). `
+      + 'Inspect journalctl --user -u graphql-operator-api.service.')
   }
-  while (Date.now() < deadline) {
+}
+
+async function pollProductionReady({ origin, expected, timeoutMs = 90_000, signal, startup, checkService, log = console.warn }) {
+  let failure = 'API has not responded.'
+  let cause
+  let warned = false
+  const request = path => fetch(`${origin}${path}`, { signal: AbortSignal.any([signal,
+    AbortSignal.timeout(Math.min(2000, Math.max(1, startup.deadline - Date.now())))]) })
+  const assertIdentity = async () => {
+    const response = await request('/health/identity')
+    const actual = await response.json()
+    if (!response.ok || !['installationId', 'databaseId', 'checkoutId'].every(key => actual[key] === expected[key])) {
+      throw new Error('Port 3041 is serving a different database installation or release.')
+    }
+  }
+  while (Date.now() < startup.deadline) {
     signal.throwIfAborted()
+    // Before start settles the unit may legitimately still be inactive. Its failed start aborts this poll.
+    if (Number.isFinite(startup.deadline)) await checkService?.()
     try {
-      if (!await identityMatches()) {
-        throw new Error('Port 3041 is serving a different database installation or release.')
-      }
-      const response = await fetch(`${origin}/health/ready`, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) })
+      await assertIdentity()
+      const response = await request('/health/ready')
       const health = await response.json()
       if (response.ok && health.service === INSTALLATION_NAMES.protocol.apiService && health.checks?.database === 'ok'
         && health.checks?.checkpoints === 'ok') {
-        const web = await fetch(`${origin}/workspaces`, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) })
-        if (web.ok && (await web.text()).includes('/assets/') && await identityMatches()) return
+        const web = await request('/workspaces')
+        if (web.ok && (await web.text()).includes('/assets/')) {
+          await assertIdentity()
+          return
+        }
         failure = 'The compiled dashboard is unavailable.'
       } else failure = `Readiness returned HTTP ${response.status}.`
     } catch (error) {
-      failure = error.message
+      signal.throwIfAborted()
+      const code = error.cause?.code ?? error.code
+      if (error.name !== 'TimeoutError' && !['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_SOCKET',
+        'UND_ERR_CONNECT_TIMEOUT'].includes(code) && !['fetch failed', 'socket hang up'].includes(error.message)) throw error
+      failure = code ? `${error.message} (${code})` : error.message
+      cause = error
+      if (!warned) {
+        log(`Production readiness request failed (${failure}); retrying until the readiness deadline.`)
+        warned = true
+      }
     }
-    await delay(Math.min(500, Math.max(0, deadline - Date.now())), undefined, { signal })
+    await delay(Math.min(500, Math.max(0, startup.deadline - Date.now())), undefined, { signal })
   }
-  throw new Error(`${failure} Inspect journalctl --user -u graphql-operator-api.service.`)
+  throw new Error(`Production readiness timed out after ${timeoutMs} ms: ${failure} `
+    + 'Inspect journalctl --user -u graphql-operator-api.service.', { cause })
 }
 
 export async function copyVerificationRuntime(source, release) {
