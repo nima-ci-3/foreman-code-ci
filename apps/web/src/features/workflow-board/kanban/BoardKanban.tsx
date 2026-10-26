@@ -5,7 +5,7 @@ import { Button, Icon } from '../../../shared/ui/nocturne'
 import '../dock/boardDock.css'
 import { useManagedWorkflowQuery } from '../../../shared/api/query'
 import {
-  MemoryCard, createMemoryBoardClient, mergedMemoryItems, useMemoryBoard, useMemoryCards, errorMessage,
+  MemoryCardList, createMemoryBoardClient, useMemoryBoard, useMemoryCards, errorMessage,
   statusLabels, type MemoryBoardView, type MemoryChange, type MemoryNodeOption,
 } from '../../memory-boards'
 import { PulseFlight, type EdgePulse } from '../../graph/SignalEdgeShape'
@@ -93,21 +93,18 @@ function KanbanColumn({ view, status, nodes, activity, onOpen, onFailure, notice
   onFailure(status: Card['status'], retry?: () => void): void; notice: ReactNode
 }) {
   const query = useMemoryCards(client, view, { status }, true)
-  const cards = mergedMemoryItems(query.data?.pages)
   const restart = query.restart
   useEffect(() => { onFailure(status, query.isError ? () => void restart() : undefined) }, [query.isError, restart, onFailure, status])
   return <section className="board-kanban-column" data-status={status} aria-label={statusLabels[status]}>
     <h3>{statusLabels[status]} <small>{view.counts[status]}</small></h3>
     {notice}
-    {cards.map((card) => {
+    <MemoryCardList query={query} status={status} nodes={nodes} onOpen={onOpen} compact decorate={(card, rendered) => {
       const changed = activity.get(card.id)
       return <div key={card.id} className="board-kanban-card" data-card-id={card.id} data-updated={changed ? '' : undefined}>
-        <MemoryCard card={card} nodes={nodes} onOpen={() => onOpen(card.id)} />
+        {rendered}
         {changed ? <p className="board-kanban-updated" role="status">Updated by {changed.agent}</p> : null}
       </div>
-    })}
-    {query.hasNextPage ? <Button size="sm" variant="ghost" loading={query.isFetchingNextPage} loadingLabel="Loading cards…"
-      onClick={() => void query.fetchNextPage()}>Load more {statusLabels[status]}</Button> : null}
+    }} />
   </section>
 }
 

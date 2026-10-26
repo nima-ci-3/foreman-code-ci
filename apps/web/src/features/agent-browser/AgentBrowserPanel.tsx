@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button, Icon, IconButton, TextField } from '../../shared/ui/nocturne'
+import { Button, Icon, IconButton, TabList, TextField } from '../../shared/ui/nocturne'
 import { useOutsidePress } from '../../shared/ui/useOutsidePress'
 import { BrowserController } from './controller'
 import { BrowserViewer } from './BrowserViewer'
@@ -172,6 +172,7 @@ export function BrowserSessionPanel(props: BrowserSessionPanelProps) {
   const controller = view.current.controller
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
   const surface = useRef<HTMLDivElement>(null)
+  const tabIds = useId()
   const retiringForTab = useRef(false)
   const effectVisit = useRef(0)
   const mounted = useRef(false)
@@ -260,24 +261,23 @@ export function BrowserSessionPanel(props: BrowserSessionPanelProps) {
   const busy = pending || snapshot.stale
   return <div ref={surface} className="agent-browser-content">
     {/* Chrome-like tab strip: choosing a tab takes control; nothing else sits above the page. */}
-    <div className="agent-browser-tabs" role="tablist" aria-label="Browser tabs">{props.initial.tabs.map(tab =>
-      <div key={tab.tabId} className="agent-browser-tab" data-selected={tab.tabId === props.tab.tabId || undefined}>
-        <button type="button" role="tab" aria-selected={tab.tabId === props.tab.tabId} disabled={pending}
-          title={tabLabel(tab)} onClick={() => {
-            if (props.readOnly) {
-              if (tab.tabId !== props.tab.tabId) { retiringForTab.current = true; props.onSelectTab(tab.tabId) }
-              return
-            }
-            if (tab.tabId === props.tab.tabId) { void controller.acquire().catch(failure => setError(browserErrorMessage(failure))); return }
-            mutate((epoch, commandId) => props.port.selectTab(props.initial.session, tab.tabId, props.viewerId, epoch, commandId), tab.tabId)
-          }}>{tabLabel(tab)}</button>
-        {!props.readOnly ? <IconButton label={`Close ${tab.title || 'tab'}`} variant="ghost" size="sm" disabled={busy}
+    <TabList label="Browser tabs" className="agent-browser-tabs" itemClassName="agent-browser-tab" value={props.tab.tabId} activation="manual"
+      tabId={value => `${tabIds}-${value}`} onSelect={tabId => {
+        if (props.readOnly) {
+          if (tabId !== props.tab.tabId) { retiringForTab.current = true; props.onSelectTab(tabId) }
+          return
+        }
+        if (tabId === props.tab.tabId) { void controller.acquire().catch(failure => setError(browserErrorMessage(failure))); return }
+        mutate((epoch, commandId) => props.port.selectTab(props.initial.session, tabId, props.viewerId, epoch, commandId), tabId)
+      }}
+      items={props.initial.tabs.map(tab => ({ value: tab.tabId, label: tabLabel(tab), title: tabLabel(tab), disabled: pending,
+        // A tab always sits in its wrapper, read-only or not, so the strip keeps one layout.
+        action: !props.readOnly ? <IconButton label={`Close ${tab.title || 'tab'}`} variant="ghost" size="sm" disabled={busy}
           onClick={() => { mutate((epoch, commandId) => props.port.closeTab(props.initial.session, tab.tabId, props.viewerId, epoch, commandId)) }}>
-          <Icon name="close" size={12} /></IconButton> : null}
-      </div>)}
+          <Icon name="close" size={12} /></IconButton> : null }))}>
       {!props.readOnly ? <IconButton label="New tab" variant="ghost" size="sm" disabled={busy} onClick={() => { mutate((epoch, commandId) =>
         props.port.createTab(props.initial.session, props.viewerId, epoch, commandId), undefined, true) }}><Icon name="plus" size={14} /></IconButton> : null}
-    </div>
+    </TabList>
     {!props.readOnly ? <form className="agent-browser-address" onSubmit={event => {
       event.preventDefault()
       const target = addressUrl(url)

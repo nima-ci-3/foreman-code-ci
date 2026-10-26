@@ -175,7 +175,8 @@ async function fixture() {
     return starts.find(start => start.runId === ticketId)?.files ?? null
   }
   const cachedRows = async () => (await pool.query<{ file: string; ticket_id: string }>(
-    'select file,ticket_id from ci_test_result_cache where workspace_id=$1 order by file', [workspaceId])).rows
+    // A pass is stored under its full key and its runner-free key; each file and proving ticket counts once.
+    'select distinct file,ticket_id from ci_test_result_cache where workspace_id=$1 order by file', [workspaceId])).rows
   return { workspaceId, connect, call, request, requestSelected, selections, fullSelection, read, complete, sent, starts, outcomes, cachedRows, close: async () => {
     await Promise.all(clients.map(client => client.close()))
     await ci.close()
@@ -213,7 +214,7 @@ it('skips unchanged passed files in a later affected run and reports the run tha
   } finally { await f.close() }
 })
 
-it('runs a file again when a transitive import, the lockfile or the runner scripts change', async () => {
+it('runs a file again when a transitive import or an unparsed lockfile changes, and a canary when the runner scripts change', async () => {
   const f = await fixture()
   try {
     const first = await f.request('1', [LABEL, PLAIN])
@@ -226,11 +227,17 @@ it('runs a file again when a transitive import, the lockfile or the runner scrip
     expect(notice).toContain(PLAIN)
     expect(notice).toContain(first.ticketId)
 
-    for (const changed of ['4', '5']) {
-      const run = await f.request(changed, [LABEL, PLAIN])
-      expect(run.cachedFiles, `commit ${changed}`).toBeUndefined()
-      expect(await f.sent(run.ticketId), `commit ${changed}`).toEqual([LABEL, PLAIN])
-    }
+    // A lockfile with no importers cannot be split per package, so it still covers every test.
+    const locked = await f.request('4', [LABEL, PLAIN])
+    expect(locked.cachedFiles).toBeUndefined()
+    expect(await f.sent(locked.ticketId)).toEqual([LABEL, PLAIN])
+
+    // Only the runner changed: one file of the part reruns to prove it, the other stays proven.
+    const runner = await f.request('5', [LABEL, PLAIN])
+    expect(runner.cachedFiles).toHaveLength(1)
+    const canaries = await f.sent(runner.ticketId)
+    expect(canaries).toHaveLength(1)
+    expect([...canaries!, runner.cachedFiles![0]!.file].sort()).toEqual([LABEL, PLAIN].sort())
   } finally { await f.close() }
 })
 
