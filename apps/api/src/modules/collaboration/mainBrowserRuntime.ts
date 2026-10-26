@@ -12,11 +12,14 @@ interface Installer {
   readInstalledBrowserRuntime(input: { runtimeRoot: string; target: unknown }): Promise<Descriptor>
   activateBrowserRuntime(input: { runtimeRoot: string; staged: Descriptor; drain: () => Promise<unknown> }): Promise<unknown>
   offlineBrowserRuntimeLifecycle(input: { nativeHostModule: string; profileStateRoot: string }): Promise<{ drain(): Promise<unknown> }>
+  probeBrowserRuntime(descriptor: Descriptor, options: { signal: AbortSignal; releaseDirectory: string }): Promise<{ ready: boolean; reason: string | null }>
+  provisionBrowserVirtualDisplay(): Promise<string | null>
 }
 
 /** Reading status never installs or starts Chromium; only explicit application startup opens its verified host. */
 export class MainBrowserRuntime {
   private host: Host | undefined
+  private installation: Descriptor | undefined
   private opening: Promise<void> | undefined
   private failure: string | null = 'Browser runtime is not installed.'
   private closed = false
@@ -61,15 +64,20 @@ export class MainBrowserRuntime {
       await this.options.assertHostOwnership()
       if (this.closed) return
       this.host = await native.createBrowserHost({ ...this.options, runtime: descriptor })
+      this.installation = descriptor
       this.failure = null
     } catch (error) {
-      this.failure = 'The managed browser runtime is missing, incompatible, or unavailable. Repair this computer to retry.'
+      this.failure = error instanceof Error && /Browser sandbox needs the Foreman AppArmor user-namespace profile\./.test(error.message)
+        ? error.message : 'The managed browser runtime is missing, incompatible, or unavailable. Repair this computer to retry.'
       this.options.reportFailure(error)
     }
   }
   async retry() {
     if (this.closed) throw new DomainError('BROWSER_RUNTIME_CLOSED', 'Browser runtime repair is unavailable during shutdown.', 503)
-    if (this.host) return this.status()
+    if (this.host) {
+      await (await this.installer()).provisionBrowserVirtualDisplay()
+      return this.status()
+    }
     if (!this.runtimeRoot) throw new DomainError('BROWSER_RUNTIME_UNAVAILABLE', 'This installation has no managed browser runtime root.', 503)
     await this.options.assertHostOwnership()
     const staging = await import(pathToFileURL(join(this.release, 'scripts/local-production-runtime.mjs')).href)
@@ -81,6 +89,14 @@ export class MainBrowserRuntime {
     await installer.activateBrowserRuntime({ runtimeRoot: this.runtimeRoot, staged, drain: lifecycle.drain })
     await this.start()
     return this.status()
+  }
+  async probe(signal: AbortSignal) {
+    if (!this.host || !this.installation || !this.status().ready) return { ready: false, reason: this.failure ?? 'The browser runtime is not ready.' }
+    const selected = this.installation
+    await this.options.assertHostOwnership()
+    const result = await (await this.installer()).probeBrowserRuntime(selected, { signal, releaseDirectory: this.release })
+    return selected === this.installation && this.status().ready ? result
+      : { ready: false, reason: 'The browser runtime changed during inspection. Retry.' }
   }
   stopAdmission() { this.host?.stopAdmission() }
   async stop() { this.closed = true; await this.opening; await this.host?.close() }

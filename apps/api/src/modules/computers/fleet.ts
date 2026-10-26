@@ -46,6 +46,8 @@ export interface FleetSources {
   workerPublication?(): Promise<WorkerReleasePublication>
   /** Sign-in and Foreman Code MCP facts for one computer, read with the caller's own authority. */
   connections?(principal: ManagementPrincipal, target: DeviceProvisioningTarget): Promise<ComputerConnections>
+  /** Recheck and repair app-managed requirements on this computer. */
+  runRequirementsRepair?(target: DeviceProvisioningTarget): Promise<void>
 }
 
 interface WorkerArtifactIdentities {
@@ -204,7 +206,7 @@ export class FleetMaintenanceService {
     } finally { sql.release() }
     const workerPublication = await this.sources.workerPublication?.()
     return ComputerMaintenanceListSchema.parse({
-      computers: [{ target: input.target, ...await this.observeComputer(input.target, input.refresh === true),
+      computers: [{ target: input.target, ...await this.observeComputer(input.target, input.refresh === true, input.browserProbe === true),
         ...(workerPublication ? { workerPublication } : {}), ...await this.connections(principal, input.target) }],
     })
   }
@@ -244,6 +246,7 @@ export class FleetMaintenanceService {
 
   private async keepCurrentNow(): Promise<void> {
     const targets = await this.allTargets()
+    const requirements = await this.repairRequirements(targets)
     const artifacts = await this.workerArtifacts()
     const sync = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
     await Promise.all(targets.map(async target => {
@@ -259,13 +262,15 @@ export class FleetMaintenanceService {
       }
     }))
     const failures = sync.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
-    if (failures.length) throw new AggregateError(failures, 'Some fleet settings could not be read.')
+    if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
+    if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
   }
 
   private readonly deliveries = new Map<string, {
     fingerprint: string; taskId: string; state: 'pending' | 'failed' | 'delivered'; retryAt: number
   }>()
   private readonly syncing = new Map<string, Promise<void>>()
+  private readonly requirementsRetry = new Map<string, number>()
   private readonly workerUpdates = new Map<string, {
     manifests: string; commandId: string; pending: boolean; retryAt: number
   }>()
@@ -280,7 +285,9 @@ export class FleetMaintenanceService {
 
   private async syncChangedSourcesNow(): Promise<void> {
     const sources = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
-    const targets = (await this.allTargets()).filter(target => target.hostRef.kind !== 'main')
+    const allTargets = await this.allTargets()
+    const requirements = await this.repairRequirements(allTargets)
+    const targets = allTargets.filter(target => target.hostRef.kind !== 'main')
     const artifacts = await this.workerArtifacts()
     await Promise.all(targets.map(async target => {
       const status = await this.status(target, true)
@@ -290,7 +297,25 @@ export class FleetMaintenanceService {
       }))
     }))
     const failures = sources.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
-    if (failures.length) throw new AggregateError(failures, 'Some fleet settings could not be read.')
+    if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
+    if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+  }
+
+  private async repairRequirements(targets: DeviceProvisioningTarget[]): Promise<unknown[]> {
+    if (!this.sources.runRequirementsRepair) return []
+    const repair = this.sources.runRequirementsRepair
+    const results = await Promise.allSettled(targets.map(target => {
+      const key = `${this.key(target)}:requirements`
+      const running = this.syncing.get(key)
+      if (running) return running
+      if (this.closing || this.now() < (this.requirementsRetry.get(key) ?? 0)) return Promise.resolve()
+      this.requirementsRetry.set(key, this.now() + SYNC_RETRY_MS)
+      const task = Promise.resolve().then(() => repair(target)).finally(() => this.syncing.delete(key))
+      this.syncing.set(key, task)
+      return task
+    }))
+    return results.flatMap((result, index) => result.status === 'rejected'
+      ? [new Error(`Requirements repair failed for computer ${targets[index]!.applicationInstallationId}.`, { cause: result.reason })] : [])
   }
 
   private syncWorkerUpdate(target: DeviceProvisioningTarget, status: MaintenanceStatus | null,
@@ -528,8 +553,8 @@ export class FleetMaintenanceService {
     }
   }
 
-  private async observeComputer(target: DeviceProvisioningTarget, refresh: boolean) {
-    const observation = await this.observeStatus(target, refresh)
+  private async observeComputer(target: DeviceProvisioningTarget, refresh: boolean, browserProbe = false) {
+    const observation = await this.observeStatus(target, refresh, browserProbe)
     const endpoint = this.endpoint()
     if (!observation.status || observation.observation.status !== 'available'
       || target.hostRef.kind !== 'device' || !endpoint?.workerBundleReadiness) return observation
@@ -543,17 +568,18 @@ export class FleetMaintenanceService {
     }
   }
 
-  private observeStatus(target: DeviceProvisioningTarget, refresh: boolean): Promise<MaintenanceObservation> {
+  private observeStatus(target: DeviceProvisioningTarget, refresh: boolean, browserProbe = false): Promise<MaintenanceObservation> {
     const key = this.key(target)
     const cached = this.cache.get(key)
     // A running task's progress is read again within seconds; settled status is reused longer.
     const ttl = cached?.running ? RUNNING_CACHE_MS : CACHE_MS
-    if (cached && (cached.pending || (!refresh && cached.observation?.status === 'available'
+    if (!browserProbe && cached && (cached.pending || (!refresh && cached.observation?.status === 'available'
       && this.now() - cached.at < ttl))) return cached.value
     // A bounded shared observation survives one reader canceling so other readers can still use it.
     const read = (async () => {
-      if (target.hostRef.kind === 'main') return this.local.status(AbortSignal.timeout(90_000))
-      const reply = MaintenanceReplySchema.parse((await this.request(target.hostRef.deviceId, { operation: 'status' })).payload)
+      if (target.hostRef.kind === 'main') return this.local.status(AbortSignal.timeout(90_000), browserProbe ? { browserProbe: true } : {})
+      const reply = MaintenanceReplySchema.parse((await this.request(target.hostRef.deviceId,
+        { operation: 'status', ...(browserProbe ? { browserProbe: true } : {}) })).payload)
       if (reply.operation !== 'status') {
         throw new DomainError('COMPUTER_MAINTENANCE_INVALID', 'The computer returned an unexpected reply.', 502)
       }

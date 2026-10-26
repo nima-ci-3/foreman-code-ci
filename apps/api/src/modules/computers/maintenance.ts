@@ -105,14 +105,26 @@ export class ComputerMaintenance {
     if (this.storageFailure) throw this.storageFailure
   }
 
-  async status(signal: AbortSignal): Promise<MaintenanceStatus> {
+  async status(signal: AbortSignal, options: { browserProbe?: boolean } = {}): Promise<MaintenanceStatus> {
     await this.loadTasks()
     for (;;) {
       signal.throwIfAborted()
       const revision = this.taskRevision
       const status = await this.observe(signal)
       await this.taskStore.flushed()
-      if (revision === this.taskRevision) return status
+      if (revision === this.taskRevision) {
+        if (!options.browserProbe) return status
+        let browserProbe: NonNullable<MaintenanceStatus['browserProbe']>
+        try {
+          browserProbe = this.ports.browserRuntime?.probe
+            ? await this.ports.browserRuntime.probe(AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
+            : { ready: false, reason: 'Browser readiness inspection is unavailable on this computer.' }
+        } catch (error) {
+          signal.throwIfAborted()
+          browserProbe = { ready: false, reason: errorMessage(error, 'Browser readiness inspection failed.').slice(0, 2000) }
+        }
+        return MaintenanceStatusSchema.parse({ ...status, browserProbe })
+      }
     }
   }
 

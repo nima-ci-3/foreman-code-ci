@@ -643,7 +643,8 @@ async function createWorkerComputers({ input, state, forward, transfers }: {
       })
       const owner = await state.maintenance
       return { payload: MaintenanceReplySchema.parse(request.operation === 'status'
-        ? { operation: 'status', status: await owner.status(AbortSignal.any([context.signal, lifetime.signal, AbortSignal.timeout(90_000)])) }
+        ? { operation: 'status', status: await owner.status(AbortSignal.any([context.signal, lifetime.signal, AbortSignal.timeout(90_000)]),
+          request.browserProbe ? { browserProbe: true } : {}) }
         : { operation: 'start', task: await owner.start(request.task, request.commandId) }) }
     },
   })

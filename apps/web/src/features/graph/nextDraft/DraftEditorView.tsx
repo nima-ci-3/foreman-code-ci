@@ -151,7 +151,7 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
         {editIntent.query.data?.intent && !finishingSave && !['saved', 'discarded'].includes(editIntent.query.data.intent.state) ? <EditIntentStatus data={editIntent.query.data} /> : null}
         {errorText ? <BoardNotice noticeKey={errorText} tone="danger" live title={edit.error?.uncertain ? 'We couldn’t confirm whether that worked.' : 'Something went wrong.'}
           action={settingsChanged && !pendingStart ? <Button size="sm" disabled={startDisabled}
-            onClick={() => void prepare(() => startMutation.mutateAsync({ saveFirst: true })).catch(report)}>Save and run</Button> : undefined}>
+            onClick={() => void prepare(() => runSetup.guard(graph, agents, () => startMutation.mutateAsync({ saveFirst: true }))).catch(report)}>Save and run</Button> : undefined}>
           {errorText}{edit.error?.issues?.length ? <ul>{edit.error.issues.map((issue, i) => <li key={i}>{issue.message}</li>)}</ul> : null}
         </BoardNotice> : null}
       </div>
@@ -199,7 +199,7 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
       open onOpenChange={setLocationOpen} onSaved={() => setLocationOpen(false)} /> : null}
     <ConfirmDialog open={confirm === 'save' && affectedRuns.length > 0 && !stopBlocked} onOpenChange={(open) => { if (!open) setConfirm(undefined) }} title="Stop running work and save?"
       description={`${affectedRuns.length} affected ${affectedRuns.length === 1 ? 'Run requires' : 'Runs require'} Stop or cleanup across ${affectedWorkflows} ${affectedWorkflows === 1 ? 'workflow' : 'workflows'}.${affectedRuns.some((item) => item.pin.workflowId !== graph.id) ? ' This includes shared-Agent work in another workflow.' : ''} Stop-and-save stops every affected Run and waits for full cleanup before saving. Stopped runs are not restarted.`}
-      confirmLabel="Stop runs and save" onConfirm={() => { setConfirm(undefined); void prepare(() => runAfterSave.current ? startMutation.mutateAsync({ saveFirst: true, allowStop: true }) : stopAndSave(true)).catch(report) }} />
+      confirmLabel="Stop runs and save" onConfirm={() => { setConfirm(undefined); void prepare(() => runAfterSave.current ? runSetup.guard(graph, agents, () => startMutation.mutateAsync({ saveFirst: true, allowStop: true })) : stopAndSave(true)).catch(report) }} />
     <ConfirmDialog open={confirm === 'discard'} onOpenChange={(open) => { if (!open) setConfirm(undefined) }} title="Discard your changes?"
       description="Your unsaved edits are removed. Agent positions on the board are kept. Running work isn’t affected."
       confirmLabel="Discard changes" onConfirm={() => { setConfirm(undefined); void prepare(discardChanges).catch(report) }} />
