@@ -937,8 +937,10 @@ async function pollProductionReady({ origin, expected, timeoutMs = 90_000, signa
   let failure = 'API has not responded.'
   let cause
   let warned = false
+  // A request may not outlive the readiness budget by much, but a loaded host still gets a moment to answer:
+  // a conflict reported just after the deadline must not turn into a timeout.
   const request = path => fetch(`${origin}${path}`, { signal: AbortSignal.any([signal,
-    AbortSignal.timeout(Math.min(2000, Math.max(1, startup.deadline - Date.now())))]) })
+    AbortSignal.timeout(Math.min(2000, Math.max(250, startup.deadline - Date.now())))]) })
   const assertIdentity = async () => {
     const response = await request('/health/identity')
     const actual = await response.json()

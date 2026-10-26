@@ -360,7 +360,8 @@ test('readiness rejects conflicting installations and releases despite healthy A
   let actual = expected
   const server = createServer((request, response) => {
     response.setHeader('content-type', 'application/json')
-    if (request.url === '/health/identity') response.end(JSON.stringify(actual))
+    // A loaded host answers after the 30 ms readiness window; the conflict must still be reported.
+    if (request.url === '/health/identity') setTimeout(() => response.end(JSON.stringify(actual)), 100)
     else if (request.url === '/health/ready') response.end(JSON.stringify({ service: 'graphql-api',
       checks: { database: 'ok', checkpoints: 'ok' } }))
     else response.end('<html><script src="/assets/app.js"></script></html>')
