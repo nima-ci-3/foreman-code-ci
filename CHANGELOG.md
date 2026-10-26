@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.127] - 2026-10-26
+
+### CI
+
+- Every proven gate reports the files it could not key (with the reason) and its largest keys; `corepack pnpm round` prints them.
+- `corepack pnpm round` traces every skipped file with esbuild after a clean gate and fails the round on a skip whose imports changed. Function-proven skips are marked in cachedFiles.
+- A key-survival test covers real commit shapes: version-only releases, helper edits, runner changes, listed directories.
+- Lint: a computed import()/require() must name what it loads (`/* ci-key: … */`).
+
+### Deploy
+
+- The install smoke accepts a computer's earlier pass of the smoke file at the same inputs (per-computer proof), which failed the 0.0.126 install.
+
+0.0.126's CI and Runs changes ship with this release.
+
 ## [0.0.126] - 2026-10-26
 
 ### CI
