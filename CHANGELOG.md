@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.124] - 2026-10-26
+
+### Runs
+
+- A Claude Agent on a paired Worker settles after its last turn: refreshing drained remote history keeps the turn's terminal event instead of reading past it.
+
+### CI
+
+- Gate cloud reservations no longer depend on which slot reports ready first, so a gate cannot start an extra part on a reserved slot.
+
 ## [0.0.123] - 2026-10-26
 
 ### Runs
