@@ -7,6 +7,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.126] - 2026-10-26
+
+### CI
+
+- Result keys survive release commits: a read of the root package.json ignores its version, and bare file names joined to an unknown directory no longer name the root manifest. A release commit keeps 1,018 of 1,020 integration keys (was 0–67).
+- Result keys no longer treat names, anchors and strings as content: directories that are only formatted, listed or passed to git ls-files key by names; createRequire anchors key their manifest's effective fields; output paths are not inputs; a quoted 'import.meta.glob' no longer refuses 125 integration keys.
+- Proven gates pack short files under the longest file instead of one cloud machine per file.
+- Publishing typecheck/lint state retries and never fails a passing check.
+
+### Runs
+
+- Stop waits out a short-lived untracked Run owner after a restart instead of answering WORKFLOW_STOP_OWNER_UNCERTAIN.
+
+### Deploy
+
+- Readiness requests get at least 250 ms, so a late conflict is still reported.
+
 ## [0.0.125] - 2026-10-26
 
 ### Tests
