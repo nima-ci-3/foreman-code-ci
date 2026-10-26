@@ -1,6 +1,6 @@
 import type pg from 'pg'
 import { z } from 'zod'
-import { CI_LOG_MAX_BYTES, CI_TEST_RESULT_LIMITS, CiTestResultsSchema, type CiCachedFile, type CiRunRecord } from '@foreman-code/contracts'
+import { CI_LOG_MAX_BYTES, CI_TEST_RESULT_LIMITS, CiTestResultsSchema, type CiCacheReport, type CiCachedFile, type CiRunRecord } from '@foreman-code/contracts'
 import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
 import type { CiContext } from './environment.js'
 import { CiResultKeys, type CiResultKey, type CiTestTree } from './resultCache.js'
@@ -23,6 +23,7 @@ export interface CachedSelection {
   /** Input keys of the files that run and have one (storedKeys); a passed run records them. */
   keys: Record<string, string>
   cached: CiCachedFile[]
+  report?: CiCacheReport
   /** Keys could not be computed: nothing is proven and nothing is known to be unprovable. */
   unavailable?: true
 }
@@ -107,7 +108,11 @@ export async function planCachedSelection(context: CiContext, pool: pg.Pool, inp
     const unkeyed = [...keys].flatMap(([file, value]) => value.key === null ? [{ file, reason: value.reason }] : [])
     context.log.info({ workspaceId: input.workspaceId, commit: input.commit, suite: input.suite, cached: cached.map(item => item.file),
       unkeyed: unkeyed.slice(0, 20) }, 'CI result cache applied to an affected selection')
-    return { files: remaining, cached,
+    const report: CiCacheReport = { unkeyed: unkeyed.slice(0, 200).map(({ file, reason }) => ({ file, reason: (reason ?? 'no reason given').slice(0, 500) })),
+      unkeyedCount: unkeyed.length,
+      largest: [...keyed].flatMap(([file, value]) => value.inputs === undefined ? [] : [{ file, inputs: value.inputs }])
+        .sort((left, right) => right.inputs - left.inputs || left.file.localeCompare(right.file)).slice(0, 10) }
+    return { files: remaining, cached, report,
       keys: Object.fromEntries(remaining.flatMap(file => keyed.has(file) ? [[file, storedKeys(keyed.get(file)!)!]] : [])) }
   } catch (error) {
     controller.abort(error)

@@ -224,6 +224,22 @@ export function requestedTestFiles(args, cwd = process.cwd()) {
  * replaced by its replacement's tickets. Group reads include siblings added during fallback. After waitMs it stops
  * waiting and returns the runs as they are; open tickets
  * keep running on CI. */
+/** A proven gate's cache summary: proven files, files without a key grouped by reason, and the largest keys. */
+export function cacheReportLines(run) {
+  const report = run?.cacheReport
+  if (!report) return []
+  const lines = [`cache: ${run.cachedFiles?.length ?? 0} files proven; ${report.unkeyedCount} without a key`]
+  const reasons = new Map()
+  for (const { file, reason } of report.unkeyed) reasons.set(reason, [...reasons.get(reason) ?? [], file])
+  for (const [reason, files] of [...reasons].sort((left, right) => right[1].length - left[1].length)) {
+    lines.push(`  no key (${files.length}): ${reason} — ${files.slice(0, 3).join(', ')}${files.length > 3 ? ', ...' : ''}`)
+  }
+  if (report.largest.length) {
+    lines.push(`  largest keys: ${report.largest.slice(0, 5).map(({ file, inputs }) => `${file} (${inputs} inputs)`).join(', ')}`)
+  }
+  return lines
+}
+
 export async function awaitTickets(call, workspaceId, tickets,
   { waitMs = Number(environment.FOREMAN_CODE_CI_WAIT_MS || 2 * 3_600_000) } = {}) {
   const workspace = workspaceId === undefined ? {} : { workspaceId }

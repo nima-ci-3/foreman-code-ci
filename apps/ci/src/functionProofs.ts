@@ -153,5 +153,5 @@ export async function functionProven(pool: pg.Pool, input: { workspaceId: string
   const masked = await keys(rows.map(row => row.file),
     packFunctions(Object.fromEntries(rows.map(row => [row.file, decode(row.executed)]))))
   return rows.filter(row => masked[row.file] === row.cache_key)
-    .map(row => ({ file: row.file, ticketId: row.ticket_id, commit: row.commit }))
+    .map(row => ({ file: row.file, ticketId: row.ticket_id, commit: row.commit, functions: true as const }))
 }

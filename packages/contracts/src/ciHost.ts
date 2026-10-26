@@ -105,8 +105,18 @@ export type CiTestResults = z.infer<typeof CiTestResultsSchema>
 
 /** A selected test file a non-gate affected run did not execute: an earlier passed ticket ran it with identical inputs
  * (its content, transitive imports, lockfile, manifests, CI runner scripts, suite and part). */
-export const CiCachedFileSchema = z.object({ file: z.string().min(1).max(300), ticketId: z.uuid(), commit: CommitSchema }).strict()
+/** `functions` marks a pass reused because only functions the test never ran changed (function proofs). */
+export const CiCachedFileSchema = z.object({ file: z.string().min(1).max(300), ticketId: z.uuid(), commit: CommitSchema,
+  functions: z.literal(true).optional() }).strict()
 export type CiCachedFile = z.infer<typeof CiCachedFileSchema>
+/** What a proven gate could not key and why, and the keys with the most inputs: refused keys and oversized
+ * closures always rerun, so the report names them on the gate's first ticket. */
+export const CiCacheReportSchema = z.object({
+  unkeyed: z.array(z.object({ file: z.string().min(1).max(300), reason: z.string().max(500) }).strict()).max(200),
+  unkeyedCount: z.number().int().nonnegative(),
+  largest: z.array(z.object({ file: z.string().min(1).max(300), inputs: z.number().int().nonnegative() }).strict()).max(10),
+}).strict()
+export type CiCacheReport = z.infer<typeof CiCacheReportSchema>
 
 export const CiWatchdogFailureSchema = z.object({
   message: z.string().max(2000), testsStarted: z.boolean().optional(),
@@ -294,6 +304,8 @@ export const CiRunRecordSchema = z.object({
   baseCommit: CommitSchema.optional(),
   /** On a request's first ticket: selected files skipped because an earlier passed ticket proved identical inputs. */
   cachedFiles: z.array(CiCachedFileSchema).optional(),
+  /** On a proven gate's first ticket: files without a key and the largest keys (CiCacheReportSchema). */
+  cacheReport: CiCacheReportSchema.optional(),
   branch: WorkspaceRepositorySchema.shape.defaultBranch.nullable().optional(),
   noSupersede: z.boolean().optional(),
   supersededBy: CiHostRunIdSchema.optional(),

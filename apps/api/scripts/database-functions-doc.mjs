@@ -23,7 +23,7 @@ const { migrations } = await import(pathToFileURL(registryPath).href)
 const owners = new Map()
 for (const path of migrationModules) {
   if (path === registryPath) continue
-  const module = await import(pathToFileURL(path).href)
+  const module = await import(/* ci-key: apps/api/src/infrastructure/migrations.ts */ pathToFileURL(path).href)
   for (const value of Object.values(module)) {
     if (value && typeof value === 'object' && typeof value.sql === 'string') { owners.set(value, path); owners.set(value.sql, path) }
     if (typeof value === 'string') owners.set(value, path)

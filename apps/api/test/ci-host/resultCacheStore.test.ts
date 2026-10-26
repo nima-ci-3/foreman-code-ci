@@ -97,3 +97,17 @@ it('serves files proven under another test runner from the cache except a canary
   // The canaries record their pass under both keys.
   expect(result.keys[result.files[0]!]).toBe(`new:${result.files[0]} free:${result.files[0]}`)
 })
+
+it('reports the files without a key with their reasons and the keys with the most inputs', async () => {
+  const f = fixture('reported', 3)
+  const glob = 'apps/api/src/reported-glob.test.ts'
+  const contents = new Map([...f.contents, [glob, "export const modules = import.meta.glob('./*.ts')"] as const])
+  const blobs = new Map([...contents].map(([file, content]) => [file, `100644:${createHash('sha1').update(content).digest('hex')}`]))
+  const tree: CiTestTree = { blobs, read: async file => contents.get(file)! }
+  const result = await planCachedSelection(mainCiContext, pool, { ...selection, files: [...f.files, glob], tree: async () => tree })
+  expect(result.report).toEqual({ unkeyedCount: 1,
+    unkeyed: [{ file: glob, reason: expect.stringContaining('imports a glob') }],
+    largest: expect.arrayContaining(f.files.map(file => ({ file, inputs: expect.any(Number) }))) })
+  expect(result.report!.largest).toHaveLength(3)
+  expect(result.report!.largest[0]!.inputs).toBeGreaterThanOrEqual(2)
+})

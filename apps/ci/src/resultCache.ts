@@ -10,7 +10,7 @@ const CI_RESULT_CACHE_VERSION = 2
 
 /** A test file's input key, or null with the reason it must run. `runnerFreeKey` leaves out runner-only roots and
  * their imports: a proof that matches only it was made by another runner, so a sample of such files reruns. */
-export interface CiResultKey { key: string | null; reason?: string; runnerFreeKey?: string }
+export interface CiResultKey { key: string | null; reason?: string; runnerFreeKey?: string; /** How many inputs the key hashes. */ inputs?: number }
 /** A content identity for a file of a test's own closure in place of its blob (masked by functions the test ran), or
  * undefined to keep the blob. */
 export type CiFileMask = (path: string, blob: string, read: () => Promise<string>) => Promise<string | undefined>
@@ -762,7 +762,7 @@ export class CiResultKeys {
       // remain inputs even when they also occur in the runner's closure.
       const runtime = await this.harnessFiles(project, suite, environment, true)
       let required: Set<string> | undefined
-      return { key: hash(paths, 'all'),
+      return { key: hash(paths, 'all'), inputs: paths.length,
         runnerFreeKey: hash(paths.filter(path => !harness.has(path) && !TEST_EXECUTION_FILES.some(pattern => pattern.test(path))
           || runtime.has(path) || (required ??= new Set(own)).has(path)), 'runner-free') }
     } catch (error) {

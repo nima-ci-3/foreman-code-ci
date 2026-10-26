@@ -9,7 +9,7 @@ import { withProviderPoll } from './providerPoll.js'
 import { CI_HOST_NAMESPACE, CiComputerRefSchema, CiRunRecordSchema, CiRunOutputSchema,
   WorkspaceSchema,
   type CiCoverageSelection, type CiDurations, type CiHostRequest, type CiHostRun, type CiHostStatus, type CiRunRecord, type CiRunInput,
-  type CiCancellation, type Workspace } from '@foreman-code/contracts'
+  type CiCacheReport, type CiCancellation, type Workspace } from '@foreman-code/contracts'
 import type { ManagementAction, ManagementPrincipal } from '@foreman-code/contracts/management'
 import { type CiAuthority, CI_GET_ACTIONS, CI_RUN_ACTIONS } from './authority.js'
 import { planCiParts, runsOnCircleCi, unitPartOf } from './parts.js'
@@ -608,6 +608,7 @@ export class HostCiService {
     // proves are recorded. Any failure leaves the selection to the runner.
     let mainSelection: { files: string[]; reason: string } | undefined
     let cache: CachedSelection | undefined
+    let cacheReport: CiCacheReport | undefined
     const partOf = (file: string) => input.suite === 'unit' && capabilities.parts ? unitPartOf(file) : input.suite
     if (deriveFiles && !input.gate && !smokeTarget && ['unit', 'integration', 'typecheck', 'lint'].includes(input.suite)
       && this.commits.affectedSelection) {
@@ -703,6 +704,10 @@ export class HostCiService {
         gateIntegration = { ...integration!, files: integrationProof.files }
         cache = { files: [...unitProof.files, ...integrationProof.files], keys: { ...unitProof.keys, ...integrationProof.keys },
           cached: [...unitProof.cached, ...integrationProof.cached] }
+        const reports = [unitProof.report, integrationProof.report].filter(report => report !== undefined)
+        cacheReport = reports.length ? { unkeyed: reports.flatMap(report => report.unkeyed).slice(0, 200),
+          unkeyedCount: reports.reduce((sum, report) => sum + report.unkeyedCount, 0),
+          largest: reports.flatMap(report => report.largest).sort((left, right) => right.inputs - left.inputs).slice(0, 10) } : undefined
         // Main chose every part's files; runners must run exactly those, not select again.
         deriveFiles = false
         coverage = undefined
@@ -729,6 +734,7 @@ export class HostCiService {
     const runs = parts.map((planned, index) => CiRunRecordSchema.parse({
       ...planned,
       ...(index === 0 && cachedFiles ? { cachedFiles } : {}),
+      ...(index === 0 && cacheReport ? { cacheReport } : {}),
       expectedDurationMs: planned.expectedDurationMs ?? (input.suite === 'unit' ? 210_000 : 150_000),
       ...(smokeTarget ? { plannedHostKey: smokeTarget.key,
         ...(smokeShards !== undefined ? { integrationShards: smokeShards } : {}) } : {}),

@@ -108,7 +108,10 @@ export async function runInstallCiSmoke({ origin, workspaceId, commit, token,
     while (true) {
       const result = await read(`${root}/${ticketId}`, `ticket ${ticketId}`)
       if (result.run.state === 'passed' && result.run.exitCode === 0) {
-        if (computer) {
+        // Smoke proofs are per computer: a ticket answered from this computer's earlier pass of the smoke file at
+        // these inputs runs nowhere, and that pass already proved the computer.
+        const proven = computer && !result.run.computer && result.run.cachedFiles?.some(item => item.file === smokeFile)
+        if (computer && !proven) {
           if (!isDeepStrictEqual(result.run.computer?.hostRef, computer.hostRef)) {
             throw new Error(`CI smoke ${ticketId} ran on a different computer.`)
           }

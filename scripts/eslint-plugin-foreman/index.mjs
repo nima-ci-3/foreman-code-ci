@@ -225,6 +225,46 @@ const rules = {
       }
     }),
 
+  'computed-import-needs-ci-key': rule('A computed import or require names what it loads, so CI result keys cover it.',
+    'Name the module this loads in a `/* ci-key: <repository path or package> */` comment inside the call.',
+    context => {
+      const named = node => {
+        const seen = new Set()
+        const visit = (value, depth) => {
+          if (!value || typeof value !== 'object' || seen.has(value) || depth > 40) return false
+          seen.add(value)
+          if (value.type === 'Literal' && typeof value.value === 'string' && value.value) return true
+          if (value.type === 'TemplateElement' && value.value.cooked) return true
+          if (value.type === 'Identifier') {
+            // One step through a local constant, as the result-key analyzer follows it.
+            const variable = context.sourceCode.getScope(value).references.find(reference => reference.identifier === value)?.resolved
+            const init = variable?.defs.length === 1 && variable.defs[0].node.type === 'VariableDeclarator' ? variable.defs[0].node.init : null
+            return init ? visit(init, depth + 1) : false
+          }
+          return Object.entries(value).some(([key, child]) => key !== 'parent'
+            && (Array.isArray(child) ? child.some(item => visit(item, depth + 1)) : visit(child, depth + 1)))
+        }
+        return visit(node, 0)
+      }
+      // A file-level `ci-key-inputs:` line declares its runtime inputs for every computed load in it.
+      const declared = context.sourceCode.getAllComments().some(comment => /^\s*ci-key-inputs:\s*\S/.test(comment.value))
+      const check = (call, argument) => {
+        if (declared || !argument || argument.type === 'SpreadElement' || named(argument)) return
+        const [start, end] = call.range
+        if (context.sourceCode.getAllComments().some(comment => comment.range[0] >= start && comment.range[1] <= end
+          && /\bci-key:\s*\S/.test(comment.value))) return
+        context.report({ node: call, messageId: 'problem' })
+      }
+      return {
+        ImportExpression(node) { check(node, node.source) },
+        CallExpression(node) {
+          const callee = node.callee
+          if ((callee.type === 'Identifier' && callee.name === 'require')
+            || (callee.type === 'CallExpression' && name(callee.callee) === 'createRequire')) check(node, node.arguments[0])
+        },
+      }
+    }),
+
   'no-error-rewrap-without-cause': rule('A caught error that is replaced by a new error stays reachable as its cause.',
     'Pass the caught error as `cause` (for example `new XError(message, { cause: error })`), or rethrow it.',
     context => {
@@ -321,6 +361,7 @@ export function foremanLint(directory) {
         'foreman/no-raw-transactions': 'error',
         'foreman/no-silent-catch': 'error',
         'foreman/no-legacy-execution-semantics': 'error',
+        'foreman/computed-import-needs-ci-key': 'error',
       },
     },
     // The shared transaction helper is the one module that sends BEGIN/COMMIT/ROLLBACK.

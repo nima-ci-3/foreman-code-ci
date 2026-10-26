@@ -167,3 +167,20 @@ run('test-timeout-limit', [
   "describe('suite', { timeout: 45000 }, () => {})",
   'beforeEach(async () => {}, 31_000)',
 ])
+
+run('computed-import-needs-ci-key', [
+  "await import('./value.mjs')",
+  "await import(new URL('./child.mjs', import.meta.url).href)",
+  "const child = join(release, 'apps/worker/src/x.mjs'); await import(pathToFileURL(child).href)",
+  "await import(/* ci-key: apps/worker/src/update.mjs */ modulePath)",
+  "const module = createRequire(import.meta.url)('../package.json')",
+  "dispatch.require(path)",
+  "// ci-key-inputs: esbuild\nexport const load = name => require(name)",
+], [
+  'export const load = path => import(path)',
+  'await import(process.argv[1])',
+  'await import(settings.clientModule)',
+  'const name = process.env.MODULE; await import(name)',
+  'export const load = name => require(name)',
+  'export const load = path => createRequire(import.meta.url)(path)',
+])

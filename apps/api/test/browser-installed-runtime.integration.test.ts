@@ -168,7 +168,7 @@ async function closeSetup(f: HostFixture, session: BrowserSession) {
 describe('installed managed browser against a deterministic local website', () => {
   beforeAll(async () => {
     runtime = installed.runtime
-    native = await import(pathToFileURL(runtime.nativeHostModule).href)
+    native = await import(/* ci-key: apps/api/src/modules/browser-runtime/hostFactory.ts */ pathToFileURL(runtime.nativeHostModule).href)
     if (typeof native.createBrowserHost !== 'function') throw new Error('The installed runtime has no supported browser host entrypoint.')
     root = await mkdtemp(join(installed.directory, 'host-state-'))
     pairing = {

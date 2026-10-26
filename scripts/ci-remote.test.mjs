@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { awaitTickets, requestedTestFiles, snapshot } from './ci-remote.mjs'
+import { awaitTickets, cacheReportLines, requestedTestFiles, snapshot } from './ci-remote.mjs'
 
 const script = new URL('./ci-remote.mjs', import.meta.url).pathname
 
@@ -176,4 +176,17 @@ test('tracks fallback siblings added while a group wait is in flight', async t =
   const finished = await waiting
   assert.deepEqual(finished.map(run => [run.id, run.state]), [['original', 'passed'], ['fallback-sibling', 'failed']])
   assert.ok(calls.some(call => call.name === 'ci_logs_read' && call.input.ticketId === sibling.id))
+})
+
+test('a round prints proven files, unkeyed files grouped by reason and the largest keys', () => {
+  assert.deepEqual(cacheReportLines({ cachedFiles: [{}, {}], cacheReport: { unkeyedCount: 3,
+    unkeyed: [{ file: 'a.test.ts', reason: 'imports a glob' }, { file: 'b.test.ts', reason: 'imports a computed module' },
+      { file: 'c.test.ts', reason: 'imports a glob' }],
+    largest: [{ file: 'big.test.ts', inputs: 2200 }] } }), [
+    'cache: 2 files proven; 3 without a key',
+    '  no key (2): imports a glob — a.test.ts, c.test.ts',
+    '  no key (1): imports a computed module — b.test.ts',
+    '  largest keys: big.test.ts (2200 inputs)',
+  ])
+  assert.deepEqual(cacheReportLines({}), [])
 })

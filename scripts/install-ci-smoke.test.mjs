@@ -119,6 +119,14 @@ async function fixture(t, failure, token, { firstAdmissionDelayMs = 0, firstAdmi
       const polls = (reportPolls.get(ticketId) ?? 0) + 1
       reportPolls.set(ticketId, polls)
       const failed = ['setup', 'credential-echo'].includes(failure) && input?.smokeComputer?.deviceId === 'second'
+      // This computer already passed the smoke file at these inputs: the per-computer proof answers without a run.
+      if (failure === 'cached' && input?.smokeComputer?.deviceId === 'first') {
+        response.end(JSON.stringify({ run: { state: 'passed', exitCode: 0, computer: null, files: [],
+          message: 'All 1 selected files already passed with identical inputs; see cachedFiles.',
+          cachedFiles: [{ file: 'apps/api/test/ci-smoke.integration.test.ts', ticketId: 'earlier', commit: 'a'.repeat(40) }] },
+        logTail: '' }))
+        return
+      }
       let state = failed ? 'failed' : 'passed'
       if (failure === 'stall' && input?.smokeComputer) state = 'running'
       let message = failed ? 'ERR_PNPM_NO_OFFLINE_META: package metadata missing' : null
@@ -343,4 +351,12 @@ test('deploy smoke completes once CI and health checks pass without a minimum so
   await runInstallCiSmoke({ ...options, origin: f.origin, timeoutMs: 500 })
   assert.equal(f.admissions.length, 6)
   assert.ok(f.probes() > 0)
+})
+
+test('a computer that already passed the smoke file at these inputs counts as smoke-tested', async t => {
+  const { runInstallCiSmoke } = await import('./install-ci-smoke.mjs')
+  const f = await fixture(t, 'cached')
+  await runInstallCiSmoke({ ...options, origin: f.origin })
+  assert.ok(f.admissions.some(input => input.smokeComputer?.deviceId === 'first'))
+  assert.equal(f.canceled.length, 0)
 })
