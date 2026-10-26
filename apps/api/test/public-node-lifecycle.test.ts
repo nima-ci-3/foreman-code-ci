@@ -31,7 +31,7 @@ it.each<{ native: GraphActivity; lifecycle: string; state?: string; outcome?: st
   })),
 ])('preserves public lifecycle $lifecycle for $native.status with $state work', value => {
   expect(publicNodeState(execution.workflowNodeId,
-    { execution, state: value.state ?? 'running', outcome: value.outcome }, undefined, [{
+    { execution, state: value.state ?? 'running', ...(value.outcome ? { outcome: value.outcome } : {}) }, undefined, [{
       key: { execution, workKind: 'workflow', workId: execution.executionId },
       activity: value.native, lastNativeSequence: '2',
     }], value.closed, value.blocked).lifecycle).toBe(value.lifecycle)
