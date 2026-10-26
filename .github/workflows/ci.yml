@@ -217,17 +217,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET: run-state-${{ inputs.suite }}-node24.22.1.tar.gz
-        run: |
-          set -euo pipefail
-          changed=$(node -e 'import("./scripts/ci-suite-state.mjs").then(state => console.log(state.suiteStateChanged(process.cwd())))')
-          [ "$changed" = true ] || { echo 'State unchanged; nothing to publish.'; exit 0; }
-          paths=$(ls -d apps/*/node_modules/.cache/tsc apps/*/node_modules/.cache/eslint \
-            packages/*/node_modules/.cache/tsc packages/*/node_modules/.cache/eslint 2>/dev/null || true)
-          [ -n "$paths" ] || exit 0
-          tar -czf "$RUNNER_TEMP/$ASSET" $paths
-          gh release view ci-state -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create ci-state -R "$GITHUB_REPOSITORY" \
-            --title 'CI state' --notes 'Typecheck and lint state for CI jobs.' --latest=false || true
-          gh release upload ci-state -R "$GITHUB_REPOSITORY" "$RUNNER_TEMP/$ASSET" --clobber
+        run: scripts/ci-publish-suite-state.sh
       # Measured durations and structured test results, which Main reads back with the ticket.
       - if: always()
         uses: actions/upload-artifact@v4
