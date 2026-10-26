@@ -61,7 +61,8 @@ publish().catch(error => { console.error(error); process.exitCode = 1 })
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
           return undefined
         }
-      }, value => value !== undefined, { timeoutMs: 10_000, description: 'the publication process readiness' })
+        // A cold tsx child compiles the API first; a busy runner can take longer than 10 s to reach the gate.
+      }, value => value !== undefined, { timeoutMs: 60_000, description: 'the publication process readiness' })
       expect((await f.pool.query('select identity from workspace_project_provisioning')).rows)
         .toEqual([{ identity: { device: expect.any(String), inode: expect.any(String) } }])
       const exited = once(interrupted, 'exit')
@@ -107,5 +108,5 @@ publish().catch(error => { console.error(error); process.exitCode = 1 })
     catch (error) { errors.push(error) }
     if (errors.length === 1) throw errors[0]
     if (errors.length > 1) throw new AggregateError(errors, 'Workspace publication test and cleanup failed.')
-  }, 30_000)
+  }, 120_000)
 })
