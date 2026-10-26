@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { CiGetOutputSchema, CiRunRecordSchema, CiTestResultsSchema, type CiTestResults } from '@foreman-code/contracts'
 import { decodeMcpToolResult } from '@foreman-code/contracts/operator-mcp'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import { buildApp } from '../src/app.js'
 import type { OperatorServices } from '../src/mcp/operator/types.js'
 import { PostgresAccessService } from '../src/modules/access/postgres.js'
@@ -153,30 +153,5 @@ it('ci_get returns empty history counts without error for a newly added failing 
     expect(read.run.id).toBe(ticketId)
     expect(read.failedFiles).toEqual([file])
     expect(read.failureHistory).toEqual([{ file, test: null, failedRuns: 0, runs: 0 }])
-  } finally { await f.close() }
-}, 60_000)
-
-it('reads histories for several failed files in the same number of queries as one file', async () => {
-  const f = await fixture()
-  try {
-    const first = 'apps/api/test/first.integration.test.ts'
-    const second = 'apps/api/test/second.integration.test.ts'
-    for (let index = 0; index < 22; index++) {
-      await f.insert([testFile(first, index === 21 ? 'failed' : 'passed')], { minutesAgo: 100 - index })
-    }
-    await f.insert([testFile(second, 'failed')], { minutesAgo: 2 })
-    const one = await f.insert([testFile(first, 'failed')], { minutesAgo: 0, gate: false })
-    const both = await f.insert([testFile(second, 'failed'), testFile(first, 'failed')], { minutesAgo: 0, gate: false })
-    const query = vi.spyOn(database.pool, 'query')
-    try {
-      await f.read(one)
-      const count = query.mock.calls.length
-      query.mockClear()
-      expect((await f.read(both)).failureHistory).toEqual([
-        { file: second, test: 'shared assertion', failedRuns: 1, runs: 1 },
-        { file: first, test: 'shared assertion', failedRuns: 1, runs: 20 },
-      ])
-      expect(query).toHaveBeenCalledTimes(count)
-    } finally { query.mockRestore() }
   } finally { await f.close() }
 }, 60_000)

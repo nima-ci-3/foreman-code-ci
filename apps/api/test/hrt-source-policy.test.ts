@@ -75,7 +75,7 @@ async function fixture(device = false) {
     else if (text.startsWith('select id,name,audience,grants')) rows = values?.[0] === principal.id ? [{ id: principal.id, name: principal.name, audience: 'operator', grants: principal.grants, expires_at: new Date(principal.expiresAt), revoked_at: null, delegated_from: null }] : []
     else if (text.startsWith('with recursive owners')) rows = [{ id: principal.id }]
     else if (text.startsWith('select id from application_installation')) rows = [{ id: mainId }]
-    else if (text.startsWith('select location_revision::text,archived_at')) rows = [{ location_revision: '1', archived_at: null }]
+    else if (text.startsWith('select location_revision,archived_at')) rows = [{ location_revision: '1', archived_at: null }]
     else if (text.startsWith('select record,revoked_at from workspace_root_policies')) rows = [{ record: policy, revoked_at: revoked ? new Date() : null }]
     else if (text.startsWith('select c.record from workspace_root_host_configuration_heads')) rows = configured ? [{ record: configuration }] : []
     else if (text.startsWith('select record from device_registrations')) rows = [{ record: { ...registration, mainId, deviceId, status: 'paired', scopes: ['connect', 'heartbeat'], publicKeyFingerprint: 'd'.repeat(64) } }]

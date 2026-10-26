@@ -88,16 +88,6 @@ function fixture() {
           native_session_id: item.nativeSessionId ?? null, created_at: new Date(item.createdAt), started_at: null, finished_at: null,
           revision: String(nativeEvents.at(-1)?.sequence ?? 0), record_revision: '0' })) }
     }
-    if (values.length === 1 && typeof values[0] === 'string' && values[0].startsWith('[')) {
-      const windows = JSON.parse(values[0]) as Record<string, unknown>[]
-      return { rows: windows.flatMap(window => {
-        const parameters = [window.execution_id, window.native_session_id, window.mode, window.known_revision,
-          window.before_sequence, window.item_id, window.after_revision, window.after_key, window.item_limit,
-          window.message_limit, window.input_limit, window.output_limit, window.byte_budget, window.terminal_changed]
-        return executionProjectionRows(window.execution_id === source.id ? nativeEvents : [], parameters)
-          .map(row => ({ ...row, execution_id: window.execution_id }))
-      }) }
-    }
     if (sql.startsWith('with identities as')) return { rows: executionProjectionRows(nativeEvents, values) }
     if (sql.includes('from harness_native_events')) return { rows: transcriptRows, rowCount: transcriptRows.length }
     if (sql.includes('from conversation_session_defaults')) return { rows: [], rowCount: 0 }

@@ -16,7 +16,6 @@ import type { WorkerBundleReadiness } from '@foreman-code/contracts/computer-mai
 
 import { ciComputerStatusKey } from './computerStatus.js'
 
-const WORKER_READINESS_TIMEOUT_MS = 1500
 
 interface DeviceRequests {
   capabilities(deviceId: string): readonly { namespace: string; mainCanRequest?: boolean }[]
@@ -97,24 +96,6 @@ export class ProductionHostCiEndpoint implements HostCiEndpoint {
   }
 
   async request(computer: HostCiComputer, request: CiHostRequest,
-    options?: { priority: DeviceRequestPriority }): Promise<CiHostReply> {
-    if (computer.hostRef.kind !== 'device' || request.operation !== 'status' || request.cleanupRunIds !== undefined
-      || options?.priority === 'foreground') {
-      return this.requestReply(computer, request, options)
-    }
-    // Bundle readiness is a second Worker request. Bound the whole read, including it, without accepting an
-    // unverified bundle. The underlying shared bundle read can finish and serve a later retry.
-    let timer: NodeJS.Timeout | undefined
-    try {
-      return await Promise.race([this.requestReply(computer, request, options), new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new DomainError('CI_HOST_STATUS_UNAVAILABLE',
-          'The Worker has not reported CI and bundle readiness yet. Retry shortly.', 503, { retryable: true })),
-        WORKER_READINESS_TIMEOUT_MS)
-      })])
-    } finally { clearTimeout(timer) }
-  }
-
-  private async requestReply(computer: HostCiComputer, request: CiHostRequest,
     options?: { priority: DeviceRequestPriority }): Promise<CiHostReply> {
     if (request.operation === 'start') {
       try {
@@ -217,11 +198,7 @@ export class ProductionHostCiEndpoint implements HostCiEndpoint {
     // Execution and cleanup need live replies; readiness caching belongs to CiPlanningSnapshot.
     let reply: { payload: unknown }
     try {
-      // Readiness is retried by planning/dispatch; waiting for a reconnect must not hold admission for two minutes.
-      // Foreground start prerequisites, execution observations and cleanup still need their full delivery deadline.
-      const timeoutMs = request.operation === 'status' && request.cleanupRunIds === undefined && priority === 'background'
-        ? WORKER_READINESS_TIMEOUT_MS : 120_000
-      reply = await devices.request(deviceId, CI_HOST_NAMESPACE, request, { timeoutMs, priority })
+      reply = await devices.request(deviceId, CI_HOST_NAMESPACE, request, { timeoutMs: 120_000, priority })
     } catch (error) {
       if (this.context.platform.isDeviceApplicationError(error) && error.code === 'CI_RUN_UNKNOWN') {
         throw new DomainError('CI_RUN_UNKNOWN', 'The build computer has no such CI run.', 404,

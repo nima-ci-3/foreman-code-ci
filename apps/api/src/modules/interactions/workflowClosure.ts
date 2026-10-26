@@ -268,11 +268,6 @@ export async function readUnboundWorkflowClosure(sql: Sql, execution: HarnessExe
     exists(select 1 from execution_native_sessions s where s.execution_id=e.id) as bound
     from harness_executions e where e.id=$1 and e.run_id=$2`, [execution.id, execution.runId])).rows[0]
   if (!current) return conflict()
-  return unboundWorkflowClosure(row, current, execution)
-}
-
-function unboundWorkflowClosure(row: ClosureRow, current: { record: unknown; bound: boolean },
-  execution: HarnessExecution): UnboundWorkflowClosure {
   const parsed = HarnessExecutionSchema.parse(current.record)
   if (execution.nativeSessionId || parsed.nativeSessionId || current.bound || row.expected_reference !== null
     || row.closed_reference !== null || !isDeepStrictEqual(executionIdentity(execution), executionIdentity(parsed))
@@ -467,11 +462,6 @@ async function readRecoveredWorkflowClosure(sql: Sql, execution: HarnessExecutio
     from harness_executions e left join execution_native_sessions s on s.execution_id=e.id
     where e.id=$1 and e.run_id=$2`, [execution.id, execution.runId])).rows[0]
   if (!current) return conflict()
-  return recoveredWorkflowClosure(row, current, execution)
-}
-
-function recoveredWorkflowClosure(row: RecoveredClosureRow, current: { record: unknown; reference: unknown | null },
-  execution: HarnessExecution) {
   const parsed = HarnessExecutionSchema.parse(current.record)
   const session = current.reference === null ? null : NativeSessionReferenceSchema.parse(current.reference)
   if (!isDeepStrictEqual(executionIdentity(parsed), executionIdentity(execution))
@@ -480,55 +470,6 @@ function recoveredWorkflowClosure(row: RecoveredClosureRow, current: { record: u
     || (parsed.nativeSessionId ?? null) !== (session?.nativeSessionId ?? null)
     || (execution.nativeSessionId ?? null) !== (session?.nativeSessionId ?? null)) return conflict()
   return { generation: row.generation, session }
-}
-
-/** Evidence is private and scoped to the caller's parent-Run locks. Validate on
- * use so corrupt evidence for one Run does not change another Run's result. */
-export interface WorkflowClosureEvidence {
-  record: unknown
-  reference: unknown | null
-  bound: boolean
-  closure: ClosureRow | null
-  recovery: RecoveredClosureRow | null
-}
-export async function readWorkflowClosureEvidence(sql: Sql, executionIds: string[]) {
-  const rows = await sql.query<WorkflowClosureEvidence & { id: string }>(`select e.id,e.record,s.reference,
-    s.execution_id is not null as bound,
-    (select row_to_json(lifetime) from (
-      select c.generation::text,c.execution_identity,c.expected_reference,c.closed_reference,
-        c.closed_at is not null as closed,c.detached_at is not null as detached,c.detached_reference,c.closed_without_session,
-        exists(select 1 from execution_native_closures prior where prior.execution_id=e.id
-          and prior.generation<c.generation and prior.closed_at is null and prior.detached_at is null) as prior_unclosed
-      from execution_native_closures c where c.execution_id=e.id order by c.generation desc limit 1
-    ) lifetime) as closure,
-    (select row_to_json(recovered) from (
-      select p.generation::text,p.execution_identity,p.reference
-      from execution_native_recoveries p join execution_native_closures c on c.generation=p.generation
-      where p.execution_id=e.id and c.execution_id=p.execution_id
-        and not exists(select 1 from execution_native_closures n where n.execution_id=c.execution_id and n.generation>c.generation)
-        and not exists(select 1 from execution_native_closures n where n.execution_id=c.execution_id
-          and n.generation<c.generation and n.closed_at is null and n.detached_at is null)
-    ) recovered) as recovery
-    from harness_executions e left join execution_native_sessions s on s.execution_id=e.id
-    where e.id=any($1::text[])`, [executionIds])
-  return new Map(rows.rows.map(row => [row.id, row]))
-}
-export function workflowClosureFromEvidence(evidence: WorkflowClosureEvidence,
-  execution: HarnessExecution): ClosedWorkflowSession | UnboundWorkflowClosure | undefined {
-  const row = evidence.closure
-  if (execution.nativeSessionId) {
-    if (evidence.bound && row?.closed && !row.detached && !row.closed_without_session && row.prior_unclosed === false) {
-      return closedWorkflowSession({ ...row, record: evidence.record, reference: evidence.reference }, execution)
-    }
-  } else if (row?.closed && !row.detached && row.closed_without_session && row.prior_unclosed === false) {
-    return unboundWorkflowClosure(row, evidence, execution)
-  }
-  const recovered = evidence.recovery && recoveredWorkflowClosure(evidence.recovery, evidence, execution)
-  if (!recovered || !!execution.nativeSessionId !== !!recovered.session) return undefined
-  return recovered.session
-    ? { execution: { ...executionIdentity(execution), nativeSessionId: recovered.session.nativeSessionId },
-      session: recovered.session, durableGeneration: recovered.generation }
-    : { execution: executionIdentity(execution), durableGeneration: recovered.generation }
 }
 
 type WorkflowRecoveryPurpose = 'cleanup' | 'terminal' | 'failed_attempt'

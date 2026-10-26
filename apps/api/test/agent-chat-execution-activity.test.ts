@@ -5,7 +5,7 @@ import type { ManagementPrincipal } from '@foreman-code/contracts/management'
 import { buildApp } from '../src/app.js'
 import { PostgresAccessService } from '../src/modules/access/postgres.js'
 import { AgentChatService } from '../src/modules/conversations/agentChat.js'
-import { ExecutionActivityFold, ExecutionActivityReader, type ExecutionEventRow } from '../src/modules/conversations/executionActivity.js'
+import { ExecutionActivityFold, type ExecutionEventRow } from '../src/modules/conversations/executionActivity.js'
 import type { OperatorServices } from '../src/mcp/operator/types.js'
 import { executionProjectionRows } from './agent-chat-execution-activity.testSupport.js'
 import { liveAuthorityQuery, livePrincipalRow } from './helpers/livePrincipal.js'
@@ -125,25 +125,15 @@ function service() {
     { id: 'execution-check-1', tick: 1, state: 'running', createdAt: new Date('2026-01-01T00:02:00Z'), events: liveRun(), recordRevision: 0 },
   ]
   executions[0]!.events = [event('final', 'item.completed', { item: { id: 'final', type: 'agentMessage', text: 'Initial work finished' } })]
-  // Distinguish query ports by their bound values, including batched projection requests.
-  const query = vi.fn(liveAuthorityQuery(id => id === principal.id ? livePrincipalRow(principal) : undefined, async (_sql, values) => {
+  // The statements are told apart by their bound values: the live principal read binds only an id, the execution list the
+  // six scope values, and the execution activity page fourteen.
+  const query = vi.fn(liveAuthorityQuery(() => livePrincipalRow(principal), async (_sql, values) => {
     if (values.length === 6) {
       if (values[0] !== runId || values[1] !== workflowNodeId || values[2] !== agentId || values[3] !== workspaceId || values[4] !== workflowId) return { rows: [] }
       return { rows: [...executions].reverse().map((execution) => ({ id: execution.id, attempt: 1, tick_index: execution.tick,
         occurrence_index: null, state: execution.state, native_session_id: 'thread', created_at: execution.createdAt,
         started_at: execution.createdAt.toISOString(), finished_at: null,
         revision: String(execution.events.at(-1)?.sequence ?? 0), record_revision: String(execution.recordRevision) })) }
-    }
-    if (values.length === 1 && typeof values[0] === 'string') {
-      const windows = JSON.parse(values[0]) as Record<string, unknown>[]
-      return { rows: windows.flatMap(window => {
-        const execution = executions.find(entry => entry.id === window.execution_id)
-        const parameters = [window.execution_id, window.native_session_id, window.mode, window.known_revision,
-          window.before_sequence, window.item_id, window.after_revision, window.after_key, window.item_limit,
-          window.message_limit, window.input_limit, window.output_limit, window.byte_budget, window.terminal_changed]
-        return executionProjectionRows(execution?.events ?? [], parameters).map(row =>
-          ({ ...row, execution_id: window.execution_id }))
-      }) }
     }
     if (values.length === 14) {
       const execution = executions.find((entry) => entry.id === values[0])
@@ -245,28 +235,4 @@ describe('Agent chat live execution activity over HTTP', () => {
       await app.close()
     }
   })
-})
-
-it('loads twenty execution windows in two queries while preserving pagination and cursor completion', async () => {
-  const f = service()
-  cleanup.push(f.chat)
-  const newest = f.executions[1]!
-  for (let index = 2; index < 20; index++) f.executions.push({ ...newest,
-    id: `execution-${index}`, tick: index, createdAt: new Date(Date.parse(at) + index * 60_000),
-    events: [event(`message-${index}`, 'item.completed', {
-      item: { id: `message-${index}`, type: 'agentMessage', text: `Result ${index}` },
-    })],
-  })
-  const reader = new ExecutionActivityReader(f.pool)
-  const query = vi.mocked(f.pool.query)
-  query.mockClear()
-  const first = await reader.read(f.context, { limit: 2 })
-  expect(query).toHaveBeenCalledTimes(2)
-  expect(first.items.map(item => item.executionId)).toEqual(['execution-18', 'execution-19'])
-  expect(first.executions.filter(execution => execution.hasEarlierItems)).toHaveLength(18)
-  query.mockClear()
-  const next = await reader.read(f.context, { cursor: first.cursor, limit: 2 })
-  expect(query).toHaveBeenCalledTimes(2)
-  expect(next.items.map(item => item.executionId)).toEqual(['execution-16', 'execution-17'])
-  expect(next.items.every(item => !first.items.some(previous => previous.id === item.id))).toBe(true)
 })

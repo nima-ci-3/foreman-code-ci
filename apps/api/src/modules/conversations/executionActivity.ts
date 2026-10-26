@@ -8,7 +8,7 @@ import {
 import { z } from 'zod'
 import { nativePersistenceRedactor } from '../interactions/index.js'
 import { operatorActivity } from '../harnesses/index.js'
-import { executionItemsSql, executionItemWindowsSql } from './executionActivitySql.js'
+import { executionItemsSql } from './executionActivitySql.js'
 import { DomainError } from '../errors.js'
 
 const MAX_EXECUTIONS = 20
@@ -267,7 +267,6 @@ interface ProjectedRow {
   item_key: string
   first_sequence: string
   revision: string
-  preceding_bytes?: string
   record: ExecutionEventRow['record'] | null
 }
 interface ItemWindow {
@@ -312,25 +311,21 @@ export class ExecutionActivityReader {
   constructor(private readonly sql: Pick<pg.Pool, 'query'>) {}
 
   private async window(row: ExecutionRow, request: ExecutionActivityRequest,
-    options: { mode: string; limit: number; budget: number; known?: CursorEntry },
-    prefetched?: ProjectedRow[]): Promise<ItemWindow> {
+    options: { mode: string; limit: number; budget: number; known?: CursorEntry }): Promise<ItemWindow> {
     const full = request.itemId !== undefined
     const limits = full ? FULL : PREVIEW
     const recordRevision = row.record_revision
     const terminal = terminalState(row.state)
     const after = options.known?.after?.t === terminal ? options.known.after : undefined
-    const result = prefetched ? { rows: prefetched } : await this.sql.query<ProjectedRow>(executionItemsSql, [
+    const result = await this.sql.query<ProjectedRow>(executionItemsSql, [
       row.id, row.native_session_id, options.mode, options.known?.n ?? '0', request.before ?? null,
       request.itemId ?? null, after?.r ?? null, after?.k ?? null, options.limit + 1,
       limits.message + REDACTION_LOOKAHEAD, limits.input + REDACTION_LOOKAHEAD,
       limits.output + REDACTION_LOOKAHEAD, options.budget,
       options.known !== undefined && options.known.t !== terminal,
     ])
-    // Later windows consume the remaining page budget, exactly as in sequential reads.
-    const windowRows = result.rows.slice(0, options.limit + 1).map(projected => Number(projected.preceding_bytes ?? 0) >= options.budget
-      ? { ...projected, record: null } : projected)
     const redactor = nativePersistenceRedactor([])
-    const projectedItems = windowRows.flatMap((projected): AgentChatExecutionItem[] => {
+    const projectedItems = result.rows.flatMap((projected): AgentChatExecutionItem[] => {
       if (!projected.record) return []
       const fold = new ExecutionActivityFold()
       fold.apply([{ sequence: 0, item_key: projected.item_key, record: redactor.value(projected.record) }])
@@ -349,7 +344,7 @@ export class ExecutionActivityReader {
     const rows: ProjectedRow[] = []
     let hasMore = false
     let budget = options.budget - 2
-    for (const projected of windowRows) {
+    for (const projected of result.rows) {
       if (!projected.record || items.length === options.limit) {
         hasMore = true
         break
@@ -400,30 +395,6 @@ export class ExecutionActivityReader {
     }
 
     const cursor = parseCursor(request.cursor)
-    const selected = newest.filter(row => {
-      const known = cursor?.[row.id]
-      return !(known && !known.after && BigInt(row.revision) <= BigInt(known.n) && known.t === terminalState(row.state))
-    })
-    const windows = new Map<string, ProjectedRow[]>()
-    if (selected.length) {
-      const result = await this.sql.query<ProjectedRow & { execution_id: string }>(executionItemWindowsSql,
-        [JSON.stringify(selected.map((row, ordinal) => {
-          const known = cursor?.[row.id]
-          const terminal = terminalState(row.state)
-          const after = known?.after?.t === terminal ? known.after : undefined
-          return { execution_id: row.id, native_session_id: row.native_session_id, ordinal,
-            mode: known ? 'changes' : 'snapshot', known_revision: known?.n ?? '0', before_sequence: request.before ?? null,
-            item_id: request.itemId ?? null, after_revision: after?.r ?? null, after_key: after?.k ?? null,
-            item_limit: limit + 1, message_limit: PREVIEW.message + REDACTION_LOOKAHEAD,
-            input_limit: PREVIEW.input + REDACTION_LOOKAHEAD, output_limit: PREVIEW.output + REDACTION_LOOKAHEAD,
-            byte_budget: budget, terminal_changed: known !== undefined && known.t !== terminal }
-        }))])
-      for (const projected of result.rows) {
-        const entries = windows.get(projected.execution_id) ?? []
-        entries.push(projected)
-        windows.set(projected.execution_id, entries)
-      }
-    }
     const next: Record<string, CursorEntry> = {}
     const list: AgentChatExecutionItem[] = []
     let remaining = limit
@@ -448,7 +419,7 @@ export class ExecutionActivityReader {
         continue
       }
       const window = await this.window(row, request, { mode: known ? 'changes' : 'snapshot',
-        limit: remaining, budget: remainingBytes, ...(known ? { known } : {}) }, windows.get(row.id) ?? [])
+        limit: remaining, budget: remainingBytes, ...(known ? { known } : {}) })
       list.push(...window.items)
       remaining -= window.items.length
       remainingBytes -= Buffer.byteLength(JSON.stringify(window.items))

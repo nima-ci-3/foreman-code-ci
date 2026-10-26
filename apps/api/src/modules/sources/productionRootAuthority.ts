@@ -63,13 +63,13 @@ export function createProductionRootPolicies(input: {
         where c.main_id=$1 order by h.host_scope`, [input.mainId])
       return rows.rows.map(row => ApprovedRootAllowlistSchema.parse(row.record))
     },
-    attest: async (root, sql) => (await installed(root.selection.hostRef, sql)).attest(root),
+    attest: async root => (await installed(root.selection.hostRef)).attest(root),
     prepareManaged: async root => (await installed(root.selection.hostRef)).prepareManaged(root),
     browse: async (root, path) => (await installed(root.selection.hostRef)).browse(root, path),
     sourceNamespace: async (policy, id) => (await installed(policy.hostRef)).sourceNamespace(policy, id),
   }
-  async function installed(host: Parameters<typeof workspaceRootHostScope>[0], sql: SqlQuery = input.pool) {
-    const rows = await sql.query<{ record: unknown }>(`select c.record from workspace_root_host_configuration_heads h
+  async function installed(host: Parameters<typeof workspaceRootHostScope>[0]) {
+    const rows = await input.pool.query<{ record: unknown }>(`select c.record from workspace_root_host_configuration_heads h
       join workspace_root_host_configurations c on c.host_scope=h.host_scope and c.configuration_revision=h.configuration_revision
       where h.host_scope=$1`, [workspaceRootHostScope(host)])
     if (!rows.rows[0]) throw new DomainError('ROOT_CONFIGURATION_MISSING', 'The selected host has no explicit human-approved root configuration.', 409)

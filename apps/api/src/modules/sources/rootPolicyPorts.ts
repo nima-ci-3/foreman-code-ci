@@ -12,7 +12,7 @@ export interface WorkspaceRootPolicyPort {
   authorize(sql: SqlQuery, principal: ManagementPrincipal, selection: WorkspaceRootSelection): Promise<AuthorizedWorkspaceRoot>
   authorizeManaged?(sql: SqlQuery, principal: ManagementPrincipal,
     selection: WorkspaceRootSelection): Promise<AuthorizedWorkspaceRoot>
-  attest(root: AuthorizedWorkspaceRoot, sql?: SqlQuery): Promise<WorkspaceRootAttestation>
+  attest(root: AuthorizedWorkspaceRoot): Promise<WorkspaceRootAttestation>
   prepareManaged?(root: AuthorizedWorkspaceRoot): Promise<WorkspaceRootAttestation>
   inspect(sql: SqlQuery, principal: ManagementPrincipal, policy: WorkspaceRootPolicy): Promise<void>
   browse(root: AuthorizedWorkspaceRoot, relativePath: string): Promise<WorkspaceRootBrowseResult>
@@ -33,7 +33,7 @@ export interface WorkspaceRootHostPort {
   authorize(sql: SqlQuery, principal: ManagementPrincipal, host: ApprovedRootAllowlist['hostRef'], installationId: string): Promise<WorkspaceRootPolicy['registration']>
   /** Persisted human-approved host configuration only; no probe/browse on list. */
   configurations(sql: SqlQuery, workspaceId: string): Promise<ApprovedRootAllowlist[]>
-  attest(root: AuthorizedWorkspaceRoot, sql?: SqlQuery): Promise<WorkspaceRootAttestation>
+  attest(root: AuthorizedWorkspaceRoot): Promise<WorkspaceRootAttestation>
   prepareManaged?(root: AuthorizedWorkspaceRoot): Promise<WorkspaceRootAttestation>
   browse(root: AuthorizedWorkspaceRoot, relativePath: string): Promise<WorkspaceRootBrowseResult>
   sourceNamespace(policy: WorkspaceRootPolicy, rootId: string): Promise<{ canonicalPath: string; filesystem: WorkspaceRootPolicy['filesystem']; attestationId: string; attestationDigest: string }>

@@ -148,17 +148,11 @@ async function workParents(sql: SqlQuery, scope: RepeatScope, version: WorkflowV
   }
   if (work.kind === 'work_request' || work.kind === 'join') {
     const sources = work.kind === 'join' ? work.sources : [work]
-    const resolved = await Promise.allSettled(sources.map(async source => {
+    for (const source of sources) {
       const request = await workRequest(sql, scope, version, source.request.requestId, source.request)
       if (request.destinationActivationId !== work.activation.activationId
         || request.destinationNodeId !== current.execution.workflowNodeId) return conflict()
-      return acceptedWorkExecution(sql, scope, version, { executionId: request.requesterExecutionId,
-        activationId: request.requesterActivationId, nodeId: request.requesterNodeId,
-        digest: request.payloadDigest, result: source.acceptedSourceResult })
-    }))
-    for (const result of resolved) {
-      if (result.status === 'rejected') throw result.reason
-      parents.push(result.value)
+      await addRequest(request, source.acceptedSourceResult)
     }
   } else if (work.kind === 'work_return') {
     const rows = await sql.query<{ record: unknown }>(

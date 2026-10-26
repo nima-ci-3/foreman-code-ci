@@ -5,7 +5,7 @@ import { AcceptedWorkflowRunCurrentSchema,
 import { CurrentJournalRunPinSchema as GraphEditRunPinSchema, CurrentJournalRunStateSchema as GraphEditRunStateSchema,
   type CurrentJournalRunState as GraphEditRunState } from '@foreman-code/contracts/current'
 import { DomainError } from '../errors.js'
-import { readSaveNativeSettlements } from './saveNativeSettlement.js'
+import { hasSaveNativeSettlement } from './saveNativeSettlement.js'
 import { readImmutableWorkflowVersion, readImmutableAgentConfiguration,
   type ImmutableWorkflowVersionRow, type ImmutableAgentConfigurationRow } from '../workflows/index.js'
 import { CANCELED_INTERACTION_RETIRED_SQL } from '../interactions/index.js'
@@ -173,14 +173,13 @@ async function readAffectedRows(client: Pick<pg.PoolClient, 'query'>, input: Aff
           then r.record->'agentConfigurationVersionIds' else '{}'::jsonb end))
     ) as configurations
     from runs r where ${affected} order by r.id`, values(input))
-  const candidates = rows.rows.filter(row => row.native === false && validCurrentSnapshot(row))
-  const nativeSettlements = await readSaveNativeSettlements(client, candidates.map(row => ({
-    scope: { workspaceId: row.workspace_id, workflowId: row.workflow_id,
-      workflowVersionId: row.workflow_version_id, runId: row.id, executionSemanticsVersion: 3 },
-    version: readImmutableWorkflowVersion(row.version_row!, { id: row.workflow_version_id,
-      workspaceId: row.workspace_id, workflowId: row.workflow_id }),
-  })))
-  for (const row of candidates) row.native = !nativeSettlements.get(row.id)
+  for (const row of rows.rows) {
+    if (row.native !== false || !validCurrentSnapshot(row)) continue
+    const version = readImmutableWorkflowVersion(row.version_row!, { id: row.workflow_version_id,
+      workspaceId: row.workspace_id, workflowId: row.workflow_id })
+    row.native = !await hasSaveNativeSettlement(client, { workspaceId: row.workspace_id, workflowId: row.workflow_id,
+      workflowVersionId: row.workflow_version_id, runId: row.id, executionSemanticsVersion: 3 }, version)
+  }
   return rows.rows
 }
 

@@ -1,6 +1,6 @@
 import { HarnessNativeEventSchema, type HarnessNativeEvent } from '@foreman-code/contracts'
 import { assertGraphTransaction } from '../run-graph/connection.js'
-import type { SqlTransaction, TransactionSql } from '../../infrastructure/transaction.js'
+import type { SqlTransaction } from '../../infrastructure/transaction.js'
 import { normalizeNativeProducerEvent, NATIVE_PRODUCER_REJECTION_TYPE, NATIVE_PRODUCER_REJECTION_VERSION,
   type NormalizedNativeProducerEvent } from '../run-graph/nativeProducerNormalization.js'
 import { DomainError } from '../errors.js'
@@ -61,12 +61,6 @@ function allocateEvents(input: readonly NormalizedNativeProducerEvent[], allocat
 export async function appendNormalizedNativeEvents(sql: SqlTransaction,
   input: readonly NormalizedNativeProducerEvent[]): Promise<NativeEventAppendResult[]> {
   assertGraphTransaction(sql)
-  return appendNativeEventsInTransaction(sql, input)
-}
-
-/** The caller owns an open transaction; allocator locks and event writes commit together. */
-export async function appendNativeEventsInTransaction(sql: TransactionSql,
-  input: readonly NormalizedNativeProducerEvent[]): Promise<NativeEventAppendResult[]> {
   if (!input.length) return []
   const events = input.map(normalized => {
     const event = HarnessNativeEventSchema.parse(normalized.event)
@@ -106,8 +100,4 @@ export async function appendNativeEventsInTransaction(sql: TransactionSql,
       .map(([id, next]) => ({ id, next_sequence: String(next) }))),
     JSON.stringify(batch.inserts)])
   return batch.results
-}
-
-export function appendRawNativeEventsInTransaction(sql: TransactionSql, events: readonly HarnessNativeEvent[]) {
-  return appendNativeEventsInTransaction(sql, events.map(normalizeNativeProducerEvent))
 }

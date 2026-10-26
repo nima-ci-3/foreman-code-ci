@@ -1,7 +1,7 @@
 import { logIgnoredError } from '../diagnostics/index.js'
 import { DomainError } from '../errors.js'
 import { HarnessNativeEventSchema, NativeSessionReferenceSchema } from '@foreman-code/contracts'
-import { appendRawNativeEventsInTransaction } from '../runs/index.js'
+import { appendNativeEvent } from '../runs/nativeEvents.js'
 import type pg from 'pg'
 import type { ManagementPrincipal } from '@foreman-code/contracts/management'
 import { RunSubagentCommandReceiptSchema } from '@foreman-code/contracts/subagents'
@@ -106,21 +106,14 @@ export async function backfillRunSubagents(service: SubagentServicePort, princip
       const current = (await scope.sql.query<{ reference: unknown; child_cursor: string | null }>(`select s.reference,b.child_cursor from execution_native_sessions s
         left join run_subagent_backfill_state b using(execution_id) where s.execution_id=$1`, [source.id])).rows[0]
       if (!current || JSON.stringify(current.reference) !== JSON.stringify(source.reference) || current.child_cursor !== source.child_cursor) return
-      const events = page.events.map(native => {
+      for (const native of page.events) {
         const event = HarnessNativeEventSchema.parse({ ...native, executionId: source.id })
         if (!event.connectionId?.startsWith('child-history-') || event.sequence !== 0) throw new Error('Native child readback lacks its stable source identity.')
-        return event
-      })
-      const prior = (await scope.sql.query<{ connection_id: string; record: { occurredAt: string } }>(`select connection_id,record
-        from harness_native_events where execution_id=$1 and connection_id=any($2::text[]) and source_sequence=0`,
-      [source.id, events.map(event => event.connectionId!)])).rows
-      const times = new Map(prior.map(row => [row.connection_id, row.record.occurredAt]))
-      for (const event of events) {
-        const time = times.get(event.connectionId!)
-        if (time) event.occurredAt = time
-        else times.set(event.connectionId!, event.occurredAt)
+        const prior = (await scope.sql.query<{ record: { occurredAt: string } }>(`select record from harness_native_events
+          where execution_id=$1 and connection_id=$2 and source_sequence=0`, [source.id, event.connectionId])).rows[0]
+        if (prior) event.occurredAt = prior.record.occurredAt
+        await appendNativeEvent(scope.sql, event)
       }
-      await appendRawNativeEventsInTransaction(scope.sql, events)
       await scope.sql.query(`insert into run_subagent_backfill_state(execution_id,child_cursor,complete) values($1,$2,$3)
         on conflict(execution_id) do update set child_cursor=excluded.child_cursor,complete=excluded.complete,last_failure=null,updated_at=clock_timestamp()`,
         [source.id, page.nextCursor, page.nextCursor === null])

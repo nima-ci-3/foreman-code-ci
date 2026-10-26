@@ -144,13 +144,12 @@ export class ReviewNativeProofServices {
 }
 
 export async function assertReviewOriginalProofLocked(sql: SqlTransaction, job: ReviewJob,
-  observation: NativeGraphObservation, proofId: string,
-  prefetched?: { record: ReviewNativeProofRecord; source_digest: string } | null): Promise<ReviewNativeProofRecord> {
+  observation: NativeGraphObservation, proofId: string): Promise<ReviewNativeProofRecord> {
   // Graph reads verify this inside a read-only repeatable-read cut, where a
   // row lock is both unavailable and unnecessary; writers still lock it.
   const lock = hasRunGraphPublication(sql, observation.scope) ? ' for share' : ''
-  const row = prefetched === undefined ? (await sql.query<{ record: ReviewNativeProofRecord; source_digest: string }>(
-    `select record,source_digest from review_native_proofs where proof_id=$1 and job_id=$2${lock}`, [proofId, job.id])).rows[0] : prefetched
+  const row = (await sql.query<{ record: ReviewNativeProofRecord; source_digest: string }>(
+    `select record,source_digest from review_native_proofs where proof_id=$1 and job_id=$2${lock}`, [proofId, job.id])).rows[0]
   if (!row || repeatDigest(row.record, REMOTE_NATIVE_SOURCE_LIMIT) !== row.source_digest || row.record.proofId !== proofId
     || !sameRepeatValue(row.record.job, jobIdentity(job)) || !sameRepeatValue(row.record.scope, observation.scope)
     || !sameRepeatValue(row.record.execution, observation.work.execution)
@@ -201,7 +200,6 @@ export async function assertReviewCleanupProofLocked(sql: SqlTransaction, job: R
 }
 
 export { jobIdentity as reviewJobIdentity }
-export { hasRunGraphPublication }
 
 /** Checks durable original evidence before the coordinator closes a reviewer and
  * again at Run settlement. A caller-supplied terminal job is not authority. */

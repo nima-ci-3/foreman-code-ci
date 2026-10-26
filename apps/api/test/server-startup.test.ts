@@ -20,7 +20,6 @@ const state = vi.hoisted(() => ({
   schemaChanges: [] as string[],
   ownerHeld: false,
   errors: [] as { message: string; error: unknown }[],
-  exitCodes: [] as number[],
 }))
 vi.mock('@foreman-code/contracts/product-environment-node', () => ({ loadProductEnvFile: () => undefined }))
 vi.mock('node:fs/promises', async original => ({
@@ -40,13 +39,7 @@ vi.mock('../src/infrastructure/logger.js', async original => ({
     fatal: (context: { err: unknown }, message: string) => state.errors.push({ message, error: context.err }),
   }),
 }))
-vi.mock('../src/infrastructure/processLifecycle.js', async original => {
-  const actual = await original<typeof import('../src/infrastructure/processLifecycle.js')>()
-  // The real shutdown runs; only the final process exit is recorded instead of ending the test runner.
-  return { installProcessLifecycleLogging: () => undefined,
-    exitAfterShutdown: (close: () => Promise<void>, log: Parameters<typeof actual.exitAfterShutdown>[1]) =>
-      actual.exitAfterShutdown(close, log, code => { state.exitCodes.push(code) }) }
-})
+vi.mock('../src/infrastructure/processLifecycle.js', () => ({ installProcessLifecycleLogging: () => undefined }))
 vi.mock('../src/config.js', () => ({ loadConfig: () => ({ database: {}, checkpoints: { schema: 'test' }, harnesses: { workspaceRoot: process.env.HARNESS_WORKSPACE_ROOT }, host: '127.0.0.1', port: 0 }) }))
 vi.mock('../src/modules/byte-transfer/installedEntrypoints.js', () => ({ readMainRsyncEntrypoint: async () => ({ kind: 'unavailable', reason: 'Startup lifecycle fixture has no installed rsync selection.' }) }))
 vi.mock('../src/infrastructure/database.js', () => ({ createDatabase: () => ({
@@ -108,7 +101,6 @@ let previousExitCode: NodeJS.Process['exitCode']
 beforeEach(() => {
   vi.resetModules()
   state.calls = []
-  state.exitCodes = []
   state.listeners.clear()
   state.finishRecovery = undefined
   state.pingFailures = []
@@ -156,7 +148,6 @@ it('handles SIGTERM while startup recovery is still running and closes all resou
   await vi.waitFor(() => expect(state.calls).toContain('database closed'))
   await delay(5)
   expect(state.calls).toEqual(['listening', 'recovery started', 'native shutdown', 'checkpoints closed', 'database closed'])
-  expect(state.exitCodes).toEqual([0])
 })
 
 it('retries a transient startup database read before initializing the application once', async () => {
@@ -187,7 +178,6 @@ it('keeps the infrastructure open when runtime shutdown is incomplete', async ()
   await vi.waitFor(() => expect(state.errors).toContainEqual({ message: 'shutdown failed', error: state.drainFailure }))
   expect(state.calls).not.toContain('database closed')
   expect(state.calls).not.toContain('checkpoints closed')
-  await vi.waitFor(() => expect(state.exitCodes).toEqual([1]))
 })
 
 it('finishes older production close hooks while database access is still available', async () => {

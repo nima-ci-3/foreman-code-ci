@@ -1,4 +1,4 @@
-import { assertReviewOriginalProofLocked, type ReviewNativeProofRecord } from '../reviewNativeProof.js'
+import { assertReviewOriginalProofLocked } from '../reviewNativeProof.js'
 import { DurableInteractionSchema, ReviewJobSchema } from '@foreman-code/contracts'
 import {
   parseNativeGraphObservation, assertNativeGraphProjectionAuthority, sameGraphScope,
@@ -67,15 +67,13 @@ export async function recordReviewObservation(publication: RunGraphPublication,
   })
 }
 
-export async function reviewEvidence(sql: SqlTransaction, jobId: string,
-  prefetched?: { record: unknown; approval_native_evidence: unknown; approval_original_proof_id: string | null },
-  proof?: { record: ReviewNativeProofRecord; source_digest: string } | null): Promise<NativeGraphObservation | undefined> {
-  const row = prefetched ?? (await sql.query<{ record: unknown; approval_native_evidence: unknown; approval_original_proof_id: string | null }>(
+export async function reviewEvidence(sql: SqlTransaction, jobId: string): Promise<NativeGraphObservation | undefined> {
+  const row = (await sql.query<{ record: unknown; approval_native_evidence: unknown; approval_original_proof_id: string | null }>(
     'select record,approval_native_evidence,approval_original_proof_id from review_jobs where id=$1', [jobId])).rows[0]
   if (!row?.approval_native_evidence) return undefined
   const observation = parseNativeGraphObservation(row.approval_native_evidence)
   if (!row.approval_original_proof_id) return fail('REVIEW_ORIGINAL_SOURCE_REQUIRED')
-  await assertReviewOriginalProofLocked(sql, ReviewJobSchema.parse(row.record), observation, row.approval_original_proof_id, proof)
+  await assertReviewOriginalProofLocked(sql, ReviewJobSchema.parse(row.record), observation, row.approval_original_proof_id)
   return observation
 }
 

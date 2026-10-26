@@ -32,7 +32,7 @@ import { assertMeaningfulSaveAdmitted } from '../graph-drafts/index.js'
 import { assertNativeWorkflowConfiguration } from '../harnesses/index.js'
 import { lockActiveWorkspace } from '../workspaces/index.js'
 import { lockAgentConfigurations } from '../workspaces/index.js'
-import { resolveAssignedSkillSets } from '../skills/catalog.js'
+import { resolveAssignedSkills } from '../skills/catalog.js'
 import { configurationWithNodeSkills } from '../skills/nodeSkills.js'
 import { composeInstructionText, instructionsTooLarge } from '../skills/instructions.js'
 import type { ProviderAccountConfigurationService } from '../harnesses/index.js'
@@ -420,13 +420,11 @@ export class CurrentWorkflowAuthoring {
     const version = parsedVersion.data
     const executable = ExecutableWorkflowCurrentSchema.safeParse({ version, configurations })
     if (!executable.success) throw new DomainError('GRAPH_INVALID', 'Fix the workflow settings below.', 409, { issues: workflowSaveIssues(executable.error.issues) })
-    const skillNodes = version.definition.nodes.filter(node => node.kind !== 'job')
-    const nodeSkills = await resolveAssignedSkillSets(client, input.workspaceId, skillNodes.map(node => ({
-      references: node.skills?.add ?? [], retained: base?.nodeSkillSnapshots?.[node.id] ?? [],
-    })))
-    for (const [index, node] of skillNodes.entries()) {
+    for (const node of version.definition.nodes) {
+      if (node.kind === 'job') continue
       const configuration = configurations.find(config => config.agentId === node.agentId)!
-      const additions = nodeSkills[index]!
+      const additions = await resolveAssignedSkills(client, input.workspaceId, node.skills?.add ?? [],
+        base?.nodeSkillSnapshots?.[node.id])
       if (node.browser?.enabled) additions.push(await readManagedBrowserSkill())
       if (additions.length) {
         version.nodeSkillSnapshots ??= {}

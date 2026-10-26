@@ -70,9 +70,8 @@ export class DurableEditIntentService<S extends EditStageScope, I extends Durabl
   constructor(private readonly pool: pg.Pool, private readonly commands: PostgresCommandCoordinator,
     private readonly drafts: EditIntentBoundary<S, I>) {}
 
-  private async affectedRuns(client: pg.PoolClient, intent: Pick<I, 'workspaceId' | 'workflowId' | 'stagedDraft'>,
-    settlementRequired?: boolean) {
-    if (!(settlementRequired ?? await this.drafts.requiresRunSettlement(client, intent.stagedDraft))) return []
+  private async affectedRuns(client: pg.PoolClient, intent: Pick<I, 'workspaceId' | 'workflowId' | 'stagedDraft'>) {
+    if (!await this.drafts.requiresRunSettlement(client, intent.stagedDraft)) return []
     return readAffectedGraphRuns(client, { workspaceId: intent.workspaceId, workflowId: intent.workflowId,
       stagedAgentIds: this.drafts.stagedAgentIds(intent.stagedDraft) })
   }
@@ -139,10 +138,10 @@ export class DurableEditIntentService<S extends EditStageScope, I extends Durabl
   }
   private async readback(client: pg.PoolClient, live: ManagementPrincipal, intent: I): Promise<EditIntentReadResult<I>> {
     this.authorizeContent(live, intent, false)
-    const settlementRequired = await this.drafts.requiresRunSettlement(client, intent.stagedDraft)
-    const current = await this.affectedRuns(client, intent, settlementRequired)
+    const current = await this.affectedRuns(client, intent)
     this.authorizeCurrent(live, current)
     const canStop = current.filter((item) => !item.settled).every((item) => isAuthorized(live, 'runs:stop', item.pin))
+    const settlementRequired = await this.drafts.requiresRunSettlement(client, intent.stagedDraft)
     return this.drafts.readResultSchema.parse({ intent, current, canStop,
       affectedSetChanged: settlementRequired && !sameAffectedSet(intent, current) })
   }

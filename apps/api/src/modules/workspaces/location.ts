@@ -1,6 +1,5 @@
 export { requiredLocationAccess } from './locationAccess.js'
 import { withTransaction, type SqlQuery } from '../../infrastructure/transaction.js'
-import { batchedReads } from '../../infrastructure/batchedReads.js'
 import { isDeepStrictEqual } from 'node:util'
 import { constants } from 'node:fs'
 import { access, mkdir, realpath, rmdir, stat } from 'node:fs/promises'
@@ -351,9 +350,8 @@ export class WorkspaceLocationService {
       `select id, execution_location, execution_location_identity, location_revision, archived_at
        from workspaces where id = any($1::text[])`, [workspaceIds],
     )
-    const sql = batchedReads(this.pool)
     return new Map(await Promise.all(result.rows.map(async (row) =>
-      [row.id, await this.inspectRow(principal, row.id, row, sql)] as const)))
+      [row.id, await this.inspectRow(principal, row.id, row, this.pool)] as const)))
   }
 
   private async inspectRow(principal: ManagementPrincipal, workspaceId: string, row: LocationRow, sql: SqlQuery) {

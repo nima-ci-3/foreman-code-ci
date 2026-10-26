@@ -91,18 +91,6 @@ export class SyncRepository {
     const matches = row && sameDeviceProvisioningTarget(DeviceProvisioningTargetSchema.parse(row.target), target)
     return { revision: Number(row?.revision ?? 0), enabled: matches ? row.enabled : true }
   }
-  async preferences(sql: Pick<pg.Pool, 'query'>, workspaceIds: string[], targets: DeviceProvisioningTarget[]) {
-    const rows = (await sql.query<{ workspace_id: string; host_key: string; target: unknown; revision: string; enabled: boolean }>(
-      `select workspace_id,host_key,target,revision::text,enabled from computer_sync_preferences
-        where workspace_id=any($1::text[]) and host_key=any($2::text[])`,
-      [workspaceIds, targets.map(buildComputerKey)])).rows
-    const indexed = new Map(rows.map(row => [JSON.stringify([row.workspace_id, row.host_key]), row]))
-    return (workspaceId: string, target: DeviceProvisioningTarget): SyncPreference => {
-      const row = indexed.get(JSON.stringify([workspaceId, buildComputerKey(target)]))
-      const matches = row && sameDeviceProvisioningTarget(DeviceProvisioningTargetSchema.parse(row.target), target)
-      return { revision: Number(row?.revision ?? 0), enabled: matches ? row.enabled : true }
-    }
-  }
   async save(sql: Pick<pg.Pool, 'query'>, workspaceId: string, target: DeviceProvisioningTarget,
     preference: SyncPreference, principalId: string) {
     await sql.query(`insert into computer_sync_preferences(workspace_id,host_key,target,revision,enabled,updated_by)

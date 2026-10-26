@@ -30,7 +30,7 @@ import { buildWorkHandoffGraph } from './workHandoffGraph.js'
 import { workHandoffNodeAction } from './workHandoffNode.js'
 import { WorkExecutionFailure } from './workExecutionFailure.js'
 import { workflowCoordinationPrompt } from './workflowCoordinationPrompt.js'
-import { teamKanbanWriter, readWorkflowTeam, type WorkflowTeam } from './workflowTeamPrompt.js'
+import { readWorkflowTeam } from './workflowTeamPrompt.js'
 import { usesWorkHandoffGraph } from './workflowRunMode.js'
 import { isTransientExecutionError, repeatSettlementPending, transientExecutionFailure } from './executionRetryPolicy.js'
 export { repeatSettlementPending } from './executionRetryPolicy.js'
@@ -193,7 +193,6 @@ function nativeWorkContracts(input: {
   version: WorkflowVersionCurrent
   node: Exclude<WorkflowVersionCurrent['definition']['nodes'][number], { kind: 'job' }>
   execution: HarnessExecution
-  team: WorkflowTeam
 }) {
   const { run, version, node, execution } = input
   const interval = repeatTickIndex(execution.input) !== undefined
@@ -201,7 +200,7 @@ function nativeWorkContracts(input: {
     definition: version.definition, workflowNodeId: node.id, interval } : undefined
   const hierarchyResult = !run.resultProtocol && version.definition.hierarchy && !interval
     ? { version, workflowNodeId: node.id } : undefined
-  const workHandoffContract = coordinationResult ? workflowCoordinationPrompt(coordinationResult, teamKanbanWriter(input.team, node.id))
+  const workHandoffContract = coordinationResult ? workflowCoordinationPrompt(coordinationResult)
     : hierarchyResult ? hierarchyWorkPrompt(version.definition, node.id)
     : version.definition.handoffs && !interval
     ? currentInitialPrompt({ ...node, initialPrompt: undefined }, false, true) : undefined
@@ -353,7 +352,7 @@ export function repeatNativeObserver(context: RepeatNativeObserverContext):
         version: context.version, configuration, workspaceId: run.workspaceId, executionContext,
         resultProtocol: run.resultProtocol, collaborationPrompt, team })
       const { coordinationResult, hierarchyResult, workHandoffContract } = nativeWorkContracts({
-        run, version: context.version, node, execution, team })
+        run, version: context.version, node, execution })
       const deliverable = workflowDeliverableContract(context.version, execution,
         (kind, values) => context.workflows.referencesCreatedByExecution(kind, values, run.workspaceId, execution.id), run.resultProtocol)
       for (;;) {

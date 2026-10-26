@@ -7,9 +7,7 @@ import { buildBrowserRuntimeRecipe } from './browser-runtime-install.mjs';
 import { downloadPinnedNodeArchive } from '../apps/worker/src/nodeRuntime.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire, isBuiltin } from 'node:module';
@@ -143,7 +141,7 @@ await writeFile(join(output, 'install'), snapshotSource('apps/worker/artifacts/i
 if (runtime) await writeFile(join(output, 'artifacts/node-runtime.json'), snapshotSource(runtimeInput.path), { mode: 0o600 });
 // Old updaters verify and download ordinary manifest files before starting their readiness window.
 const runtimeArchivePath = bootstrapNode ? 'artifacts/node-runtime.tar.xz' : undefined;
-if (runtimeArchivePath) await copyPinnedNodeArchive(join(output, runtimeArchivePath), runtime);
+if (runtimeArchivePath) await downloadPinnedNodeArchive(join(output, runtimeArchivePath), runtime);
 const { storeDir: store } = parse(await readFile(join(root, 'node_modules/.modules.yaml'), 'utf8'));
 const nativePackages = await copySharpPackagesFromStore({
   root,
@@ -172,18 +170,3 @@ const manifest = { format: 1, version: releaseVersion, commit, lockfileSha256: h
   ...(runtime ? { runtime: { metadataPath: 'artifacts/node-runtime.json', ...(runtimeArchivePath ? { archivePath: runtimeArchivePath } : {}), version: runtime.version, archiveSha256: runtime.archive.sha256, executableSha256: runtime.nodeExecutable.sha256, qualification: 'future installation requires actual target readback' } } : {}), files };
 await writeFile(join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 console.log(JSON.stringify({ manifestSha256: hash(await readFile(join(output, 'manifest.json'))), version: releaseVersion, commit: manifest.commit, files: files.length }));
-
-/** One download of the pinned Node archive serves every transition carrier and later builds; each copy is rechecked. */
-async function copyPinnedNodeArchive(destination, metadata) {
-  const cache = join(homedir(), '.cache', 'foreman-code', 'node-runtime');
-  await mkdir(cache, { recursive: true, mode: 0o700 });
-  const cached = join(cache, `${metadata.archive.sha256}.tar.xz`);
-  if (!existsSync(cached)) {
-    const partial = `${cached}.${process.pid}.partial`;
-    try {
-      await downloadPinnedNodeArchive(partial, metadata);
-      await rename(partial, cached);
-    } finally { await rm(partial, { force: true }); }
-  }
-  await downloadPinnedNodeArchive(destination, metadata, { archivePath: cached });
-}

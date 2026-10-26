@@ -49,10 +49,8 @@ function ticketDatabase() {
       return { rows: [], rowCount: Number(claims.get(values[0] as string) === values[1]) }
     }
     if (text.startsWith('insert into ci_runs')) {
-      for (let offset = 0; offset < values.length; offset += 10) {
-        const record = CiRunRecordSchema.parse(JSON.parse(values[offset + 3] as string))
-        rows.set(record.id, { record, host_key: null })
-      }
+      const record = CiRunRecordSchema.parse(JSON.parse(values[3] as string))
+      rows.set(record.id, { record, host_key: null })
       return { rows: [], rowCount: 1 }
     }
     if (text.startsWith('update ci_runs')) {

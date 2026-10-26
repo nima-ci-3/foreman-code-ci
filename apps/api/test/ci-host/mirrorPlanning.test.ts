@@ -66,9 +66,7 @@ it('publishes the unit mirror snapshot with the learned durations the queued tic
     grants: [], expiresAt: '2099-01-01T00:00:00.000Z', revokedAt: null }
   const queuedDurations: unknown[] = []
   const pool = { query: vi.fn(async (sql: string, parameters?: unknown[]) => {
-    if (sql.startsWith('insert into ci_runs')) {
-      for (let offset = 0; offset < parameters!.length; offset += 10) queuedDurations.push(JSON.parse(parameters![offset + 4] as string))
-    }
+    if (sql.startsWith('insert into ci_runs')) queuedDurations.push(JSON.parse(parameters![4] as string))
     if (sql.includes('from ci_file_durations')) return { rows: [{ file: 'apps/api/src/a.test.ts', duration_ms: 70_000 }] }
     return { rows: sql.includes('from workspaces') ? [{ record: workspace }] : [], rowCount: 1 }
   }) } as unknown as pg.Pool

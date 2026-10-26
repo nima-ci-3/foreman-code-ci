@@ -45,15 +45,13 @@ export async function assertConsultationWriterLocked(sql: SqlTransaction,
 export async function appendConsultationNativeLocked(sql: SqlTransaction, writer: ConsultationWriter,
   input: { events: readonly NativeHarnessEvent[]; history?: NativeHistory; now: string }): Promise<void> {
   await assertConsultationWriterLocked(sql, writer)
-  const events = input.events.map(event => {
+  for (const event of input.events) {
     const record = canonicalJson(event)
-    return { source_id: sha256Hex(record), record: JSON.parse(record) as unknown }
-  })
-  if (events.length) await sql.query(`insert into run_coordinator_native_events(consultation_id,run_id,source_id,record,created_at)
-    select $1,$2,event.source_id,event.record,$4::timestamptz
-    from jsonb_to_recordset($3::jsonb) as event(source_id text,record jsonb)
-    on conflict(consultation_id,source_id) do nothing`,
-  [writer.binding.consultationId, writer.binding.runId, JSON.stringify(events), input.now])
+    const sourceId = sha256Hex(record)
+    await sql.query(`insert into run_coordinator_native_events(consultation_id,run_id,source_id,record,created_at)
+      values($1,$2,$3,$4::jsonb,$5) on conflict(consultation_id,source_id) do nothing`,
+    [writer.binding.consultationId, writer.binding.runId, sourceId, record, input.now])
+  }
   if (input.history) await sql.query(`insert into run_coordinator_native_history
     (consultation_id,run_id,revision,history,observed_at) values($1,$2,1,$3::jsonb,$4)
     on conflict(consultation_id) do update set history=excluded.history,

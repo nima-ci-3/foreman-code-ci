@@ -78,13 +78,11 @@ export class JobInputAuthority {
   /** Definition Save/validate/Start admission: SQL-only, no made-up execution or byte probe. */
   async validateDeclaredJobInputs(sql:JobSql,principal:ManagementPrincipal,workspaceId:string,inputs:JobExecutionRecord['acceptedSpec']['inputs']):Promise<void>{
     const live=await readLiveManagementPrincipal(sql,principal.id)
-    const snapshots = new Map((await this.files.readMany(inputs, sql)).map(value =>
-      [inputHash([value.value.file.fileId, value.value.revision.revisionId]), value]))
-    for(const input of inputs){const stored=snapshots.get(inputHash([input.fileId,input.revisionId]));if(!stored)throw new DomainError('JOB_INPUT_PIN_CONFLICT','Declared input revision is missing.',409)
+    for(const input of inputs){const stored=await this.files.read(input.fileId,input.revisionId,sql);if(!stored)throw new DomainError('JOB_INPUT_PIN_CONFLICT','Declared input revision is missing.',409)
       const scope=stored.value.file.scope
       if(scope.kind!=='temporary'&&scope.workspaceId!==workspaceId)throw new DomainError('JOB_INPUT_SCOPE_DENIED','Declared file is outside this job workspace.',403)
       if(scope.kind==='temporary'&&scope.chat.kind==='agent'&&scope.chat.workspaceId!==workspaceId)throw new DomainError('JOB_INPUT_SCOPE_DENIED','Declared conversation file is outside this job workspace.',403)
-      const {path,...pin}=input;await this.pin(sql,null,live,pin,`files/${path}`,null,stored)
+      const {path,...pin}=input;await this.pin(sql,null,live,pin,`files/${path}`,null)
     }
   }
   async entries(sql:JobSql,execution:JobExecutionRecord,principal:ManagementPrincipal):Promise<JobInputEntry[]> {

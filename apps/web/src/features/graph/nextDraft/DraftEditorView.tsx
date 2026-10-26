@@ -21,7 +21,6 @@ import { RepeatEditor } from '../../repeats'
 import type { useDraftEditorController } from './useDraftEditorController'
 import { dragByHeader } from '../../../shared/ui/floatingWindow'
 import { WorkspaceExecutionLocationSettings } from '../../settings'
-import { useRunSetup } from './RunSetup'
 
 const kindName = (kind: 'execution' | 'approval') => kind === 'approval' ? 'Approval' : 'Handoff'
 
@@ -33,7 +32,6 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
   controller: ReturnType<typeof useDraftEditorController>
 }) {
   const [locationOpen, setLocationOpen] = useState(false)
-  const runSetup = useRunSetup()
   const { graph, context, board, editIntent, undoScope, core, preflight, pendingStart, changedAgents,
     reloading, stopAndSave, discardChanges, reload, inspectLatest, startMutation, starting, start, recoverStart,
     workspace, managedWorkflow, agents, hints, requestSave, historyAction, openAgent, panels,
@@ -52,7 +50,7 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
   const editLocked = editIntent.locked || !!board?.boardRunLive
   const uncertainStart = !!pendingStart && !starting
   const runAction = <><Button size={board?.runActionHost ? 'sm' : undefined} variant="primary" leading={<Icon name="play" size={14} />} aria-label={uncertainStart ? 'Reconcile Start' : needsSave ? 'Save and run' : 'Start saved version'}
-    title={startReason} disabled={startDisabled} loading={starting} onClick={() => void (pendingStart ? start() : prepare(() => runSetup.guard(graph, agents, () => needsSave ? startMutation.mutateAsync({ saveFirst: true }) : start()))).catch(report)}>{starting ? 'Starting…' : uncertainStart ? 'Confirm start' : needsSave ? 'Save and run' : board?.authoringActive === false ? 'Run current workflow' : 'Run'}</Button>
+    title={startReason} disabled={startDisabled} loading={starting} onClick={() => void (pendingStart ? start() : prepare(() => needsSave ? startMutation.mutateAsync({ saveFirst: true }) : start())).catch(report)}>{starting ? 'Starting…' : uncertainStart ? 'Confirm start' : needsSave ? 'Save and run' : board?.authoringActive === false ? 'Run current workflow' : 'Run'}</Button>
 </>
   const toolbar = <>
         <div className="board-title">
@@ -206,7 +204,6 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
     <ConfirmDialog open={confirm === 'reload'} onOpenChange={(open) => { if (!open) setConfirm(undefined) }} title="Inspect the latest saved workflow?"
       description="Your unsaved draft is kept separately for comparison. A fresh editor opens the latest saved workflow."
       confirmLabel="Inspect latest" onConfirm={() => { setConfirm(undefined); void inspectLatest() }} />
-    {runSetup.dialog}
     <RemoveHierarchyNodeDialog draftKey={draftKey} edit={edit} pending={reloading || saveBusy || starting || editLocked}
       report={report} />
   </section>

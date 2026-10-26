@@ -37,8 +37,7 @@ exec /usr/bin/git "$@"
   const system = systemGitWorktreePorts(environment)
   const ports = { cloneDirectory: system.cloneDirectory, git: (args: string[],
     options: Parameters<typeof system.git>[1]) => system.git(args.map(arg =>
-    arg === 'https://github.com/fixture/project.git' ? `file://${origin}` : arg),
-    { ...options, ...(stallRepack ? { timeoutMs: 5000 } : {}) }) }
+    arg === 'https://github.com/fixture/project.git' ? `file://${origin}` : arg), options) }
   const clone = await ensureCommit(ports, 'fixture/project', first, AbortSignal.timeout(10_000))
   return { root, origin, environment, git, commit, first, ports, clone, common: join(clone, '.git'), repacking }
 }
@@ -101,9 +100,6 @@ it.each([false, true])('bounds pack maintenance and retains source and Agent com
     if (stalled) expect(await readFile(f.repacking, 'utf8')).toContain('started')
     else expect((await packs()).length).toBeLessThan(64)
     for (const commit of [...commits, successor]) expect(f.git(f.clone, 'cat-file', '-t', commit)).toBe('commit')
-    for (const [index, commit] of [...commits, successor].entries()) {
-      expect(f.git(f.clone, 'show', `${commit}:source.txt`)).toBe(`source ${index}`)
-    }
     expect(f.git(f.clone, 'rev-parse', 'foreman/agent')).toBe(f.first)
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })

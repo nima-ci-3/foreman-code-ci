@@ -26,8 +26,12 @@ export async function readCiGateReservation(pool: pg.Pool) {
       select group_id from ci_runs where state in ('queued','starting','running') and record->>'gate'='true')`)).rows
   const runs = rows.map(row => CiRunRecordSchema.parse(row.record))
   if (!runs.length) return { gate: undefined, reservedHosts: new Set<string | undefined>() }
-  // A gate runs every part to the end; a failed sibling does not release its barrier or hosts.
-  const live = runs.filter(run => ['queued', 'starting', 'running'].includes(run.state))
+  const groups = [...new Set(runs.map(run => run.groupId))]
+  const failed = (await pool.query<{ group_id: string }>(`select distinct group_id from ci_runs
+    where group_id=any($1::uuid[]) and state in ('failed','lost') and record->>'gate'='true'`, [groups])).rows
+  // A failed or lost sibling releases the group's barrier and host reservations.
+  const doomed = new Set(failed.map(row => row.group_id))
+  const live = runs.filter(run => ['queued', 'starting', 'running'].includes(run.state) && !doomed.has(run.groupId))
   const started = new Set(runs.filter(run => ['starting', 'running', 'passed'].includes(run.state)).map(run => run.groupId))
   const admitted = new Map<string, number>()
   for (const [index, run] of runs.entries()) {

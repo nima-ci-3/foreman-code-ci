@@ -5,36 +5,11 @@ import { withExclusiveGraphConnection } from '../src/modules/run-graph/connectio
 import { RunGraphReadService } from '../src/modules/run-graph/readService.js'
 import { readCurrentGraphExchanges } from '../src/modules/interactions/current/currentExchanges.js'
 import { approvalDatabase } from './helpers/approvalDatabase.js'
-import { batchedReads } from '../src/infrastructure/batchedReads.js'
-import type { SqlQuery } from '../src/infrastructure/transaction.js'
-import { PostgresRepeatReviewerBindings } from '../src/modules/interactions/repeatReviewer.js'
 
 const closes: Array<() => Promise<void>> = []
 afterEach(async () => { while (closes.length) await closes.pop()!() })
 
 describe.skipIf(!postgresEnabled)('Wave 2.5 production compact graph composition', { timeout: 60000 }, () => {
-  it('resolves concurrent orchestrator reviewers from shared reads', async () => {
-    const fixture = await approvalDatabase()
-    closes.push(fixture.close)
-    await withExclusiveGraphConnection(fixture.pool, connection => connection.transaction(async sql => {
-      let queries = 0
-      const counted: SqlQuery = { query: (statement, values) => { queries++; return sql.query(statement, values) } }
-      const expected = await new PostgresRepeatReviewerBindings(counted)
-        .select(fixture.interaction, fixture.reviewer.workflowNodeId)
-      const singleReadQueries = queries
-      queries = 0
-      const bindings = new PostgresRepeatReviewerBindings(batchedReads(counted))
-      const [first, second] = await Promise.all([
-        bindings.select(fixture.interaction, fixture.reviewer.workflowNodeId),
-        bindings.select(fixture.interaction, fixture.reviewer.workflowNodeId),
-      ])
-      expect(first.execution.id).toBe(fixture.reviewer.id)
-      expect(first).toEqual(expected)
-      expect(second).toEqual(expected)
-      expect(queries).toBeLessThan(singleReadQueries * 2)
-    }, true))
-  })
-
   it('reads authoritative current exchanges and exposes the qualified shared service', async () => {
     const fixture = await approvalDatabase()
     closes.push(fixture.close)

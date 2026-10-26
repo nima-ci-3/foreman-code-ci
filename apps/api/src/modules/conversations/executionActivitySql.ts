@@ -234,20 +234,6 @@ export const executionItemsSql = `with identities as (
     first_sequence desc,item_key rows between unbounded preceding and 1 preceding),0) as preceding_bytes
   from projected
 )
-select item_key,first_sequence,revision,preceding_bytes,case when preceding_bytes<$13 then record end as record
+select item_key,first_sequence,revision,case when preceding_bytes<$13 then record end as record
 from costed order by case when $3='changes' then revision end asc,
   case when $3='changes' then item_key end asc,first_sequence desc,item_key`
-
-// Reuse the single-execution projection, with independent cursors and SQL limits per window.
-const windowColumns = ['execution_id', 'native_session_id', 'mode', 'known_revision', 'before_sequence',
-  'item_id', 'after_revision', 'after_key', 'item_limit', 'message_limit', 'input_limit', 'output_limit',
-  'byte_budget', 'terminal_changed']
-export const executionItemWindowsSql = `select w.execution_id,p.*
-  from jsonb_to_recordset($1::jsonb) as w(execution_id text,native_session_id text,mode text,
-    known_revision bigint,before_sequence bigint,item_id text,after_revision bigint,after_key text,
-    item_limit integer,message_limit integer,input_limit integer,output_limit integer,byte_budget integer,
-    terminal_changed boolean,ordinal integer)
-  cross join lateral (
-    ${executionItemsSql.replace(/\$(\d+)/g, (_, index: string) => `w.${windowColumns[Number(index) - 1]}`)}
-  ) p order by w.ordinal,case when w.mode='changes' then p.revision end asc,
-    case when w.mode='changes' then p.item_key end asc,p.first_sequence desc,p.item_key`
