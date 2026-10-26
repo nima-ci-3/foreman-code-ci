@@ -20,10 +20,9 @@ const PREVIEW = { message: 16_384, input: 2_000, output: 4_000 }
 const FULL = { message: 65_536, input: 16_000, output: 24_000 }
 type Limits = typeof PREVIEW
 
-export interface ExecutionRow {
+interface ExecutionRow {
   id: string; attempt: number; tick_index: number | null; occurrence_index: string | null; state: AgentChatExecutionSummary['state']
   native_session_id: string | null; created_at: Date; started_at: string | null; finished_at: string | null; revision: string; record_revision: string
-  initial_prompt: string | null; handoff_kind: string | null; handoff_task: unknown; handoff_output: unknown
 }
 export interface ExecutionEventRow {
   sequence: number; item_key: string
@@ -39,14 +38,7 @@ const executionsSql = `select e.id,e.attempt,e.tick_index,e.record#>>'{input,occ
   e.record->>'state' as state,e.record->>'nativeSessionId' as native_session_id,e.created_at,
   e.record->>'startedAt' as started_at,e.record->>'finishedAt' as finished_at,
   coalesce((select max(n.sequence) from harness_native_events n where n.execution_id=e.id),-1)::text as revision,
-  e.activity_record_revision::text as record_revision,
-  (select node->>'initialPrompt' from workflow_versions v,
-    jsonb_array_elements(v.record#>'{definition,nodes}') node
-    where v.id=r.workflow_version_id and node->>'id'=e.workflow_node_id) as initial_prompt,
-  e.record#>>'{input,work,kind}' as handoff_kind,
-  e.record#>'{input,work,task}' as handoff_task,
-  case when e.record#>>'{input,work,kind}'='work_request'
-    then e.record#>'{input,work,acceptedSourceResult,output}' end as handoff_output
+  e.activity_record_revision::text as record_revision
   from harness_executions e join runs r on r.id=e.run_id
   where e.run_id=$1 and e.workflow_node_id=$2 and e.agent_id=$3 and r.workspace_id=$4 and r.workflow_id=$5
   and ($6::text is null or e.id=$6)
@@ -87,21 +79,6 @@ function prefix(value: string, bytes: number) {
   return new TextDecoder().decode(buffer.subarray(0, bytes), { stream: buffer.length > bytes })
 }
 const text = (value: unknown) => typeof value === 'string' ? value : ''
-/** The owner-visible opening of a workflow execution: the node's own prompt, or the task another Agent handed over. */
-export function openingMessage(row: Pick<ExecutionRow, 'initial_prompt' | 'handoff_kind' | 'handoff_task' | 'handoff_output'>): string {
-  if (row.handoff_kind !== 'work_request') return row.initial_prompt ?? ''
-  let task = asRecord(row.handoff_task).data
-  if (row.handoff_task === null || row.handoff_task === undefined) {
-    let output = row.handoff_output
-    const carrier = asRecord(output)
-    if (Object.keys(carrier).length === 1 && typeof carrier.text === 'string') output = carrier.text
-    if (typeof output === 'string') {
-      try { output = JSON.parse(output) as unknown } catch { return '' /* ignore: a non-JSON result carries no task to show. */ }
-    }
-    task = asRecord(asRecord(output).data).latestDeliverable
-  }
-  return typeof task === 'string' ? task : text(asRecord(task).task)
-}
 const STREAMED_METHODS = ['item/commandExecution/outputDelta', 'item/reasoning/summaryTextDelta', 'item/plan/delta']
 
 function label(row: ExecutionRow) {
@@ -288,7 +265,6 @@ export class ExecutionActivityFold {
 
 interface ProjectedRow {
   item_key: string
-  opening_user_message?: boolean
   first_sequence: string
   revision: string
   preceding_bytes?: string
@@ -356,14 +332,8 @@ export class ExecutionActivityReader {
     const redactor = nativePersistenceRedactor([])
     const projectedItems = windowRows.flatMap((projected): AgentChatExecutionItem[] => {
       if (!projected.record) return []
-      const opening = projected.opening_user_message ? openingMessage(row) : undefined
-      if (opening === '') return []
       const fold = new ExecutionActivityFold()
-      // Replace the opening task before folding so truncation counts only owner-visible text.
-      const record = opening !== undefined ? { ...projected.record,
-        payload: { ...asRecord(projected.record.payload), text: opening, truncation: undefined },
-      } : projected.record
-      fold.apply([{ sequence: 0, item_key: projected.item_key, record: redactor.value(record) }])
+      fold.apply([{ sequence: 0, item_key: projected.item_key, record: redactor.value(projected.record) }])
       const item = fold.items(row.id, terminal, limits)[0]
       if (!item) return []
       const sequence = String(projected.first_sequence)
