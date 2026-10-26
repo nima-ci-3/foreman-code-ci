@@ -102,6 +102,16 @@ it('does not finish release warming until its smoke graph is ready', async () =>
   expect(ready).toBe(true)
 })
 
+it('fails release warming when the source or graph cannot be prepared', async () => {
+  const f = await shallowFixture()
+  const resultKeys = vi.fn(async () => { throw new Error('graph unavailable') })
+  Object.assign(f.commits, { resultKeys })
+  await expect(f.commits.warmup('octo/site', 'f'.repeat(40)))
+    .rejects.toMatchObject({ code: 'SOURCE_GITHUB_UNAVAILABLE' })
+  expect(resultKeys).not.toHaveBeenCalled()
+  await expect(f.commits.warmup('octo/site', f.commit)).rejects.toThrow('graph unavailable')
+})
+
 it('publishes a missing non-tip commit by reading it from origin at depth one', async () => {
   const f = await shallowFixture()
   await expect(publishCommit(f.ports, 'octo/site', f.commit, AbortSignal.timeout(30_000)))

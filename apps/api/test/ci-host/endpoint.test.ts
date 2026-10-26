@@ -181,6 +181,31 @@ it('bounds Worker readiness waits while retaining the execution and cleanup dead
     { operation: 'read', timeoutMs: 120_000 }])
 })
 
+it('returns retryable unavailability while a Worker bundle check is reconnecting', async () => {
+  vi.useFakeTimers()
+  const bundle = deferred<never>()
+  const computer: HostCiComputer = { key: 'fixture:bundle-worker',
+    hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-worker' }, label: 'Worker', priority: 50 }
+  const endpoint = new ProductionHostCiEndpoint(mainCiContext, {} as pg.Pool, 'fixture-main', () => ({
+    capabilities: () => [], request: async () => ({ payload: { operation: 'status', ready: true, reasons: [],
+      cpuCount: 8, memoryBytes: 16 * 2 ** 30, runs: [], startProtocolVersion: 3 } }),
+    workerBundleReadiness: () => bundle.promise,
+  }), { handle: async () => { throw new Error('Unexpected local request') } })
+  const planning = new CiPlanningSnapshot(mainCiContext, endpoint)
+  let outcome: unknown
+  const reading = planning.request(computer, { operation: 'status' }).then(
+    reply => { outcome = reply }, error => { outcome = error })
+  try {
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(outcome).toMatchObject({ code: 'CI_HOST_STATUS_UNAVAILABLE', status: 503, details: { retryable: true } })
+    expect(planning.status(computer)).toBeUndefined()
+  } finally {
+    bundle.reject(new Error('Worker disconnected'))
+    await reading
+    vi.useRealTimers()
+  }
+})
+
 it('spends a start retry only after a live status reports the assigned run absent', async () => {
   const computer: HostCiComputer = { key: 'fixture:recovering-worker',
     hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-recovering-worker' },
