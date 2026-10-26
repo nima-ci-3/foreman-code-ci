@@ -212,7 +212,14 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
     // Future cloud capacity behind checks does not exclude the existing busy-builder fallback.
     const candidates = preferGithub(free.some(item => item.checkMs === 0) ? free : eligible,
       item => item.checkMs === 0 && !item.files.length)
-    const target = candidates.map((item, order) => ({ item, order, finish: finishWith(item, file) }))
+    // Longest files come first and set the gate's critical path. A file that fits under it joins a started part
+    // (which needs no further slot) instead of paying setup on another machine; the gate finishes no later.
+    const makespan = Math.max(0, ...integrationFleet.filter(item => item.files.length).map(item => finish(item)))
+    const packed = eligible.filter(item => item.files.length && withFile(item, file).length === load.get(item)!.length)
+      .map((item, order) => ({ item, order, finish: finishWith(item, file) }))
+      .filter(option => option.finish <= makespan)
+      .sort((left, right) => right.finish - left.finish || left.order - right.order)[0]?.item
+    const target = packed ?? candidates.map((item, order) => ({ item, order, finish: finishWith(item, file) }))
       .sort((left, right) => left.finish - right.finish
         || (serial ? exclusiveCount(left.item) - exclusiveCount(right.item) : 0) || left.order - right.order)[0]?.item
     if (!target) {

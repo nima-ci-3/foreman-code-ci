@@ -163,3 +163,16 @@ it('uses an unused eligible GitHub slot before a faster free builder', async () 
     expect.objectContaining({ plannedHostKey: 'github:6', files: [file], expectedDurationMs: 1_170_000 }),
   ])
 })
+
+it('packs short proven-gate files under the longest file instead of starting a machine for each', async () => {
+  const long = 'apps/api/test/long.integration.test.ts'
+  const short = Array.from({ length: 40 }, (_, index) => `apps/api/test/short-${index}.integration.test.ts`)
+  const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
+    { files: [long, ...short], durations: { [long]: 200_000, ...Object.fromEntries(short.map(file => [file, 5_000])) } },
+    unit, {}, fleet('github'), new Map(), undefined, undefined, new Map(), true)
+  const integration = parts.filter(part => part.suite === 'integration')
+  expect(integration.flatMap(part => part.files).sort()).toEqual([long, ...short].sort())
+  // The short files fill the long file's second lane: one machine, and the gate still ends with the long file.
+  expect(integration).toHaveLength(1)
+  expect(Math.max(...integration.map(part => part.expectedDurationMs))).toBe(90_000 + 200_000)
+})
