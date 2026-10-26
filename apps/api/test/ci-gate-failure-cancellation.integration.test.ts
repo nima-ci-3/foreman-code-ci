@@ -45,7 +45,7 @@ async function fixture(gate: boolean, failure: 'observed' | 'persisted', stopCon
     return record
   }
   await pool.query('insert into workspaces(id,record) values($1,$2::jsonb)',
-    [workspaceId, JSON.stringify({ id: workspaceId, name: 'Gate failure workspace' })])
+    [workspaceId, JSON.stringify({ id: workspaceId, name: 'Gate cancellation workspace' })])
   const failed = await insert({ suite: 'lint', state: failure === 'persisted' ? 'failed' : 'running',
     step: 'lint', startedAt: at, ...(failure === 'persisted' ? { finishedAt: at, exitCode: 1 } : {}) }, computers[2])
   const running = await insert({ state: 'running', step: 'integration', startedAt: at }, computers[0])
@@ -100,7 +100,7 @@ async function fixture(gate: boolean, failure: 'observed' | 'persisted', stopCon
     const issued = await access.issue({ name: 'CI reader', audience: 'operator',
       expiresAt: new Date(Date.now() + 600_000),
       grants: granted ? [{ actions: CI_GET_ACTIONS, scope: { workspaceIds: [workspaceId] } }] : [] })
-    const client = new Client({ name: 'gate-failure-test', version: '1' })
+    const client = new Client({ name: 'gate-cancellation-test', version: '1' })
     clients.push(client)
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', address),
       { requestInit: { headers: { authorization: `Bearer ${issued.token}` } } }))
@@ -131,20 +131,59 @@ async function fixture(gate: boolean, failure: 'observed' | 'persisted', stopCon
     } }
 }
 
-it.each([true, false])('keeps every sibling of a failed part running to the end (gate: %s)', async gate => {
-  for (const failure of ['observed', 'persisted'] as const) {
-    const f = await fixture(gate, failure)
+it.each(['observed', 'persisted'] as const)(
+  'cancels unfinished siblings of an %s gate failure and releases the next gate executor through MCP', async failure => {
+    const f = await fixture(true, failure)
     try {
+      expect((await f.denied()).isError).toBe(true)
       await f.settle()
       const read = await f.read(f.failed.id)
-      expect(read.run.state).toBe('failed')
-      expect(read.partitions!.find(run => run.id === f.running.id)?.state).toBe('running')
-      expect(read.partitions!.find(run => run.id === f.starting.id)?.state).toBe('starting')
+      expect(read.group?.state).toBe('failed')
+      expect(read.run).toMatchObject({ state: 'failed', exitCode: 1 })
+      for (const sibling of [f.running, f.starting, f.queued]) {
+        expect(read.partitions!.find(run => run.id === sibling.id)).toMatchObject({ state: 'canceled' })
+        const stored = (await database.pool.query('select state,host_key,record from ci_runs where id=$1',
+          [sibling.id])).rows[0]
+        expect(stored).toMatchObject({ state: 'canceled', host_key: null, record: { state: 'canceled' } })
+      }
       expect(read.partitions!.find(run => run.id === f.passed.id)).toEqual(f.passed)
-      expect(read.partitions!.find(run => run.id === f.queued.id)?.state).not.toBe('canceled')
-      expect(f.canceled).toEqual([])
-      if (gate) expect((await f.read(f.next.id)).run.state).toBe('queued')
+      expect(new Set(f.canceled)).toEqual(new Set([f.running.id, f.starting.id]))
+      expect(f.started).not.toContain(f.queued.id)
+      // Cancellation frees both builder executors; multi-builder rebalancing may start the next gate on either.
+      const next = (await f.read(f.next.id)).run
+      expect(next).toMatchObject({ state: 'running' })
+      expect(['main', 'device']).toContain(next.computer?.hostRef.kind)
+      expect(f.started).toContain(f.next.id)
     } finally { await f.close() }
-    await database.pool.query('truncate ci_runs, management_audit, management_command_receipts')
-  }
+  },
+)
+
+it('keeps non-gate siblings running and queued after a part fails', async () => {
+  const f = await fixture(false, 'observed')
+  try {
+    await f.settle()
+    const read = await f.read(f.failed.id)
+    expect(read.run.state).toBe('failed')
+    expect(read.partitions!.find(run => run.id === f.running.id)?.state).toBe('running')
+    expect(read.partitions!.find(run => run.id === f.starting.id)?.state).toBe('starting')
+    expect(read.partitions!.find(run => run.id === f.queued.id)?.state).toBe('queued')
+    expect(f.canceled).toEqual([])
+  } finally { await f.close() }
+})
+
+it('retains an exclusive executor until cancellation is confirmed and retries failed-gate cleanup', async () => {
+  const f = await fixture(true, 'persisted', false)
+  try {
+    await f.settle()
+    expect((await f.read(f.running.id)).run).toMatchObject({ state: 'running' })
+    expect((await database.pool.query('select host_key from ci_runs where id=$1', [f.running.id])).rows[0])
+      .toEqual({ host_key: 'builder' })
+    expect((await f.read(f.queued.id)).run.state).toBe('canceled')
+    expect((await f.read(f.next.id)).run.state).toBe('queued')
+    expect(f.canceled).toContain(f.running.id)
+    f.control.stopConfirmed = true
+    await f.settle()
+    expect((await f.read(f.running.id)).run.state).toBe('canceled')
+    expect((await f.read(f.next.id)).run.state).toBe('running')
+  } finally { await f.close() }
 })

@@ -8,7 +8,7 @@ import { loadConfig } from './config.js'
 import { componentLogger, enableAppErrorLog, enableFileLogging } from './infrastructure/logger.js'
 import { readRuntimeBuildIdentity } from './infrastructure/runtimeIdentity.js'
 import { trackInFlightRequests } from './infrastructure/inFlightRequests.js'
-import { exitAfterShutdown, installProcessLifecycleLogging } from './infrastructure/processLifecycle.js'
+import { installProcessLifecycleLogging } from './infrastructure/processLifecycle.js'
 import { retryStartupDatabase, runBackgroundPassAtStartup } from './infrastructure/databaseRetry.js'
 import { readTestResourcesIdentity } from './infrastructure/testRuntimeResources.js'
 import { join } from 'node:path'
@@ -103,7 +103,10 @@ async function main() {
     closing ??= app.close()
     return closing
   }
-  const onSignal = () => { void exitAfterShutdown(close, lifecycle) }
+  const onSignal = () => { void close().catch((error: unknown) => {
+    lifecycle.error({ err: error }, 'shutdown failed')
+    process.exitCode = 1
+  }) }
   // Recovery can run native work. Signals must own cleanup before listening or
   // any initialization await, including partially initialized infrastructure.
   process.once('SIGINT', onSignal)

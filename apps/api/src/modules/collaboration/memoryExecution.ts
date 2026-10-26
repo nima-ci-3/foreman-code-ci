@@ -1,7 +1,7 @@
 import { AgentConfigurationVersionSchema, AgentIdentitySchema, HarnessExecutionSchema,
   type AgentSubject, type LogicalWorkRef } from '@foreman-code/contracts'
 import { WorkflowVersionCurrentSchema } from '@foreman-code/contracts/current'
-import type { SqlQuery, SqlTransaction } from '../../infrastructure/transaction.js'
+import type { SqlTransaction } from '../../infrastructure/transaction.js'
 import { DomainError } from '../errors.js'
 
 export async function memoryExecution(tx: SqlTransaction, executionId: string) {
@@ -40,11 +40,3 @@ export async function memoryExecution(tx: SqlTransaction, executionId: string) {
     previousExecutionId: row.previous_execution_id, runOutcome: row.run_outcome, runReason: row.run_reason }
 }
 
-
-/** The product roles of every Agent pinned by a saved workflow version, for the Kanban writer rule. */
-export async function workflowAgentRoles(sql: SqlQuery, configurationVersionIds: Record<string, string>): Promise<string[]> {
-  const rows = (await sql.query<{ role: string | null }>(
-    `select record->>'productRole' as role from agent_configuration_versions where id=any($1::text[])`,
-    [Object.values(configurationVersionIds)])).rows
-  return rows.flatMap(row => row.role ? [row.role] : [])
-}

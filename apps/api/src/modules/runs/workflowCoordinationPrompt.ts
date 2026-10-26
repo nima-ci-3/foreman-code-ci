@@ -4,8 +4,7 @@ import { hierarchyChildRoutesPrompt } from './hierarchyWorkPrompt.js'
 
 /** Request-only contract for marked Runs. Historical producers retain their
  * exact existing prompts and output schema behavior. */
-/** kanbanWriter is false for an Agent below the workflow's Kanban keeper (maySaveToKanban); it only reads the board. */
-export function workflowCoordinationPrompt(context: CoordinationResultContext, kanbanWriter = true): string {
+export function workflowCoordinationPrompt(context: CoordinationResultContext): string {
   const node = context.definition.nodes.find(item => item.id === context.workflowNodeId)
   if (!node || node.kind === 'job') throw new Error('COORDINATION_AGENT_NODE_REQUIRED')
   const handoff = !context.interval && context.definition.handoffs !== undefined
@@ -45,15 +44,10 @@ export function workflowCoordinationPrompt(context: CoordinationResultContext, k
       : 'data is the business deliverable as a JSON value.',
     ...routing,
     ...(context.interval ? ['This interval check does not route work. Return only data, summary, and board.'] : []),
-    ...(kanbanWriter ? [
-      'board is {"kind":"none","reason":"no_changes"}, {"kind":"none","reason":"no_access"}, or {"kind":"none","reason":"already_recorded","appliedCommandIds":[...]} when there are no new effects.',
-      'For new board effects use {"kind":"changes","operations":[...]} with 1 to 32 canonical memory-board mutations, using the same complete mutation shapes as the memory-board tools.',
-      'When memory_card_update is enabled, keep your assigned Kanban card current with what you are working on and what you found.',
-      'When only the user can continue (for example a payment page, sign-in or CAPTCHA), create or update a card with status "waiting_for_user" and a reason that tells the user exactly what to do.',
-    ] : [
-      'board is always {"kind":"none","reason":"no_access"}: the Agent above you keeps this workflow\'s Kanban. Never write, move or remove cards or notes.',
-      'When only the user can continue (for example a payment page, sign-in or CAPTCHA), say exactly what the user must do in summary.',
-    ]),
+    'board is {"kind":"none","reason":"no_changes"}, {"kind":"none","reason":"no_access"}, or {"kind":"none","reason":"already_recorded","appliedCommandIds":[...]} when there are no new effects.',
+    'For new board effects use {"kind":"changes","operations":[...]} with 1 to 32 canonical memory-board mutations, using the same complete mutation shapes as the memory-board tools.',
+    'When memory_card_update is enabled, keep your assigned Kanban card current with what you are working on and what you found.',
+    'When only the user can continue (for example a payment page, sign-in or CAPTCHA), create or update a card with status "waiting_for_user" and a reason that tells the user exactly what to do.',
     'Use only existing scoped board/card/note identities and saved node identities. Already recorded command IDs must be actual receipts; do not replay their mutations.',
     ...(artifacts ? [
       `Required artifact output keys: ${JSON.stringify(artifacts.outputKeys)}.`,

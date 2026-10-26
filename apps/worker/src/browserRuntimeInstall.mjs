@@ -232,15 +232,14 @@ export function validateBrowserRuntimeRecipe(recipe, target) {
   return recipe;
 }
 
-/** Units this host built and checked are trusted by size on reuse; `contents` hashes every byte for new or foreign files. */
-async function verifyInventory(directory, files, contents = false) {
+async function verifyInventory(directory, files) {
   const base = await realpath(directory);
   for (const file of files) {
     invariant(safePath(file.path) && digest.test(file.sha256), 'invalid installed inventory');
     const path = join(directory, file.path), info = await lstat(path);
     invariant(info.isFile() && !info.isSymbolicLink() && (info.mode & 0o777) === file.mode
       && (await realpath(path)).startsWith(`${base}/`), 'installed file escaped private unit');
-    const actual = contents ? await hashBrowserRuntimeFile(path) : { sha256: file.sha256, size: info.size };
+    const actual = await hashBrowserRuntimeFile(path);
     invariant(actual.sha256 === file.sha256 && actual.size === file.size, 'installed file checksum mismatch');
   }
 }
@@ -288,7 +287,7 @@ async function thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal
     const bytes = Buffer.from(`${JSON.stringify(files, null, 2)}\n`);
     await writeFile(join(flattened, 'inventory.json'), bytes, { mode: 0o600 });
     await privateJson(join(flattened, 'receipt.json'), { key, inventorySha256: hash(bytes) });
-    await verifyInventory(flattened, files, true);
+    await verifyInventory(flattened, files);
     signal?.throwIfAborted();
     await rename(flattened, directory); await syncDirectory(cache);
     return { directory, files };
@@ -297,7 +296,7 @@ async function thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal
 
 async function stageRecipe({ runtimeRoot, artifact, recipe, expectedSha256, target, readiness, signal, fetchArtifact, run }) {
   validateBrowserRuntimeRecipe(recipe, target);
-  await verifyInventory(artifact, recipe.files, true);
+  await verifyInventory(artifact, recipe.files);
   // installer.mjs is the artifact's bundle of browserRuntimeBuild.mjs.
   const installer = await import(/* ci-key: apps/worker/src/browserRuntimeBuild.mjs */ pathToFileURL(join(artifact, 'installer.mjs')).href);
   const executePinned = (command, args, options = {}) => (run ?? execute)(command, args, { ...options, signal });
@@ -305,33 +304,32 @@ async function stageRecipe({ runtimeRoot, artifact, recipe, expectedSha256, targ
     ...(signal ? { signal: AbortSignal.any([signal, options.signal]) } : {}) });
   const thirdParty = await thirdPartyUnit({ runtimeRoot, recipe, artifact, installer, signal, fetchArtifact: fetchPinned, run: executePinned });
   const versions = join(runtimeRoot, 'versions'); await privateDirectory(versions, true);
-  const recipeBytes = await readRegularFile(join(artifact, 'browser-runtime.json'), 1024 * 1024);
-  invariant(hash(recipeBytes) === expectedSha256, 'recipe changed during installation');
-  const lockBytes = Buffer.from(`${JSON.stringify(recipe.resolvedLock, null, 2)}\n`);
-  const files = [...thirdParty.files, ...recipe.files,
-    { path: 'runtime-lock.json', size: lockBytes.length, sha256: hash(lockBytes), mode: 0o600 },
-    { path: 'recipe.json', size: recipeBytes.length, sha256: expectedSha256, mode: 0o600 }]
-    .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-  const manifest = validateBrowserRuntimeManifest({ ...recipe.manifest, recipeSha256: expectedSha256, files }, target);
-  const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`), manifestSha256 = hash(bytes);
-  const destination = join(versions, manifestSha256);
-  // The manifest names every file, so an installed copy is found before copying the unit again.
-  try { return await verifyInstalled(destination, manifestSha256, target); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
   const temporary = await mkdtemp(join(versions, '.stage-'));
   const stage = join(temporary, 'unit'); await mkdir(stage, { mode: 0o700 });
   try {
     await copyInventory(thirdParty.directory, stage, thirdParty.files);
     await copyInventory(artifact, stage, recipe.files);
+    const recipeBytes = await readRegularFile(join(artifact, 'browser-runtime.json'), 1024 * 1024);
+    invariant(hash(recipeBytes) === expectedSha256, 'recipe changed during installation');
+    const lockBytes = Buffer.from(`${JSON.stringify(recipe.resolvedLock, null, 2)}\n`);
     await writeFile(join(stage, 'runtime-lock.json'), lockBytes, { mode: 0o600 });
     await writeFile(join(stage, 'recipe.json'), recipeBytes, { mode: 0o600 });
+    const files = [...thirdParty.files, ...recipe.files,
+      { path: 'runtime-lock.json', size: lockBytes.length, sha256: hash(lockBytes), mode: 0o600 },
+      { path: 'recipe.json', size: recipeBytes.length, sha256: expectedSha256, mode: 0o600 }]
+      .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    const manifest = validateBrowserRuntimeManifest({ ...recipe.manifest, recipeSha256: expectedSha256, files }, target);
+    const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`), manifestSha256 = hash(bytes);
+    const destination = join(versions, manifestSha256);
+    try { return await verifyInstalled(destination, manifestSha256, target); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     await writeFile(join(stage, 'manifest.json'), bytes, { flag: 'wx', mode: 0o600 });
     await privateDirectory(join(stage, 'empty-workspace'), true);
     const candidate = installedDescriptor(stage, manifest, manifestSha256);
     invariant((await readiness(candidate, { signal }))?.ready === true, 'readiness was not confirmed');
     signal?.throwIfAborted();
     await privateJson(join(stage, 'readiness.json'), { ready: true, manifestSha256 });
-    await verifyInstalled(stage, manifestSha256, target, true, true);
+    await verifyInstalled(stage, manifestSha256, target);
     await syncUnit(stage, files);
     await rename(stage, destination); await syncDirectory(versions);
     return installedDescriptor(destination, manifest, manifestSha256);
@@ -445,14 +443,14 @@ function installedDescriptor(directory, manifest, manifestSha256) {
     skill: join(directory, manifest.skill) };
 }
 
-async function verifyInstalled(directory, expected, target, requireReady = true, contents = false) {
+async function verifyInstalled(directory, expected, target, requireReady = true) {
   await privateDirectory(directory);
   await privateDirectory(join(directory, 'empty-workspace'));
   invariant((await readdir(join(directory, 'empty-workspace'))).length === 0, 'Harness workspace must remain empty');
   const bytes = await readRegularFile(join(directory, 'manifest.json'), 16 * 1024 * 1024);
   invariant(hash(bytes) === expected, 'installed manifest mismatch');
   const manifest = validateBrowserRuntimeManifest(JSON.parse(bytes), target);
-  await verifyInventory(directory, manifest.files, contents);
+  await verifyInventory(directory, manifest.files);
   if (manifest.recipeSha256) {
     const recipeBytes = await readRegularFile(join(directory, 'recipe.json'), 1024 * 1024);
     invariant(hash(recipeBytes) === manifest.recipeSha256, 'installed recipe mismatch');
@@ -624,7 +622,7 @@ export async function stageBrowserRuntime({ runtimeRoot, artifact, expectedSha25
       invariant((await readiness(candidate, { signal }))?.ready === true, 'readiness was not confirmed');
       signal?.throwIfAborted();
       await privateJson(join(unit, 'readiness.json'), { ready: true, manifestSha256: descriptor.manifestSha256 });
-      await verifyInstalled(unit, descriptor.manifestSha256, target, true, true);
+      await verifyInstalled(unit, descriptor.manifestSha256, target);
       await syncUnit(unit, manifest.files);
       await rename(unit, destination); await syncDirectory(versions);
       return installedDescriptor(destination, manifest, descriptor.manifestSha256);

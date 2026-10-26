@@ -1,6 +1,6 @@
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
-import { isReadOnlyHarnessConfiguration, effectiveForemanTools, maySaveToKanban, memoryBoardTools, type ExecutionResult } from '@foreman-code/contracts'
-import { memoryExecution, workflowAgentRoles } from '../collaboration/index.js'
+import { isReadOnlyHarnessConfiguration, effectiveForemanTools, memoryBoardTools, type ExecutionResult } from '@foreman-code/contracts'
+import { memoryExecution } from '../collaboration/index.js'
 import type { SqlTransaction } from '../../infrastructure/transaction.js'
 import { repeatTickIndex } from './repeatResolution.js'
 import { agentCard, findScopeBoard } from '../memory-boards/index.js'
@@ -22,8 +22,6 @@ export async function kanbanRecordMissingLocked(tx: SqlTransaction, executionId:
   const readOnly = isReadOnlyHarnessConfiguration(configuration.harness)
   if (readOnly || !effectiveForemanTools(saved.subject.agent.productRole, configuration[INSTALLATION_NAMES.fields.agentTools],
     node[INSTALLATION_NAMES.fields.agentTools], Boolean(node.interval), memoryBoardTools('write')).includes('memory_card_update')) return undefined
-  if (!maySaveToKanban(saved.subject.agent.productRole,
-    await workflowAgentRoles(tx, saved.version.agentConfigurationVersionIds))) return undefined
   const board = await findScopeBoard(tx, { kind: 'workflow', workspaceId: saved.subject.agent.workspaceId,
     workflowId: saved.subject.agent.workflowId })
   const own = board ? await agentCard(tx, board.board.id, saved.subject.agent) : undefined
