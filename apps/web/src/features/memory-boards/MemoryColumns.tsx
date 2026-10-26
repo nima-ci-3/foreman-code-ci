@@ -4,7 +4,7 @@ import { Button } from '../../shared/ui/nocturne/Button'
 import { useDebouncedCommit } from '../../shared/ui/useDebounced'
 import { SearchField, Select } from '../../shared/ui/nocturne/Fields'
 import { mergedMemoryItems, useMemoryCards } from './queries'
-import { MemoryCard } from './MemoryCard'
+import { MemoryCardList } from './MemoryCardList'
 import { statusLabels } from './presentation'
 import type { MemoryBoardClient, MemoryBoardView, MemoryFilters, MemoryNodeOption } from './ports'
 
@@ -51,8 +51,7 @@ function Column({ client, board, nodes, status, filters, onFiltersChange, onOpen
       {query.isError && <p role="alert">Couldn’t load cards. <Button size="sm" onClick={() => void query.restart()}>Retry</Button></p>}
       {filters.query && query.isSuccess && <p>{cards.length} matching cards shown{query.hasNextPage ? ' · More matches available' : ''}</p>}
       {query.isSuccess && cards.length === 0 && !query.hasNextPage && <p>{filters.query ? 'No matching cards' : 'No cards yet'}</p>}
-      {cards.map((card) => <MemoryCard key={card.id} card={card} nodes={nodes} onOpen={() => onOpenCard(card.id)} />)}
-      {query.hasNextPage && <Button loading={query.isFetchingNextPage} loadingLabel="Loading cards…" onClick={() => void query.fetchNextPage()}>Load more {statusLabels[status]}</Button>}
+      <MemoryCardList query={query} status={status} nodes={nodes} onOpen={onOpenCard} />
       {query.isSuccess && cards.length === 0 && query.hasNextPage && <Button onClick={() => void query.fetchNextPage()}>Load cards</Button>}
     </>}
   </section>

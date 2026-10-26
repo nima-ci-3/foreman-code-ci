@@ -1,21 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearch } from '@tanstack/react-router'
-import { Alert, Button, Icon, LoadingState, StatusBadge, TextField } from '../../shared/ui/nocturne'
+import { useEffect, useRef, useState } from 'react'
+import { Alert, Button, Icon, LoadingState, StatusBadge } from '../../shared/ui/nocturne'
 import { useChangeCodexPlugin, useCodexPlugin, useCodexPlugins } from '../../shared/api/harnessSettings'
 import { useAccessFailureLatch } from '../../shared/api/useAccessFailureLatch'
 import { useDebouncedValue } from '../../shared/ui/useDebounced'
+import { PluginCatalogControls, PluginCatalogPages } from './PluginCatalogControls'
+import { PLUGIN_PAGE_SIZE, useLastPluginPage, usePluginCatalogNavigation } from './usePluginCatalogNavigation'
 import './codexPlugins.css'
 
 export function CodexPluginManager({ accessUnavailable = false }: { accessUnavailable?: boolean }) {
-  const search = useSearch({ from: '/settings/harnesses' })
-  const navigate = useNavigate({ from: '/settings/harnesses' })
-  const view = search.pluginView ?? 'installed'
-  const query = search.pluginQuery ?? ''
-  const offset = search.pluginOffset ?? 0
-  const selectedId = search.pluginId
+  const { view, query, offset, selectedId, move } = usePluginCatalogNavigation()
   // The URL remains authoritative; only request admission is debounced.
   const settledQuery = useDebouncedValue(query, 300)
-  const list = useCodexPlugins({ view, query, offset, limit: 24 }, settledQuery === query && !accessUnavailable)
+  const list = useCodexPlugins({ view, query, offset, limit: PLUGIN_PAGE_SIZE }, settledQuery === query && !accessUnavailable)
   const detail = useCodexPlugin(accessUnavailable ? undefined : selectedId)
   const change = useChangeCodexPlugin()
   const listDenied = useAccessFailureLatch(list)
@@ -30,10 +26,7 @@ export function CodexPluginManager({ accessUnavailable = false }: { accessUnavai
   const searchField = useRef<HTMLInputElement>(null)
   const handledResult = useRef<unknown>(undefined)
   const [feedback, setFeedback] = useState<string>()
-  const move = useCallback((fields: Partial<typeof search>) => void navigate({ search: { ...search, ...fields }, replace: true }), [navigate, search])
-  useEffect(() => {
-    if (catalog && offset > 0 && offset >= catalog.total) move({ pluginOffset: Math.max(0, Math.floor((catalog.total - 1) / 24) * 24) })
-  }, [catalog, offset, move])
+  useLastPluginPage(catalog, offset, move)
   useEffect(() => {
     if (selectedId) { wasOpen.current = true; return }
     if (!wasOpen.current || !lastPluginId.current) return
@@ -121,14 +114,8 @@ export function CodexPluginManager({ accessUnavailable = false }: { accessUnavai
     </div> : null}
   </section>
   return <section className="codex-plugins" aria-label="Codex plugins">
-    <div className="codex-plugins-controls">
-      <div className="codex-plugins-tabs" role="group" aria-label="Plugin catalog view">
-        <Button size="sm" variant={view === 'installed' ? 'primary' : 'ghost'} aria-pressed={view === 'installed'} onClick={() => move({ pluginView: 'installed', pluginOffset: 0 })}>Installed</Button>
-        <Button size="sm" variant={view === 'available' ? 'primary' : 'ghost'} aria-pressed={view === 'available'} onClick={() => move({ pluginView: 'available', pluginOffset: 0 })}>Discover</Button>
-      </div>
-      <Button size="sm" variant="ghost" disabled={accessUnavailable || list.isFetching || detail.isFetching || change.busy} loading={list.isRefetching} onClick={() => void refresh()}>Refresh</Button>
-    </div>
-    <TextField ref={searchField} label="Search plugins" type="search" maxLength={100} value={query} placeholder="Name or marketplace" onChange={(event) => move({ pluginQuery: event.target.value || undefined, pluginOffset: 0 })} />
+    <PluginCatalogControls view={view} query={query} move={move} searchRef={searchField} refresh={<Button size="sm" variant="ghost"
+      disabled={accessUnavailable || list.isFetching || detail.isFetching || change.busy} loading={list.isRefetching} onClick={() => void refresh()}>Refresh</Button>} />
     {recovery}
     {rejection}
     {!denied && change.operations.isError ? <Alert tone="warning" title="Couldn't check earlier changes. Refresh before changing plugins." /> : null}
@@ -146,11 +133,7 @@ export function CodexPluginManager({ accessUnavailable = false }: { accessUnavai
           {view === 'installed' ? <span className="codex-plugin-state">{label(item)}</span> : null}
         </button>
       </li>)}</ul> : <p className="harness-muted">{query ? 'No plugins match.' : view === 'installed' ? 'No plugins installed.' : 'No plugins found.'}</p>}
-      {catalog.total > 24 ? <div className="codex-plugins-pages">
-        <Button size="sm" variant="ghost" disabled={offset === 0 || list.isFetching} onClick={() => move({ pluginOffset: Math.max(0, offset - 24) })}>Previous</Button>
-        <span className="harness-muted">{`${offset + 1}–${Math.min(offset + 24, catalog.total)} of ${catalog.total}`}</span>
-        <Button size="sm" variant="ghost" disabled={catalog.nextOffset === null || list.isFetching} onClick={() => move({ pluginOffset: catalog.nextOffset ?? offset })}>Next</Button>
-      </div> : null}
+      <PluginCatalogPages offset={offset} catalog={catalog} disabled={list.isFetching} move={move} />
     </> : null}
   </section>
 }

@@ -5,6 +5,7 @@ export type { MemoryBoardDialogProps } from './MemoryBoardDialog'
 export { MemoryBoardAccessField } from './MemoryBoardAccessField'
 export type { MemoryBoardAccessFieldProps } from './MemoryBoardAccessField'
 export { MemoryCard } from './MemoryCard'
+export { MemoryCardList } from './MemoryCardList'
 export { NotesStrip } from './NotesStrip'
 export { createMemoryBoardClient } from './client'
 export type {

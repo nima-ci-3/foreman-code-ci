@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, type RefObject } from 'react'
 import { useStore } from 'zustand'
 import { flushSync } from 'react-dom'
 import type { ScheduleGetInput } from '@foreman-code/contracts/schedules'
-import { Button, Dialog, LoadingState, Select, Switch, TextField } from '../../shared/ui/nocturne'
+import { Button, Dialog, DurationField, LoadingState, Switch, TabList, TextField } from '../../shared/ui/nocturne'
 import { ApiError } from '../../shared/api/client'
 import { useUnsavedChanges } from '../../shared/ui/unsavedChanges'
 import {
@@ -136,18 +136,9 @@ export function ScheduleModal({ scope, store, returnFocusRef, onSelectRun, onRev
         <Button size="sm" onClick={() => { void query.refetch() }}>Try again</Button></div>}
       {draft && <fieldset className="schedule-fields" disabled={locked}>
         <legend className="schedule-sr-only">Schedule settings</legend>
-        <div role="tablist" aria-label="Schedule mode" className="schedule-tabs">
-          {modes.map((mode, index) => <button type="button" role="tab" key={mode.value} id={`${id}-${mode.value}`}
-            aria-selected={draft.mode === mode.value} aria-controls={`${id}-panel`} tabIndex={draft.mode === mode.value ? 0 : -1}
-            onClick={() => state.edit({ mode: mode.value })} onKeyDown={(event) => {
-              const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
-              const next = event.key === 'Home' ? 0 : event.key === 'End' ? modes.length - 1 : (index + offset + modes.length) % modes.length
-              if (!offset && event.key !== 'Home' && event.key !== 'End') return
-              event.preventDefault()
-              const target = modes[next]
-              if (target) { state.edit({ mode: target.value }); document.getElementById(`${id}-${target.value}`)?.focus() }
-            }}>{mode.label}</button>)}
-        </div>
+        <TabList label="Schedule mode" className="schedule-tabs" value={draft.mode} items={modes}
+          onSelect={value => { const mode = modes.find(item => item.value === value); if (mode) state.edit({ mode: mode.value }) }}
+          tabId={value => `${id}-${value}`} panelId={() => `${id}-panel`} />
         <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-${draft.mode}`} className="schedule-panel">
           {draft.mode === 'weekly' && <>
             {draft.weeklyOriginal && draft.weeklyOriginal.timezone !== draft.timezone && <p className="schedule-note">
@@ -167,13 +158,9 @@ export function ScheduleModal({ scope, store, returnFocusRef, onSelectRun, onRev
             <TextField label="Time on this device" hint={draft.timezone} type="time" value={draft.time} error={state.errors.time} onChange={(event) => state.edit({ time: event.currentTarget.value })} />
           </>}
           {draft.mode === 'interval' && <div className="schedule-pair">
-            <TextField label="Every" type="number" inputMode="numeric" min={1} step={1} value={draft.every} error={state.errors.every}
-              onChange={(event) => state.edit({ every: event.currentTarget.value })} />
-            <Select label="Unit" value={draft.unit} options={[{ value: 'second', label: 'Seconds' }, { value: 'minute', label: 'Minutes' }, { value: 'hour', label: 'Hours' }]}
-              onChange={(event) => {
-                const unit = event.currentTarget.value
-                if (unit === 'second' || unit === 'minute' || unit === 'hour') state.edit({ unit })
-              }} />
+            <DurationField amount={draft.every} unit={draft.unit} error={state.errors.every}
+              units={[{ value: 'second', label: 'Seconds' }, { value: 'minute', label: 'Minutes' }, { value: 'hour', label: 'Hours' }]}
+              onAmountChange={every => state.edit({ every })} onUnitChange={unit => state.edit({ unit })} />
           </div>}
           {draft.mode === 'once' && <div className="schedule-pair schedule-once">
             <TextField label="Date" type="date" value={draft.localDate} error={state.errors.localDate}

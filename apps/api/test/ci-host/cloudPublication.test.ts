@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { expect, it, vi } from 'vitest'
 import { fixture } from './cloud.testSupport.js'
+import { mainCiContext } from '../../src/modules/ci/context.js'
 
 function blockPush(git: Awaited<ReturnType<typeof fixture>>['git']) {
   let release!: () => void
@@ -122,4 +123,16 @@ it('retains cloud ownership when the dispatch reply is lost after publication su
   expect(await f.reopen().handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1 }))
     .toMatchObject({ run: { state: 'starting', mirrorPublication: { state: 'ready' } } })
   expect(f.dispatched).toHaveLength(1)
+})
+
+it('requeues a part whose publication hit a transient Main database timeout instead of failing it', async () => {
+  // Production: "timeout exceeded when trying to connect" while publishing failed integration part 46 of a gate.
+  const f = await fixture()
+  vi.spyOn(mainCiContext.platform, 'ensureCommit').mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'))
+  const runId = randomUUID()
+  await f.cloud.handle({ operation: 'start', runId, workspaceId: 'ci-workspace',
+    repository: 'octo/site', commit: f.commit, suite: 'lint', deferMirror: true })
+  await expect.poll(async () => f.cloud.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1 }), { timeout: 5000 })
+    .toMatchObject({ run: { state: 'queued' } })
+  expect(f.dispatched).toHaveLength(0)
 })
