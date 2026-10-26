@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
 import { RunRequirementsInputSchema, RunRequirementsResultSchema, type RunRequirement,
-  type RunRequirementsInput } from '@foreman-code/contracts/computer-maintenance'
+  type RunRequirementsInput, type RunRequirementsResult } from '@foreman-code/contracts/computer-maintenance'
 import type { ComputerAccount } from '@foreman-code/contracts/computer-accounts'
 import type { DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
 import { sameWorkflowValue } from '@foreman-code/contracts/current'
@@ -197,7 +197,8 @@ async function repairSavedWorkflows(services: OperatorServices, principal: Manag
   if (failures.length) throw new AggregateError(failures, 'Saved workflow computer setup did not finish.')
 }
 
-export async function runRequirements(services: OperatorServices, principal: ManagementPrincipal, raw: RunRequirementsInput) {
+export async function runRequirements(services: OperatorServices, principal: ManagementPrincipal,
+  raw: RunRequirementsInput): Promise<RunRequirementsResult> {
   const input = RunRequirementsInputSchema.parse(raw)
   const items: RunRequirement[] = []
   const workspace = await services.workspaces.get(principal, input.workspaceId)
@@ -360,7 +361,7 @@ export async function runRequirements(services: OperatorServices, principal: Man
           || configuration.harness === 'claude' && configuration.model === 'default' && value.defaultPriority === -1)
         const supported = !!model && (configuration.harness !== 'codex'
           || model.reasoningEfforts.includes(configuration.reasoningEffort)
-            && (configuration.serviceTier !== 'priority' || model.serviceTiers.includes('fast')))
+            && (configuration.serviceTier !== 'priority' || model.serviceTiers.includes('priority')))
         items.push(supported ? item(`model:${agent.id}`, 'ready', 'The selected model and settings are available.')
           : item(`model:${agent.id}`, 'missing', `Choose an available ${label(input.harness)} model and settings for this Agent.`))
       } catch (error) { items.push(item(`model:${agent.id}`, 'unknown', `Could not check the selected model and account: ${errorText(error)}`)) }

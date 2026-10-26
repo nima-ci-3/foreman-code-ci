@@ -13,7 +13,7 @@ const request = { workspaceId: 'workspace', harness: 'codex', agentIds: [], brow
   jobDefinitions: [], action: 'check' }
 
 function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: 'missing' | 'installed';
-  repository?: boolean; repositoryReady?: boolean; claudeDefault?: boolean; selectionMismatch?: boolean;
+  repository?: boolean; repositoryReady?: boolean; claudeDefault?: boolean; selectionMismatch?: boolean; priorityCodex?: boolean;
   oldWorker?: boolean; browserMissing?: boolean } = {}) {
   let preset = options.mcp ?? 'missing'
   let browserReady = !options.browserMissing
@@ -22,8 +22,9 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
     keyRevision: 1, authorizationRevision: 1 } : target
   const account = { tool: options.claudeDefault ? 'claude' : 'codex', installed: true,
     signedIn: options.signedIn === undefined ? false : options.signedIn, account: null, details: [] }
-  const configuration = { harness: 'claude', model: 'default', authMode: 'subscription', configDirectory: '/tmp/claude',
-    permissionMode: 'default', sandbox: 'danger-full-access', tools: [], permissionRules: [], instructions: '', mcpServers: {} }
+  const configuration = options.priorityCodex ? { ...DEFAULT_HARNESS_DEFAULTS.codex!, serviceTier: 'priority' }
+    : { harness: 'claude', model: 'default', authMode: 'subscription', configDirectory: '/tmp/claude',
+      permissionMode: 'default', sandbox: 'danger-full-access', tools: [], permissionRules: [], instructions: '', mcpServers: {} }
   const applyManaged = vi.fn(async () => { preset = 'installed'; return { status: 'applied' } })
   const readMaintenance = vi.fn(async (_principal: unknown, _source: unknown, _input: unknown) => ({ computers: [{ target: selectedTarget, status: options.online === false ? null
     : { ...(options.repository ? { repositoryProbe: { ready: options.repositoryReady === true,
@@ -42,7 +43,8 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
     harnessInstances: { list: async () => ({ overrides: options.claudeDefault
       ? [{ enabled: true, driverId: 'claude', configuration, qualification: 'qualified' }] : [] }) },
     extensions: { native: { options: async () => ({ authenticated: true, models: [
-      { id: 'resolved-claude-model', defaultPriority: -1, reasoningEfforts: [], serviceTiers: [] },
+      options.priorityCodex ? { id: configuration.model, reasoningEfforts: ['medium'], serviceTiers: ['priority'] }
+        : { id: 'resolved-claude-model', defaultPriority: -1, reasoningEfforts: [], serviceTiers: [] },
     ] }) } },
     agents: { get: async () => ({ agent: { id: 'agent', harnessConfiguration: configuration } }) },
     workspaces: { get: async () => ({ workspace: options.repository ? { repository: { owner: 'owner', name: 'public' } } : {},
@@ -54,6 +56,7 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
   const call = async (action: 'check' | 'fix') => (await app.inject({ method: 'POST',
     url: '/api/management/computers/run-requirements', payload: { ...request, action,
       ...(options.claudeDefault ? { harness: 'claude', agentIds: ['agent'] } : {}),
+      ...(options.priorityCodex ? { agentIds: ['agent'] } : {}),
       ...(options.selectionMismatch ? { agentConfigurations: [{ agentId: 'agent', configuration,
         selection: { instanceId: '44444444-4444-4444-8444-444444444444', instanceRevision: 'revision-1',
           target: { hostRef: target.hostRef, applicationInstallationId: mainId,
@@ -104,6 +107,14 @@ describe('computer Run requirements', () => {
 
   it('recognizes the resolved native default model for Claude', async () => {
     const f = fixture({ signedIn: true, claudeDefault: true })
+    try {
+      const result = await f.call('check')
+      expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent', state: 'ready' }))
+    } finally { await f.app.close() }
+  })
+
+  it('accepts the priority tier advertised for a Codex model', async () => {
+    const f = fixture({ signedIn: true, mcp: 'installed', priorityCodex: true })
     try {
       const result = await f.call('check')
       expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent', state: 'ready' }))
