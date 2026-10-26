@@ -218,7 +218,7 @@ export class CloudCi {
     }
     try {
       await this.publish(input.repository, mirror, input.commit,
-        input.defaultBranch, input.baseCommit, input.durations ?? {}, false, input.integrationCoverage)
+        input.defaultBranch, input.baseCommit, input.durations ?? {}, false, input.integrationCoverage, input.durationPeaks)
     } finally {
       reservations.delete(reservation)
       if (!reservations.size) publishingBranches.delete(mirror)
@@ -585,7 +585,7 @@ export class CloudCi {
       const publication = await this.publish(request.repository, mirror, request.commit,
         deriveFiles && !request.baseCommit ? request.defaultBranch ?? 'main' : undefined,
         deriveFiles ? request.baseCommit : undefined, request.durations ?? {}, request.partition !== undefined,
-        request.integrationCoverage)
+        request.integrationCoverage, request.durationPeaks)
       if (request.deferMirror) {
         return await this.serializeRun(request.runId, async () => {
           const latest = await this.read(request.runId)
@@ -1000,17 +1000,17 @@ export class CloudCi {
 
   /** Puts the commit's files on the mirror once: every partition of a run starting together shares one push. A start
    * that splits its files on the runner (`exact`) needs a snapshot with exactly its learned durations; any other start
-   * only orders its files by them, so it reuses whichever snapshot of the commit is already there. */
+   * only orders its files by them, so it can reuse a snapshot with the same watchdog peaks. */
   private async publish(repository: string, mirror: string, commit: string, defaultBranch: string | undefined,
-    baseCommit: string | undefined, durations: CiDurations, exact: boolean, coverage?: CiCoverageSelection) {
+    baseCommit: string | undefined, durations: CiDurations, exact: boolean, coverage?: CiCoverageSelection, durationPeaks?: CiDurations) {
     return serializeMirror(mirror, () => this.publishLocked(repository, mirror, commit,
-      defaultBranch, baseCommit, durations, exact, coverage))
+      defaultBranch, baseCommit, durations, exact, coverage, durationPeaks))
   }
 
   private async publishLocked(repository: string, mirror: string, commit: string, defaultBranch: string | undefined,
-    baseCommit: string | undefined, durations: CiDurations, exact: boolean, coverage?: CiCoverageSelection) {
+    baseCommit: string | undefined, durations: CiDurations, exact: boolean, coverage?: CiCoverageSelection, durationPeaks?: CiDurations) {
     const coverageKey = coverage ? sha256Hex(canonicalJson(coverage)) : ''
-    const prefix = `${commit}\n${defaultBranch ?? ''}\n${baseCommit ?? ''}\n${coverageKey}\n`
+    const prefix = `${commit}\n${defaultBranch ?? ''}\n${baseCommit ?? ''}\n${coverageKey}\n${canonicalJson(durationPeaks ?? {})}\n`
     const key = `${prefix}${canonicalJson(durations)}`
     const publications = this.publications(repository, mirror)
     let published = publications.get(key)
@@ -1023,7 +1023,7 @@ export class CloudCi {
       const source = this.context.platform.ensureCommit(this.git, repository, commit, AbortSignal.timeout(600_000))
       source.catch(() => { /* ignore: the push awaits the source and reports its failure */ })
       const pushed = queued.then(() => this.push(repository, mirror, commit, defaultBranch, baseCommit, durations,
-        { queuedAt, startedAt, source }, coverage))
+        { queuedAt, startedAt, source }, coverage, durationPeaks))
       published = pushed
       mirrorPushes.set(mirror, pushed)
       void pushed.catch(() => { /* ignore: the push failure is reported to the caller awaiting it; this only clears the queue entry */ }).then(() => { if (mirrorPushes.get(mirror) === pushed) mirrorPushes.delete(mirror) })
@@ -1043,7 +1043,7 @@ export class CloudCi {
 
   private async push(repository: string, mirror: string, commit: string, defaultBranch: string | undefined,
     baseCommit: string | undefined, durations: CiDurations, queued: { queuedAt: number; startedAt: string; source: Promise<string> },
-    coverage?: CiCoverageSelection) {
+    coverage?: CiCoverageSelection, durationPeaks?: CiDurations) {
     const startedAt = queued.startedAt
     const started = performance.now()
     const queueMs = started - queued.queuedAt
@@ -1131,7 +1131,7 @@ export class CloudCi {
       const sourceWorkflows = new Set((await git(['ls-tree', source, '--', ...workflows])).split('\n')
         .map(entry => entry.split('\t')[1]))
       const missing = entries.filter(entry => !sourceWorkflows.has(entry.split('\t')[1]))
-      if (!missing.length && !Object.keys(durations).length && !coverage) return source
+      if (!missing.length && !Object.keys(durations).length && !durationPeaks && !coverage) return source
       await mkdir(this.root, { recursive: true, mode: 0o700 })
       const directory = await mkdtemp(join(this.root, 'snapshot-'))
       try {
@@ -1141,9 +1141,9 @@ export class CloudCi {
           const [mode, , blob, path] = entry.split(/\s+/)
           await git(['update-index', '--add', '--cacheinfo', `${mode},${blob},${path}`], env)
         }
-        if (Object.keys(durations).length) {
+        if (Object.keys(durations).length || durationPeaks) {
           const path = join(directory, 'durations.json')
-          await writeFile(path, canonicalJson(durations), { mode: 0o600 })
+          await writeFile(path, canonicalJson(durationPeaks ? { durations, durationPeaks } : durations), { mode: 0o600 })
           const blob = await git(['hash-object', '-w', path])
           await git(['update-index', '--add', '--cacheinfo', `100644,${blob},scripts/ci-learned-durations.json`], env)
         }

@@ -38,6 +38,19 @@ it('publishes a split start on a snapshot carrying exactly its own learned durat
   expect(learned['apps/api/test/a.integration.test.ts']).toBe(410)
 })
 
+it('refreshes an unsplit snapshot when its learned peak changes and reuses identical peaks', async () => {
+  const f = await fixture()
+  const calls = observe(f)
+  const file = 'apps/api/test/a.integration.test.ts'
+  const durations = { [file]: 60_000 }
+  await start(f, { durations, durationPeaks: { [file]: 60_000 } })
+  await start(f, { durations, durationPeaks: { [file]: 171_900 } })
+  await start(f, { durations, durationPeaks: { [file]: 171_900 } })
+  expect(calls.mainPushes).toBe(2)
+  expect(JSON.parse(f.mirrorGit('show', 'main:scripts/ci-learned-durations.json')))
+    .toEqual({ durations, durationPeaks: { [file]: 171_900 } })
+})
+
 it('starts the next publication from the snapshot it pushed instead of fetching the mirror main back', async () => {
   const f = await fixture()
   const calls = observe(f)

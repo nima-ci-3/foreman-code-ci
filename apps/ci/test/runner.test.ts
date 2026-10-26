@@ -608,18 +608,19 @@ describe('host CI runner', () => {
     // The database snapshot makes d the slowest file and a the fastest.
     const durations = { 'apps/api/test/a.integration.test.ts': 50, 'apps/api/test/b.integration.test.ts': 300,
       'apps/api/test/c.integration.test.ts': 200, 'apps/api/test/d.integration.test.ts': 900 }
+    const durationPeaks = { ...durations, 'apps/api/test/a.integration.test.ts': 5000 }
     const slices: string[][] = []
     for (const index of [0, 1]) {
       const runId = randomUUID()
       await f.runner.handle({ operation: 'start', runId, repository: 'octo/site', commit: f.commit, suite: 'integration',
-        partition: { index, count: 2 }, durations })
+        partition: { index, count: 2 }, durations, durationPeaks })
       const done = await f.settle(runId)
       expect(done.run.state).toBe('passed')
       expect(done.durations).toBeUndefined()
       const command = done.text.split('\n').find(line => line.startsWith('corepack pnpm test:integration'))!
       slices.push([...command.matchAll(/apps\/api\/test\/(\w)\.integration/g)].map(match => match[1]!).sort())
       const expected = JSON.parse(done.text.split('\n').find(line => line.startsWith('expected '))!.slice('expected '.length))
-      expect(expected).toEqual(durations)
+      expect(expected).toEqual({ durations, durationPeaks })
       expect(await f.runner.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1, durations: true }))
         .toMatchObject({ operation: 'read', durations: measured })
     }

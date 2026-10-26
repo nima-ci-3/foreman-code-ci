@@ -43,6 +43,22 @@ const startupStorageFiles = [
   'apps/api/test/test-startup-mcp-storage-isolation.integration.test.ts',
 ]
 
+test('learned snapshots keep typical durations for scheduling and peaks for hang detection', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'integration-estimates-'))
+  const path = join(directory, 'durations.json')
+  try {
+    const durations = { variable: 60_000, steady: 90_000 }
+    const durationPeaks = { variable: 171_900, steady: 90_000 }
+    writeDurations(path, { durations, durationPeaks })
+    assert.deepEqual(readDurations(path), durations)
+    assert.deepEqual(readDurations(path, 'durationPeaks'), durationPeaks)
+    assert.deepEqual(orderByDuration(['variable', 'steady'], readDurations(path)), ['steady', 'variable'])
+    writeDurations(path, durations)
+    assert.deepEqual(readDurations(path), durations)
+    assert.deepEqual(readDurations(path, 'durationPeaks'), {})
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
 test('migration template keys include ordered versions and SQL contents', () => {
   const migrations = [{ version: 1, sql: 'first migration' }, { version: 2, sql: 'second migration' }]
   const key = migrationContentsHash(migrations)

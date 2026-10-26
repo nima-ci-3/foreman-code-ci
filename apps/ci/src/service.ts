@@ -69,6 +69,7 @@ interface PreparedCiRuns {
   repository: NonNullable<Workspace['repository']>
   runs: CiRunRecord[]
   durations: CiDurations | null
+  durationPeaks: CiDurations | null
   coverage?: CiCoverageSelection
   publication?: CiMirrorInput
   /** Result cache keys of the files the runs execute, and the log tail of a request the cache completed. */
@@ -345,7 +346,7 @@ export class HostCiService {
       },
       authorize: async () => { await this.authority.resolve(caller, scope.workspaceId, actions) },
       perform: async client => {
-        const { runs, durations, cacheKeys, logTail, coverage } = prepared!
+        const { runs, durations, durationPeaks, cacheKeys, logTail, coverage } = prepared!
         const { groupId, commit, priority, priorityReason, cachedFiles, initiator } = runs[0]!
         // An identical request already queued or running in this workspace is joined instead of queueing tickets.
         const requestKey = runs[0]!.state === 'queued' ? ciRequestKey(input, runs[0]!) : null
@@ -367,11 +368,12 @@ export class HostCiService {
         }
         if (requestKey) await registerCiRequest(client, scope.workspaceId, groupId, requestKey, result)
         for (const [index, run] of runs.entries()) {
-          await client.query(`insert into ci_runs(id,workspace_id,group_id,state,record,durations,result_cache_keys,log_tail,integration_selection)
-            values($1,$2,$3,$6,$4::jsonb,$5::jsonb,$7::jsonb,$8,$9::jsonb)`, [run.id, run.workspaceId, groupId, serializeCiJson(run),
+          await client.query(`insert into ci_runs(id,workspace_id,group_id,state,record,durations,result_cache_keys,log_tail,integration_selection,duration_peaks)
+            values($1,$2,$3,$6,$4::jsonb,$5::jsonb,$7::jsonb,$8,$9::jsonb,$10::jsonb)`, [run.id, run.workspaceId, groupId, serializeCiJson(run),
             durations ? serializeCiJson(durations) : null, run.state,
             cacheKeys && Object.keys(cacheKeys).length ? JSON.stringify(cacheKeys) : null, logTail ?? '',
-            index === 0 && coverage ? JSON.stringify(coverage) : null])
+            index === 0 && coverage ? JSON.stringify(coverage) : null,
+            durationPeaks ? serializeCiJson(durationPeaks) : null])
         }
         await client.query(`insert into management_audit(principal_id,source,action,target_key,outcome,details)
           values($1,$2,'ci.priority',$3,'succeeded',$4::jsonb)`, [caller.id, source, scope.workspaceId,
@@ -537,21 +539,21 @@ export class HostCiService {
     const prepareCoverage = input.suite === 'integration' && (input.scope ?? 'affected') === 'affected'
       && input.files === undefined
     const publishLater = input.suite === 'unit' || input.gate === true || prepareCoverage
-    const publishEarly = (finalDurations: CiDurations, deriveFiles: boolean) => {
+    const publishEarly = (finalDurations: CiDurations, deriveFiles: boolean, peaks: CiDurations | null) => {
       if (!mirror || !this.endpoint.publishMirror) return
       this.publishMirror({ repository, mirror, commit,
         ...(deriveFiles && !input.baseCommit ? { defaultBranch } : {}),
         ...(deriveFiles && input.baseCommit ? { baseCommit: input.baseCommit } : {}),
-        durations: finalDurations })
+        durations: finalDurations, ...(peaks ? { durationPeaks: peaks } : {}) })
     }
     if (!publishLater) {
       void inventories.then(([learned, integration]) => {
-        const merged = { ...integration?.durations, ...learned }
+        const merged = { ...integration?.durations, ...learned?.durations }
         const durations = input.suite === 'integration' && integration
           ? Object.fromEntries(integration.files.filter(file => merged[file] !== undefined)
-            .map(file => [file, merged[file]!])) : learned ?? {}
+            .map(file => [file, merged[file]!])) : learned?.durations ?? {}
         publishEarly(input.suite === 'integration' ? durations : {},
-          (input.scope ?? 'affected') === 'affected' && input.files === undefined)
+          (input.scope ?? 'affected') === 'affected' && input.files === undefined, learned?.durationPeaks ?? null)
       }).catch(error => {
         this.context.log.warn({ err: error, commit, mirror }, 'Early CI mirror publication failed; dispatch will retry')
       })
@@ -570,7 +572,7 @@ export class HostCiService {
     else if (input.priority === 'high') priorityReason = 'requested'
     const groupId = randomUUID()
     const now = new Date().toISOString()
-    const [inventory, learned, integration] = await Promise.all([
+    const [inventory, estimates, integration] = await Promise.all([
       capabilities.parts && (input.suite === 'unit' || input.gate)
         ? this.commits.unitInventory?.(repository, commit) : undefined,
       earlyLearned,
@@ -580,6 +582,8 @@ export class HostCiService {
     if (input.gate && (!capabilities.parts || !integration || !inventory)) {
       throw new DomainError('CI_GATE_UNSUPPORTED', 'This repository must provide CI suite hooks and complete test inventories for a gate.', 409)
     }
+    const learned = estimates?.durations ?? null
+    const durationPeaks = estimates?.durationPeaks ?? null
     let durations = input.suite === 'integration' ? learned : null
     if (integration) {
       const merged = { ...integration.durations, ...learned }
@@ -750,14 +754,14 @@ export class HostCiService {
     const measuredUnitDurations = Object.fromEntries((inventory?.files ?? []).filter(file => unitDurations[file] !== undefined)
       .map(file => [file, unitDurations[file]!]))
     if (Object.keys(measuredUnitDurations).length) durations = { ...durations, ...measuredUnitDurations }
-    if (publishLater && !prepareCoverage) publishEarly(durations ?? {}, !input.gate && deriveFiles)
+    if (publishLater && !prepareCoverage) publishEarly(durations ?? {}, !input.gate && deriveFiles, durationPeaks)
     const publication: CiMirrorInput | undefined = prepareCoverage && mirror ? {
-      repository, mirror, commit, durations: durations ?? {},
+      repository, mirror, commit, durations: durations ?? {}, ...(durationPeaks ? { durationPeaks } : {}),
       ...(deriveFiles && input.baseCommit ? { baseCommit: input.baseCommit } : {}),
       ...(deriveFiles && !input.baseCommit ? { defaultBranch } : {}),
       ...(coverage ? { integrationCoverage: coverage } : {}),
     } : undefined
-    return { repository: workspace.repository, runs, durations,
+    return { repository: workspace.repository, runs, durations, durationPeaks,
       ...(coverage ? { coverage } : {}), ...(publication ? { publication } : {}),
       ...(cache && !empty ? { cacheKeys: cache.keys } : {}),
       ...(empty && cachedFiles ? { logTail: ciCachedNotice(cachedFiles) } : {}) }
@@ -777,21 +781,27 @@ export class HostCiService {
 
   /** The repository's learned test file durations, most recently measured first, within the start request's
    * bound. Files no run has measured use the planner's median or equal-weight fallback. */
-  private async learnedDurations(repository: string): Promise<CiDurations | null> {
-    const rows = (await this.pool.query<{ file: string; duration_ms: number }>(`select file,duration_ms from ci_file_durations
-      where repository=$1 order by updated_at desc,file limit 1000`, [repository])).rows
-    return rows.length ? Object.fromEntries(rows.map(row => [row.file, row.duration_ms])) : null
+  private async learnedDurations(repository: string) {
+    const rows = (await this.pool.query<{ file: string; duration_ms: number; peak_ms: number }>(`select file,duration_ms,
+      coalesce((select max(ms) from unnest(recent_durations_ms) as ms),duration_ms) as peak_ms
+      from ci_file_durations where repository=$1 order by updated_at desc,file limit 1000`, [repository])).rows
+    return rows.length ? {
+      durations: Object.fromEntries(rows.map(row => [row.file, row.duration_ms])),
+      durationPeaks: Object.fromEntries(rows.map(row => [row.file, row.peak_ms])),
+    } : null
   }
 
-  /** Folds a finished run's measured file durations into the repository's history: an exponential moving
-   * average per file, so one slow run moves the expectation only halfway. */
+  /** Planning uses the moving average; watchdogs use the peak of the last twenty successful measurements.
+   * The bounded window forgets old cold-cache spikes without letting a few warm runs erase the spread. */
   private async learnDurations(repository: string, durations: CiDurations, sql: SqlQuery) {
     const files = Object.keys(durations)
     if (!files.length) return
-    await sql.query(`insert into ci_file_durations(repository,file,duration_ms)
-      select $1,file,greatest(1,round(ms))::integer from unnest($2::text[],$3::double precision[]) as measured(file,ms)
+    await sql.query(`insert into ci_file_durations(repository,file,duration_ms,recent_durations_ms)
+      select $1,file,greatest(1,round(ms))::integer,array[greatest(1,round(ms))::integer]
+      from unnest($2::text[],$3::double precision[]) as measured(file,ms)
       on conflict (repository,file) do update set
         duration_ms=greatest(1,round((ci_file_durations.duration_ms+excluded.duration_ms)/2.0))::integer,
+        recent_durations_ms=(excluded.recent_durations_ms || ci_file_durations.recent_durations_ms)[1:20],
         samples=ci_file_durations.samples+1, updated_at=now()`, [repository, files, files.map(file => durations[file])])
   }
 
@@ -1711,11 +1721,11 @@ export class HostCiService {
       ...(deriveFiles && !start.baseCommit ? { defaultBranch: start.defaultBranch ?? 'main' } : {}),
       ...(deriveFiles && start.baseCommit ? { baseCommit: start.baseCommit } : {}),
       ...(start.integrationCoverage ? { integrationCoverage: start.integrationCoverage } : {}),
-      durations: start.durations ?? {} }).settled
+      durations: start.durations ?? {}, ...(start.durationPeaks ? { durationPeaks: start.durationPeaks } : {}) }).settled
   }
 
   private startRequest(run: CiRunRecord, selection: Partial<Extract<CiHostRequest, { operation: 'start' }>>,
-    durations: CiDurations | null | undefined, coverage?: CiCoverageSelection): Extract<CiHostRequest, { operation: 'start' }> {
+    durations: CiDurations | null | undefined, durationPeaks: CiDurations | null | undefined, coverage?: CiCoverageSelection): Extract<CiHostRequest, { operation: 'start' }> {
     if (run.suite === 'integration' && run.deriveFiles && !coverage) {
       throw new DomainError('CI_GROUP_SELECTION_MISSING', 'The integration group has no saved selection input.', 409)
     }
@@ -1730,6 +1740,7 @@ export class HostCiService {
       ...(run.baseCommit ? { baseCommit: run.baseCommit } : {}),
       ...(run.cachedFiles?.length ? { notice: ciCachedNotice(run.cachedFiles) } : {}),
       ...(durations ? { durations } : {}),
+      ...(durationPeaks ? { durationPeaks } : {}),
       ...(coverage ? { integrationCoverage: coverage } : {}),
     }
   }
@@ -1805,7 +1816,7 @@ export class HostCiService {
       .catch(error => this.context.log.warn({ err: error }, 'CI ticket cleanup failed; retrying'))
       .finally(() => { this.cleaningTickets = undefined })
     const knownComputers = await this.endpoint.computers()
-    const { parsed, durations, coverage } = await readQueuedCiRuns(this.pool)
+    const { parsed, durations, durationPeaks, coverage } = await readQueuedCiRuns(this.pool)
     const speeds = parsed.some(run => run.gate)
       ? await readExecutorSpeeds(this.pool, this.planningEndpoint) : new Map()
     void this.context.platform.withoutCiDatabasePriority(async () => this.prewarm.schedule(knownComputers, parsed))
@@ -1858,7 +1869,7 @@ export class HostCiService {
         || !gateShards.has(run.plannedHostKey) && !this.observingComputers.has(run.plannedHostKey)
         || stealsGatePart(run, computer)
     }
-    queued = await this.splitGateParts(queued, { computers, knownComputers, shards: gateShards, durations, speeds,
+    queued = await this.splitGateParts(queued, { computers, knownComputers, shards: gateShards, durations, durationPeaks, speeds,
       gate, freeSlots, canTake: canTakeGatePart, idle: computer => (used.get(computer.key) ?? 0) === 0 }, snapshots)
     // Reserve slots before awaiting a start so concurrent dispatches cannot spend the same capacity.
     await inBatches(queued, 8, async run => {
@@ -1966,7 +1977,7 @@ export class HostCiService {
           continue
         }
         const shards = gateDispatchShards(run, computer.key, gateShards.get(computer.key)!)
-        const start = this.startRequest(run, { ...selection, ...shards }, durations.get(run.id), coverage.get(run.groupId))
+        const start = this.startRequest(run, { ...selection, ...shards }, durations.get(run.id), durationPeaks.get(run.id), coverage.get(run.groupId))
         // A cloud slot is claimed only once the shared mirror snapshot is on GitHub; build computers need no snapshot.
         if (computer.hostRef.kind === 'cloud') {
           if (!mirrorReady.has(run.id)) mirrorReady.set(run.id, this.mirrorPublished(start))

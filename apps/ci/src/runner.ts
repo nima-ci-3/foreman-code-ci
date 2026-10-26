@@ -175,7 +175,7 @@ async function waitForRepositoryTurn(previous: Promise<void>, signal?: AbortSign
 interface RunMeta {
   runId: string; repository: string; commit: string; suite: CiSuite; partition: CiPartition | null
   startedAt: string; state: CiHostRun['state']; finishedAt: string | null; exitCode: number | null
-  message: string | null; cleaned: boolean; durations?: CiDurations
+  message: string | null; cleaned: boolean; durations?: CiDurations; durationPeaks?: CiDurations
   scope?: CiScope; files?: string[]; part?: CiPart; defaultBranch?: string; baseCommit?: string; deriveFiles?: boolean
   integrationCoverage?: Extract<CiHostRequest, { operation: 'start' }>['integrationCoverage']
   selection?: CiHostRun['selection']
@@ -194,6 +194,7 @@ interface RunMeta {
 
 type StartRequest = { runId: string; repository: string; commit: string; suite: CiSuite
   part?: CiPart | undefined; partition?: CiPartition | undefined; durations?: CiDurations | undefined;
+  durationPeaks?: CiDurations | undefined;
   scope?: CiScope | undefined; files?: string[] | undefined; defaultBranch?: string | undefined;
   expectedDurationMs?: number | undefined; baseCommit?: string | undefined; gate?: boolean | undefined;
   integrationShards?: number | undefined; buildAllowancePercent?: number | undefined; notice?: string | undefined;
@@ -637,7 +638,8 @@ export class HostCiRunner {
       selection: { scope: request.scope ?? 'affected', files: request.files ?? [],
         reason: request.files ? 'Caller supplied the affected files.' : 'Full scope requested.' },
       ...(request.notice ? { notice: request.notice } : {}),
-      ...(request.durations ? { durations: request.durations } : {}) }
+      ...(request.durations ? { durations: request.durations } : {}),
+      ...(request.durationPeaks ? { durationPeaks: request.durationPeaks } : {}) }
     return (await withHostCiRunLock(this.context, directory, async () => {
       if (existsSync(join(directory, 'meta.json')) && (await this.readMeta(request.runId)).state !== 'queued') {
         return this.refresh(request.runId)
@@ -1059,7 +1061,8 @@ export class HostCiRunner {
     let integrationEnvironment = ''
     if (meta.suite === 'integration' && capabilities.integrationPartitions) {
       const durations = meta.durations ?? {}
-      await writeFile(join(run, 'expected-durations.json'), JSON.stringify(durations), { mode: 0o600 })
+      const snapshot = meta.durationPeaks ? { durations, durationPeaks: meta.durationPeaks } : durations
+      await writeFile(join(run, 'expected-durations.json'), JSON.stringify(snapshot), { mode: 0o600 })
       // The repository's integration runner uses them for per-file hang deadlines and reports what it measured.
       integrationEnvironment = ` FOREMAN_CODE_INTEGRATION_DURATIONS=${quote(join(run, 'expected-durations.json'))}`
         + ` FOREMAN_CODE_INTEGRATION_DURATIONS_OUTPUT=${quote(join(run, 'measured-durations.json'))}`
@@ -1092,6 +1095,7 @@ export class HostCiRunner {
     return ['#!/bin/bash', 'set -o pipefail', `exec >>${quote(join(run, 'log'))} 2>&1`,
       `export TMPDIR=${quote(join(run, 'tmp'))} FOREMAN_CODE_CI_DATABASE_STATE=${quote(join(run, 'tmp'))} CI=true NODE_OPTIONS=--max-old-space-size=${heapMb}`
         + ` FOREMAN_CODE_CI_CONTRACTS_CACHE=${quote(join(cache, 'contracts'))}`
+        + ` FOREMAN_CODE_CI_BUILD_CACHE=${quote(join(cache, 'builds'))}`
         + ` FOREMAN_CODE_CI_TYPECHECK_CACHE=${quote(join(source, '..', 'typecheck-cache'))}`
         + ` FOREMAN_CODE_CI_CPU_COUNT=${Math.max(1, Math.floor(resources.cpuCount))}`
         + ` FOREMAN_CODE_CI_MEMORY_BYTES=${resources.memoryBytes}`

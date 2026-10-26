@@ -136,6 +136,7 @@ it('keeps GitHub dispatch inputs within the payload limit while preserving learn
     `apps/api/test/${String(index).padStart(4, '0')}-${'x'.repeat(18)}.integration.test.ts`, 1000,
   ]))
   Object.assign(durations, Object.fromEntries(files.map((file, index) => [file, (index + 1) * 100])))
+  const durationPeaks = { ...durations, [files[0]!]: 5000 }
   expect(JSON.stringify(durations).length).toBeLessThan(65_535)
   for (const file of files) await f.write(file, 'export {}\n')
   f.run('commit', '-qam', 'Change selected files')
@@ -143,7 +144,7 @@ it('keeps GitHub dispatch inputs within the payload limit while preserving learn
   const partition = { index: 0, count: 2, weights: [2, 1] }
   await f.cloud.handle({ operation: 'start', workspaceId: 'ci-workspace', runId: randomUUID(),
     repository: 'octo/site', commit: f.run('rev-parse', 'HEAD'), baseCommit: f.commit,
-    suite: 'integration', partition, durations })
+    suite: 'integration', partition, durations, durationPeaks })
   const command = f.dispatched[0]!
   const inputs = Object.fromEntries(command.flatMap((value, index) => {
     if (command[index - 1] !== '-f') return []
@@ -153,7 +154,7 @@ it('keeps GitHub dispatch inputs within the payload limit while preserving learn
   expect(Buffer.byteLength(JSON.stringify(inputs))).toBeLessThanOrEqual(65_535)
   const checkout = await f.checkoutMirror(command[command.indexOf('--ref') + 1]!)
   expect(JSON.parse(await readFile(join(checkout, 'scripts/ci-learned-durations.json'), 'utf8')))
-    .toEqual(durations)
+    .toEqual({ durations, durationPeaks })
   const suite = await cloudSuiteRunner(checkout, command, 'github')
   const result = suite.run()
   expect(result.status, result.stderr).toBe(0)

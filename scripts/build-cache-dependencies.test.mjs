@@ -55,7 +55,7 @@ const web = process.cwd().endsWith('/web');
 fs.mkdirSync('dist', {recursive:true});
 fs.writeFileSync('dist/' + (web ? 'index.html' : process.cwd().endsWith('/api') ? 'server.js' : process.cwd().endsWith('/ci') ? 'environment.js' : process.cwd().endsWith('/contracts-node') ? 'serverKit.js' : 'index.js'), fs.readFileSync('src/index.ts'));
 fs.writeFileSync('dist/index.d.ts', fs.readFileSync('src/index.ts'));
-fs.appendFileSync('../../.logs/emissions', 'emitted\\n');
+fs.appendFileSync(process.env.FIXTURE_EMISSIONS ?? '../../.logs/emissions', 'emitted\\n');
 if (process.cwd().endsWith('/api')) {
   fs.mkdirSync('dist/cli', {recursive:true});
   fs.writeFileSync('dist/cli/harnessCompatibility.js', 'import fs from "node:fs"; fs.appendFileSync("../../.logs/probes", process.env.PROBE_SETTING + "\\\\n")');
@@ -76,6 +76,7 @@ if (process.cwd().endsWith('/api')) {
   Object.assign(env, { FOREMAN_CODE_HEAVY_BASE_TMPDIR: home, FOREMAN_CODE_VERIFICATION_ROOT: '', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' })
   delete env.CI_HOST_RUNNER
   delete env.FOREMAN_CODE_CI_CONTRACTS_CACHE
+  delete env.FOREMAN_CODE_CI_BUILD_CACHE
   delete env.NODE_OPTIONS
   const run = (args, cwd = root, extraEnv = {}) => spawnSync(process.execPath, args, { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 15000 })
   const git = (...args) => {
@@ -124,6 +125,52 @@ for (const kind of Object.keys(projects)) {
     assert.doesNotMatch(f.build(kind), /build is current/)
     rmSync(join(f.root, projects[kind], 'src/added.ts'))
     assert.doesNotMatch(f.build(kind), /build is current/)
+  })
+}
+
+for (const kind of ['contracts', 'contracts-node', 'ci']) {
+  test(`${kind}: host tickets restore validated builds after checkout cleaning and relocation`, t => {
+    const f = fixture(t)
+    const cache = join(f.home, 'builds')
+    const emissions = join(f.home, 'emissions')
+    const extraEnv = { CI_HOST_RUNNER: '1', FOREMAN_CODE_CI_BUILD_CACHE: cache, FIXTURE_EMISSIONS: emissions }
+    const build = () => f.build(kind, { extraEnv })
+    const count = () => readFileSync(emissions, 'utf8').trim().split('\n').length
+    const clean = () => { f.git('clean', '-ffdxq', '-e', 'node_modules'); mkdirSync(join(f.root, '.logs')) }
+    assert.match(build(), /"status":"miss"/)
+    clean()
+    f.move()
+    assert.match(build(), /"status":"hit"/)
+    assert.equal(count(), 1)
+    const archive = join(cache, kind, readdirSync(join(cache, kind))[0], 'dist/index.d.ts')
+    // Copies are private to each ticket; corrupting one must not poison the archive.
+    f.put(`${projects[kind]}/dist/index.d.ts`, 'damaged ticket output')
+    clean()
+    assert.match(build(), /"status":"hit"/)
+    assert.equal(count(), 1)
+    f.put(`${projects[kind]}/src/index.ts`, 'export const value = 2')
+    assert.match(build(), /"status":"miss"/)
+    assert.equal(count(), 2)
+    writeFileSync(archive, 'damaged archive output')
+    f.put(`${projects[kind]}/src/index.ts`, 'export const value = 1')
+    clean()
+    assert.match(build(), /"status":"invalid"/)
+    assert.equal(count(), 3)
+    assert.equal(readFileSync(join(f.root, projects[kind], 'dist/index.d.ts'), 'utf8'), 'export const value = 1')
+    clean()
+    assert.match(build(), /"status":"hit"/)
+    assert.equal(count(), 3)
+    const config = `${projects[kind]}/tsconfig.json`
+    f.put(config, readFileSync(join(f.root, config), 'utf8').replace('ES2022', 'ES2023'))
+    assert.match(build(), /"status":"miss"/)
+    assert.equal(count(), 4)
+    clean()
+    assert.match(build(), /"status":"hit"/)
+    assert.match(f.build(kind, { extraEnv, flags: ['--sourceMap'] }), /"status":"miss"/)
+    assert.equal(count(), 5)
+    clean()
+    assert.match(f.build(kind, { extraEnv, flags: ['--sourceMap'] }), /"status":"hit"/)
+    assert.equal(count(), 5)
   })
 }
 

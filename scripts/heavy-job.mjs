@@ -4,7 +4,7 @@ import { readProductEnvironment } from '../packages/contracts/src/productEnviron
 import { retainedHeavyJobTokens, writeHeavyJobRecord } from './heavy-job-slots.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, readlinkSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -333,8 +333,8 @@ function inputHash(kind, command) {
 
 const outputs = { contracts: 'packages/contracts/dist/index.js', 'contracts-node': 'packages/contracts-node/dist/serverKit.js', ci: 'apps/ci/dist/environment.js',
   api: 'apps/api/dist/server.js', web: 'apps/web/dist/index.html' }
-function outputHash(kind) {
-  const primary = join(root, outputs[kind])
+function outputHash(kind, directory = dirname(join(root, outputs[kind]))) {
+  const primary = join(directory, outputs[kind].split('/').at(-1))
   if (!existsSync(primary)) return null
   const base = dirname(primary)
   const hash = createHash('sha256')
@@ -351,6 +351,11 @@ function outputHash(kind) {
     visit(base)
     return count ? hash.digest('hex') : null
   } catch { throw new Error('Build cache artifacts could not be hashed.') }
+}
+function sharedBuildDirectory(kind, signature) {
+  const cache = process.env.FOREMAN_CODE_CI_BUILD_CACHE
+  return cache && signature && ['contracts', 'contracts-node', 'ci'].includes(kind)
+    ? join(resolve(root, cache), kind, signature) : null
 }
 function recordBuildCache(kind, fresh, lastError) {
   const path = join(root, '.logs', `heavy-cache-${kind}.json`)
@@ -399,6 +404,24 @@ function freshBuild(kind, command) {
       fresh = recorded.output === output
       if (!fresh) lastError = output ? 'Build cache artifacts have changed.' : 'Build cache artifacts are missing.'
     }
+    const cached = sharedBuildDirectory(kind, signature)
+    if (!fresh && cached) {
+      const archived = readBuildStamp(join(cached, 'stamp.json'))
+      if (archived?.signature === signature) {
+        if (archived.output !== outputHash(kind, join(cached, 'dist'))) {
+          throw new Error('Build cache shared artifacts have changed or are missing.')
+        }
+        const destination = dirname(join(root, outputs[kind]))
+        rmSync(destination, { recursive: true, force: true })
+        cpSync(join(cached, 'dist'), destination, { recursive: true })
+        // Validate the private copy too: never admit a partial or concurrently damaged restore.
+        if (archived.output !== outputHash(kind)) throw new Error('Build cache restored artifacts have changed.')
+        mkdirSync(dirname(stamp), { recursive: true })
+        writeFileSync(stamp, JSON.stringify(archived))
+        fresh = true
+        lastError = null
+      }
+    }
   } catch (error) { lastError = error.message }
   recordBuildCache(kind, fresh, lastError)
   return { fresh, stamp, signature }
@@ -420,6 +443,17 @@ function stampBuild(kind, freshness, command) {
     if (!output) throw new Error('Build cache artifacts are missing after the build.')
     mkdirSync(dirname(freshness.stamp), { recursive: true })
     writeFileSync(freshness.stamp, JSON.stringify({ signature: freshness.signature, output }))
+    const cached = sharedBuildDirectory(kind, freshness.signature)
+    if (cached) {
+      const temporary = `${cached}.${randomUUID()}`
+      try {
+        mkdirSync(temporary, { recursive: true })
+        cpSync(dirname(join(root, outputs[kind])), join(temporary, 'dist'), { recursive: true })
+        cpSync(freshness.stamp, join(temporary, 'stamp.json'))
+        rmSync(cached, { recursive: true, force: true })
+        renameSync(temporary, cached)
+      } finally { rmSync(temporary, { recursive: true, force: true }) }
+    }
   } catch (error) {
     const reason = error.message.startsWith('Build cache ')
       ? error.message : 'Build cache metadata could not be saved.'

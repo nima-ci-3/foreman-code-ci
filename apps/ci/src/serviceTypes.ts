@@ -14,7 +14,7 @@ export interface HostCiComputer {
   buildAllowancePercent?: number; userSystemd?: CiUserSystemd
 }
 export type CiMirrorInput = Pick<Extract<CiHostRequest, { operation: 'start' }>,
-  'repository' | 'commit' | 'defaultBranch' | 'baseCommit' | 'durations' | 'integrationCoverage'> & { mirror: string }
+  'repository' | 'commit' | 'defaultBranch' | 'baseCommit' | 'durations' | 'durationPeaks' | 'integrationCoverage'> & { mirror: string }
 
 export interface HostCiEndpoint {
   /** Paired computers that serve host CI now. */

@@ -10,6 +10,35 @@ import { fixture } from './helpers/hostCiMcpFixture.js'
 
 afterEach(() => { vi.restoreAllMocks() })
 
+it('retains a recent successful peak separately from planning estimates and ages it out after twenty samples', async () => {
+  const file = 'apps/api/test/published-browser-runtime.integration.test.ts'
+  const f = await fixture({ integrationInventory: { files: [file], durations: {} } })
+  try {
+    for (let index = 0; index <= 21; index++) {
+      const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', {
+        suite: 'integration', scope: 'full', commandId: `spread-${index}`,
+      }))
+      await f.ci.dispatch()
+      const request = f.started.find(value => value.request.operation === 'start'
+        && value.request.runId === started.ticketId)!.request
+      expect(request.operation).toBe('start')
+      if (request.operation !== 'start') throw new Error('Expected a start request')
+      if (index === 20) {
+        expect(request.durationPeaks).toEqual({ [file]: 171_900 })
+        expect(request.durations![file]).toBeLessThan(60_010)
+        const read = CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get', { ticketId: started.ticketId }))
+        expect(read.run.expectedDurationMs).toBe(90_000 + request.durations![file]!)
+      }
+      if (index === 21) expect(request.durationPeaks).toEqual({ [file]: 60_000 })
+      f.finish(started.ticketId, 0, 'passed\n', { [file]: index === 0 ? 171_900 : 60_000 })
+      const read = CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get', {
+        ticketId: started.ticketId, waitUntil: 'group-terminal', waitSeconds: 10,
+      }))
+      expect(read.run.collection).toBe('complete')
+    }
+  } finally { await f.close() }
+})
+
 it('denies callers without CI grants and asks for a GitHub repository first', async () => {
   const f = await fixture({ repository: false })
   try {

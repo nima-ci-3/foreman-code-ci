@@ -32,6 +32,23 @@ test('invalid and empty shards fail instead of starting an unfiltered suite', ()
   }
 })
 
+test('unit CLI partitions a learned snapshot by typical durations even when peaks have a different order', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'unit-estimates-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const path = join(directory, 'durations.json')
+  const files = ['apps/api/src/a.test.ts', 'apps/api/src/b.test.ts', 'apps/api/src/c.test.ts']
+  const durations = Object.fromEntries(files.map((file, index) => [file, [100, 40, 30][index]]))
+  writeFileSync(path, JSON.stringify({ durations, durationPeaks: { ...durations, [files[2]]: 10_000 } }))
+  const bin = join(directory, 'bin')
+  mkdirSync(bin)
+  writeFileSync(join(bin, 'git'), `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(files.join('\0') + '\0')})\n`, { mode: 0o755 })
+  const result = spawnSync(process.execPath, ['scripts/ci-unit-files.mjs', 'select', 'unit-api', '1/2'], {
+    encoding: 'utf8', env: { ...process.env, DURATIONS_INPUT: path, PATH: `${bin}${delimiter}${process.env.PATH}` },
+  })
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(result.stdout.split('\0').filter(Boolean), ['src/a.test.ts'])
+})
+
 test('API discovery retains unit tests and excludes integration, acceptance and generated files', () => {
   assert.deepEqual(unitFiles([
     'apps/api/test/a.test.ts', 'apps/api/src/b.spec.tsx', 'apps/api/test/c.test.mjs',

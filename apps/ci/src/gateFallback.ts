@@ -24,6 +24,7 @@ interface FallbackCapacity {
   knownComputers?: readonly HostCiComputer[]
   shards: Map<string, number>
   durations: Map<string, CiDurations | null>
+  durationPeaks?: Map<string, CiDurations | null>
   reservedCloud: Set<string>
   gate: CiRunRecord | undefined
   speeds?: ExecutorSpeeds
@@ -89,7 +90,7 @@ function cloudParts(context: CiContext, run: CiRunRecord, capacity: FallbackCapa
 }
 
 async function saveCloudParts(context: CiContext, pool: pg.Pool, previous: CiRunRecord, parts: CiRunRecord[],
-  durations: CiDurations | null) {
+  durations: CiDurations | null, durationPeaks: CiDurations | null) {
   return context.platform.withTransaction(pool, async client => {
     // The original ticket stays readable; its compare-and-swap also prevents competing splits and assignments.
     const saved = await client.query(`update ci_runs set state=$2, host_key=$3, record=$4::jsonb
@@ -97,9 +98,10 @@ async function saveCloudParts(context: CiContext, pool: pg.Pool, previous: CiRun
     [previous.id, 'queued', null, serializeCiJson(parts[0]!), JSON.stringify(previous)])
     if (!saved.rowCount) return false
     for (const part of parts.slice(1)) {
-      await client.query(`insert into ci_runs(id,workspace_id,group_id,record,durations,state)
-        values($1,$2,$3,$4::jsonb,$5::jsonb,'queued')`,
-      [part.id, part.workspaceId, part.groupId, serializeCiJson(part), durations ? serializeCiJson(durations) : null])
+      await client.query(`insert into ci_runs(id,workspace_id,group_id,record,durations,duration_peaks,state)
+        values($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,'queued')`,
+      [part.id, part.workspaceId, part.groupId, serializeCiJson(part), durations ? serializeCiJson(durations) : null,
+        durationPeaks ? serializeCiJson(durationPeaks) : null])
     }
     return true
   })
@@ -124,10 +126,12 @@ export async function splitUnavailableGateParts(context: CiContext, pool: pg.Poo
       continue
     }
     const durations = capacity.durations.get(run.id) ?? null
-    if (await saveCloudParts(context, pool, run, parts, durations)) {
+    const durationPeaks = capacity.durationPeaks?.get(run.id) ?? null
+    if (await saveCloudParts(context, pool, run, parts, durations, durationPeaks)) {
       context.log.warn({ operation: 'reassign unavailable CI build part', runId: run.id,
         originalHostKey: run.plannedHostKey, replacementParts: parts.length }, 'Unavailable build part reassigned to cloud')
       for (const part of parts) capacity.durations.set(part.id, durations)
+      for (const part of parts) capacity.durationPeaks?.set(part.id, durationPeaks)
       result.push(...parts)
     }
   }

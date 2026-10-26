@@ -44,6 +44,10 @@ test('CI uses learned durations and ignores obsolete repository snapshots', t =>
   }
   writeFileSync(join(root, 'scripts/ci-learned-durations.json'), JSON.stringify({ snapshot: 25 }))
   assert.deepEqual(executionDurations('integration', root, { measured: 12 }), { snapshot: 25 })
+  writeFileSync(join(root, 'scripts/ci-learned-durations.json'), JSON.stringify({
+    durations: { snapshot: 25 }, durationPeaks: { snapshot: 500 },
+  }))
+  assert.deepEqual(executionDurations('integration', root), { snapshot: 25 })
 })
 
 test('integration expectations use the retained snapshot unless explicitly overridden', () => {

@@ -139,6 +139,7 @@ const CiHostStartSchema = z.object({
   /** Main can record cloud ownership before publishing its checked snapshot. */
   deferMirror: z.boolean().optional(),
   suite: CiSuiteSchema, part: CiPartSchema.optional(), partition: CiPartitionSchema.optional(), durations: CiDurationsSchema.optional(),
+  durationPeaks: CiDurationsSchema.optional(),
   scope: CiScopeSchema.optional(), files: CiSelectedFilesSchema.optional(),
   integrationCoverage: CiCoverageSelectionSchema.optional(),
   expectedDurationMs: z.number().nonnegative().finite().optional(),

@@ -61,7 +61,8 @@ if (process.argv[1] && import.meta.url === `file://${resolve(process.argv[1])}`)
     const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0')
     const files = unitFiles(tracked, suite)
     const snapshot = process.env.DURATIONS_INPUT || resolve(root, 'scripts/ci-learned-durations.json')
-    const durations = existsSync(snapshot) ? readDurations(snapshot) : JSON.parse(process.env.CI_DURATIONS || '{}')
+    const estimates = existsSync(snapshot) ? readDurations(snapshot) : JSON.parse(process.env.CI_DURATIONS || '{}')
+    const durations = estimates.durations ?? estimates
     const prefix = 'apps/api/'
     const selected = durationSlice(files, durations, argument)
     if (!selected.length) throw new Error('This unit slice has no files')

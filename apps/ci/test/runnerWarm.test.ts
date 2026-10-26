@@ -18,13 +18,14 @@ afterEach(async () => {
 })
 
 async function computer({ prepareDatabase = false, beforeLaunch, afterRunning, expireUnit = false,
-  expireInstallLock = false, failPrefetch = false }: {
+  expireInstallLock = false, failPrefetch = false, buildCacheProbe = false }: {
   prepareDatabase?: boolean
   beforeLaunch?: () => Promise<void>
   afterRunning?: () => Promise<void>
   expireUnit?: boolean
   expireInstallLock?: boolean
   failPrefetch?: boolean
+  buildCacheProbe?: boolean
 } = {}) {
   const base = process.env.FOREMAN_CODE_TEST_ROOT ?? process.env.TMPDIR
     ?? join(homedir(), '.cache/foreman-code/tests')
@@ -90,6 +91,16 @@ if (args[1] === 'db:up') {
     if (!fs.existsSync('node_modules/dependency')) fs.copyFileSync(seed, 'node_modules/dependency')
   }
 } else {
+  if (${buildCacheProbe}) {
+    const cache = process.env.FOREMAN_CODE_CI_BUILD_CACHE
+    if (!cache) console.log('build-cache=unavailable')
+    else {
+      fs.mkdirSync(cache, { recursive: true })
+      const artifact = path.join(cache, 'fixture-artifact')
+      console.log('build-cache=' + (fs.existsSync(artifact) ? fs.readFileSync(artifact, 'utf8') : 'miss'))
+      fs.writeFileSync(artifact, 'hit')
+    }
+  }
   console.log('dependency=' + fs.readFileSync('node_modules/dependency', 'utf8'))
   const metadata = process.env.npm_config_cache_dir
   console.log('metadata=' + (metadata
@@ -199,6 +210,16 @@ if (args[1] === 'db:up') {
     cwd: join(root, 'runner/git/example/project'), env: environment, encoding: 'utf8',
   }).trim() }
 }
+
+it('retains shared build artifacts across host ticket checkout cleaning and recreation', async () => {
+  const fixture = await computer({ buildCacheProbe: true })
+  for (const [ticket, expected] of ['miss', 'hit', 'hit', 'hit'].entries()) {
+    await expect(fixture.run()).resolves.toMatchObject({
+      run: { state: 'passed' }, text: expect.stringContaining(`build-cache=${expected}`),
+    })
+    if (ticket === 1) await fixture.breakCheckout()
+  }
+})
 
 it('bounds the entire unit and retains a timeout failure after the worker restarts', async () => {
   const fixture = await computer({ expireUnit: true, prepareDatabase: true })

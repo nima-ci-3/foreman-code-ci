@@ -209,7 +209,7 @@ export function captureVerificationInventory(root, suite, { qualification = fals
       } else if (partition) {
         const durations = existsSync(join(root, INTEGRATION_DURATIONS))
           ? JSON.parse(readFileSync(join(root, INTEGRATION_DURATIONS), 'utf8')) : {}
-        selected = integrationPartition(selected, durations && typeof durations === 'object' ? durations : {}, partition)
+        selected = integrationPartition(selected, durations?.durations ?? (durations && typeof durations === 'object' ? durations : {}), partition)
       }
     } else if (portion.kind === 'vitest') {
       const prefix = portion.key.split(':')[0] + '/'

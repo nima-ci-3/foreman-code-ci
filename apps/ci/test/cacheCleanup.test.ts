@@ -28,12 +28,13 @@ it('preserves a cache held by another runner and evicts its oldest entries after
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-it('evicts complete contracts snapshots and preserves lock files and cache entries within the budget', async () => {
+it.each(['contracts', 'builds/contracts', 'builds/contracts-node', 'builds/ci'])(
+  'evicts complete %s snapshots and preserves lock files and cache entries within the budget', async directory => {
   const parent = join(homedir(), '.cache', 'foreman-tmp')
   await mkdir(parent, { recursive: true })
   const root = await mkdtemp(join(parent, 'ci-cache-snapshot-'))
   const cache = join(root, 'cache/fixture/site')
-  const snapshot = join(cache, 'contracts/snapshot')
+  const snapshot = join(cache, directory, 'snapshot')
   await mkdir(snapshot, { recursive: true })
   await mkdir(join(cache, 'locks'))
   await writeFile(join(snapshot, '.ci-cache-key'), 'key')

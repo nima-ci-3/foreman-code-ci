@@ -23,8 +23,8 @@ async function cacheEntries(path: string, repository: string): Promise<CacheEntr
     const childPath = join(path, child.name)
     if (child.isDirectory()) {
       const contents = await cacheEntries(childPath, repository)
-      // A contracts snapshot is restored as a whole; partial eviction would make it invalid.
-      if (path.endsWith(`${sep}contracts`)) {
+      // Build snapshots are restored as a whole; partial eviction would make them invalid.
+      if (path.endsWith(`${sep}contracts`) || /\/builds\/(?:contracts-node|ci)$/.test(path)) {
         entries.push({ path: childPath, repository, bytes: contents.reduce((sum, entry) => sum + entry.bytes, 0),
           usedAt: contents.reduce((latest, entry) => Math.max(latest, entry.usedAt), 0) })
       } else {

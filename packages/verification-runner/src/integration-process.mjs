@@ -9,11 +9,12 @@ export const integrationProcessLimits = {
   graceMs: 5000,
 }
 
-/** How long a file with a known typical duration may run before it counts as hung: three times its usual time, but
+/** How long a file with a known duration may run before it counts as hung: three times its recent peak, but
  * at least a minute more, scaled for host pressure and never above the pressure-scaled per-file limit. */
-export function adaptiveDeadlineMs(expectedMs, fileTimeoutMs, timeoutScale = 1) {
+export function adaptiveDeadlineMs(expectedMs, fileTimeoutMs, timeoutScale = 1, peakMs) {
   if (!Number.isFinite(expectedMs) || expectedMs <= 0) return null
-  return Math.min(fileTimeoutMs, Math.ceil(Math.max(3 * expectedMs, expectedMs + 60_000) * Math.max(1, timeoutScale)))
+  const observedMs = Number.isFinite(peakMs) && peakMs > expectedMs ? peakMs : expectedMs
+  return Math.min(fileTimeoutMs, Math.ceil(Math.max(3 * observedMs, observedMs + 60_000) * Math.max(1, timeoutScale)))
 }
 
 export function groupUsed(pgid) {

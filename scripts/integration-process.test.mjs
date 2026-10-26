@@ -375,6 +375,37 @@ test('a file with a known duration gets three times that, at least a minute more
   for (const unknown of [undefined, null, 0, -5, Number.NaN, '20000']) assert.equal(adaptiveDeadlineMs(unknown, 3_600_000), null)
 })
 
+test('hang deadlines use the observed peak without giving consistently quick files their full timeout', () => {
+  assert.equal(adaptiveDeadlineMs(60_000, 850_000, 1, 171_900), 515_700)
+  assert.equal(adaptiveDeadlineMs(60_000, 850_000, 2, 171_900), 850_000)
+  assert.equal(adaptiveDeadlineMs(60_000, 850_000, 1, 60_000), 180_000)
+  assert.equal(adaptiveDeadlineMs(60_000, 850_000, 1, 20_000), 180_000)
+  for (const invalid of [undefined, null, 0, -1, NaN, '171900']) {
+    assert.equal(adaptiveDeadlineMs(60_000, 850_000, 1, invalid), 180_000)
+  }
+})
+
+test('a healthy variable-duration process survives the former hang deadline', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'integration-variable-'))
+  const log = join(directory, 'variable.log')
+  const child = loggedChild(log, `console.log('ready'); process.once('message', () => {
+    console.log('finished'); process.disconnect()
+  })`, { ipc: true })
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] })
+  try {
+    await waitForLog(log, 'ready')
+    const pending = waitForIntegrationProcess(child, { log, idleTimeoutMs: 300_000, fileTimeoutMs: 850_000,
+      deadlineMs: adaptiveDeadlineMs(60_000, 850_000, 1, 171_900), pollIntervalMs: 1000, graceMs: 100 })
+    t.mock.timers.tick(200_000)
+    child.send('finish')
+    assert.deepEqual(await pending, { code: 0, timedOut: false })
+  } finally {
+    t.mock.timers.reset()
+    await stopGroup(child.pid, { graceMs: 100 })
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('a file still logging past its adaptive deadline is stopped and reported as hung', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'integration-watchdog-hung-'))
   const log = join(directory, 'hung.log')

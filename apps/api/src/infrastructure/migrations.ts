@@ -11,6 +11,7 @@ import {
   ciExecutorCleanupMigration,
   ciFailureHistoryMigration,
   ciFileDurationsMigration,
+  ciDurationSpreadMigration,
   ciGateSpeedIndexMigration,
   ciGrantMigration,
   ciGroupWaitMigration,
@@ -1072,6 +1073,7 @@ export const migrations = [
   ciPassedSuiteIndexMigration,
   ciTestFailuresMigration,
   ciFunctionProofsMigration,
+  ciDurationSpreadMigration,
 ] as const
 
 /**

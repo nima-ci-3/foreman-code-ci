@@ -186,10 +186,11 @@ export function measuredDurations(firstPass) {
     && Number.isFinite(record.elapsedMs) && record.elapsedMs > 0).map((record) => [record.file, record.elapsedMs]))
 }
 
-export function readDurations(path) {
+export function readDurations(path, field = 'durations') {
   if (!path) return {}
   try {
-    const durations = JSON.parse(readFileSync(path, 'utf8'))
+    const snapshot = JSON.parse(readFileSync(path, 'utf8'))
+    const durations = snapshot?.durations ? snapshot[field] : field === 'durations' ? snapshot : {}
     return durations && typeof durations === 'object' && !Array.isArray(durations) ? durations : {}
   } catch (error) {
     if (error.code === 'ENOENT' || error instanceof SyntaxError) return {}
@@ -619,6 +620,7 @@ export async function runIntegration(argv = [], {
   }
   const timeouts = integrationTimeouts(env)
   const expectedDurations = readDurations(integrationDurationsPath(env))
+  const durationPeaks = readDurations(integrationDurationsPath(env), 'durationPeaks')
   const admin = await testAdminPool()
   let shardPlan
   try {
@@ -739,7 +741,7 @@ export async function runIntegration(argv = [], {
       + ` ${Math.min(2, concurrency)} slots; other work uses 1.`)
     for (const entry of unavailable) console.error(`[integration] UNAVAILABLE ${entry.file}: ${entry.reason}`)
     console.log(`[integration] process watchdog: ${timeouts.idleTimeoutMs} ms without output; ${timeouts.fileTimeoutMs} ms per file;`
-      + ` a file with a known duration is hung after 3x that (at least 60 s more); ${Object.keys(expectedDurations).length} durations known.`)
+      + ` a file with a known duration is hung after 3x its recent peak (at least 60 s more); ${Object.keys(expectedDurations).length} durations known.`)
     heartbeat = setInterval(reportProgress, 30_000)
     if (files) console.log('[integration] REQUESTED files only; skipped cases still fail this run.')
     if (startAt) console.log(`[integration] RESUME at ${startAt}: partial run only; a clean full run is required for suite proof.`)
@@ -811,7 +813,7 @@ export async function runIntegration(argv = [], {
       const scaledTimeouts = integrationTimeouts(env, timeoutScale)
       const fileTimeoutMs = scaledTimeouts.fileTimeoutMs
       const expectedMs = expectedDurations[file]
-      const deadlineMs = adaptiveDeadlineMs(expectedMs, fileTimeoutMs, timeoutScale)
+      const deadlineMs = adaptiveDeadlineMs(expectedMs, fileTimeoutMs, timeoutScale, durationPeaks[file])
       try {
         result = await superviseIntegrationProcess(child, { log, progress, ...scaledTimeouts,
           idleTimeoutMs: Math.min(fileTimeoutMs, scaledTimeouts.idleTimeoutMs),

@@ -19,7 +19,7 @@ export function executionFiles(files, executionSuite, cwd) {
 export function executionDurations(suite, cwd, learned = {}) {
   const learnedPath = join(cwd, 'scripts/ci-learned-durations.json')
   const snapshot = existsSync(learnedPath) ? JSON.parse(readFileSync(learnedPath, 'utf8')) : learned
-  return snapshot
+  return snapshot.durations ?? snapshot
 }
 
 /** Selection and partitioning happen in the checked-out repository on the cloud runner. */
