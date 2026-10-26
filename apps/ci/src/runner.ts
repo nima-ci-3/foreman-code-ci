@@ -87,20 +87,17 @@ function runPreparationCommand(context: CiContext, file: string, args: readonly 
     let stderr = ''
     let timedOut = false
     let failure: Error | undefined
-    let killTimer: ReturnType<typeof setTimeout> | undefined
-    const signalGroup = (signal: NodeJS.Signals) => {
+    const stop = () => {
       if (!child.pid) return
       try {
-        process.kill(-child.pid, signal)
+        // The supervisor forwards TERM and owns kill-after for the command's separate process group.
+        // Killing the supervisor on a competing timer can interrupt its wait and descendant cleanup.
+        process.kill(child.pid, 'SIGTERM')
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
           context.log.warn({ err: error }, 'CI preparation process could not be stopped')
         }
       }
-    }
-    const stop = () => {
-      signalGroup('SIGTERM')
-      killTimer ??= setTimeout(() => signalGroup('SIGKILL'), 250)
     }
     const timer = setTimeout(() => {
       timedOut = true
@@ -120,10 +117,6 @@ function runPreparationCommand(context: CiContext, file: string, args: readonly 
     child.once('error', error => { failure = error })
     child.once('close', code => {
       clearTimeout(timer)
-      if (killTimer) {
-        signalGroup('SIGKILL')
-        clearTimeout(killTimer)
-      }
       options.signal?.removeEventListener('abort', stop)
       const supervisorTimedOut = code === 124 || code === 137 && !options.signal?.aborted
       resolve({ code: failure ? 1 : code ?? 1, stdout, stderr: failure?.message ?? stderr,

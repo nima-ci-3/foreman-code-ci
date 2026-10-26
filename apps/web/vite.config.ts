@@ -1,8 +1,8 @@
 import { fileURLToPath } from 'node:url'
 import { createRuntimeBuildIdentity } from '@foreman-code/contracts/runtime-build-identity-node'
 import { resolveLocalBrowserOrigin } from '@foreman-code/contracts/browser-origin'
-import { devIdentity } from './dev-identity'
-import { localHumanProxy } from './local-human-client'
+import { devIdentity } from './dev-identity.ts'
+import { localHumanProxy } from './local-human-client.ts'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 

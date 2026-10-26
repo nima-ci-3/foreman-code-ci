@@ -397,3 +397,14 @@ export function useDeleteWorkspaceFolders() {
     onSuccess: async () => { await client.invalidateQueries({ queryKey: harnessSettingsKeys.root }) },
   })
 }
+/** Foreman Code MCP on one computer: the list read before Run; undefined when the computer can't be read. */
+export async function readMcpList(harness: 'codex' | 'claude', hostRef?: DeviceProvisioningTarget['hostRef']) {
+  const query = hostRef ? `?hostRef=${encodeURIComponent(JSON.stringify(hostRef))}` : ''
+  try { return await apiClient.request(`/api/management/harnesses/${harness}/mcp${query}`, HarnessMcpListResultSchema) }
+  catch { return undefined /* ignore: an unreadable computer is skipped here; Start then reports why it can't run there. */ }
+}
+/** Install or enable a managed preset in one command, as Run's setup does. */
+export async function applyManagedMcp(input: HarnessMcpManagedInput) {
+  return apiClient.request('/api/management/harnesses/mcp/managed', HarnessMcpPlanSchema,
+    { method: 'POST', body: HarnessMcpManagedInputSchema.parse(input) })
+}

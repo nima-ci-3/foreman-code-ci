@@ -644,6 +644,7 @@ export class HostCiService {
     if (mainSelection) { deriveFiles = false; coverage = undefined }
     const explicitFiles = input.files ?? mainSelection?.files
     const selection = { ...input, scope: selectionScope, files: selectionScope === 'affected' ? explicitFiles : [] }
+    timing.mark('selectionMs')
     // Explicit affected selections use the cache; full scope runs every file. A smoke run proves its file on one
     // computer, so its proofs are per computer: a computer that already passed the file at these inputs skips it.
     if (!cache && !input.gate && selectionScope === 'affected' && explicitFiles?.length && (this.commits.resultKeys || this.commits.testTree)
@@ -654,6 +655,7 @@ export class HostCiService {
         ...smokeTarget ? {} : { functionProofs: this.functionProofs(scope.workspaceId, repository, commit, input.suite, partOf) } })
     }
     if (cache) selection.files = cache.files
+    timing.mark('cacheMs')
     const empty = selectionScope === 'affected' && selection.files?.length === 0
     const split = input.suite === 'integration' ? capabilities.integrationPartitions : capabilities.parts
     let parts: { part: CiRunRecord['part']; partition: CiRunRecord['partition']; files: string[];
@@ -668,20 +670,24 @@ export class HostCiService {
         throw new DomainError('CI_SMOKE_COMPUTER_UNAVAILABLE', 'The smoke computer is not reachable yet. Retry shortly.', 503,
           { retryable: true }, { cause: error })
       })
+      timing.mark('smokeStatusMs')
       if (status.operation !== 'status' || !status.ready) {
         throw new DomainError('CI_SMOKE_COMPUTER_UNAVAILABLE', 'The smoke computer is not ready.', 409)
       }
       smokeShards = buildComputerIntegrationShards(status, smokeTarget.buildAllowancePercent)
       const fleet = await planning.computers()
+      timing.mark('smokeFleetMs')
       if (integration && fleet.some(computer => computer.hostRef.kind !== 'cloud')
         && fleet.some(computer => computer.hostRef.kind === 'cloud')) {
         const smokeUnit = await this.commits.unitInventory?.(repository, commit)
+        timing.mark('smokeUnitInventoryMs')
         if (smokeUnit) {
           try { await planCiGate(this.context, input, integration, smokeUnit, unitDurations, planning, new Map(), this.reservedCloudSlots) }
           catch (error) {
             if (!(error instanceof DomainError) || error.code !== 'CI_GATE_CAPACITY_REQUIRED') throw error
             this.context.log.info({ reason: error.message }, 'CI smoke has no complete ready gate fleet')
           }
+          timing.mark('smokeGateMs')
         }
       }
       parts = [{ part: null, partition: null, files: selection.files ?? input.files! }]
@@ -993,10 +999,7 @@ export class HostCiService {
 
   private async cancelObsoleteTickets() {
     const rows = (await this.pool.query<{ record: unknown }>(`select record from ci_runs
-      where state in ('queued','starting','running') and (record->>'supersededBy' is not null
-        or record->>'gate'='true' and exists (
-          select 1 from ci_runs failed where failed.workspace_id=ci_runs.workspace_id
-            and failed.group_id=ci_runs.group_id and failed.state='failed' and failed.record->>'gate'='true'))`)).rows
+      where state in ('queued','starting','running') and record->>'supersededBy' is not null`)).rows
     const all = rows.map(row => CiRunRecordSchema.parse(row.record))
     const tracked = new Set(all.map(run => run.id))
     for (const [id, retry] of this.cancelRetries) {
@@ -1006,10 +1009,7 @@ export class HostCiService {
     let canceled = false
     await inBatches(runs, 8, async run => {
       try {
-        const audit: CiCancellation | undefined = run.supersededBy ? undefined : {
-          principalId: run.initiator.principalId, source: 'mcp', commandId: randomUUID(), reason: 'gate_failed',
-        }
-        const result = await this.retryCancelTicket(run.workspaceId, run.id, audit)
+        const result = await this.retryCancelTicket(run.workspaceId, run.id, undefined)
         if (result.run.state === 'canceled') canceled = true
       } catch (error) {
         const failures = this.cancelRetries.get(run.id)?.failures ?? 1
