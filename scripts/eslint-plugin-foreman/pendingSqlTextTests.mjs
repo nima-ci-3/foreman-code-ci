@@ -90,7 +90,6 @@ export const pendingSqlTextTests = new Set([
   'apps/api/test/helpers/currentRestartUnit.ts',
   'apps/api/test/helpers/recoveryExecution.testSupport.ts',
   'apps/api/test/helpers/repeatFixtures.ts',
-  'apps/api/test/helpers/saveNativeSettlement.testSupport.ts',
   'apps/api/test/historical-agent-chat-identity.test.ts',
   'apps/api/test/hrt-source-policy.test.ts',
   'apps/api/test/interaction-delivery-repository.test.ts',
