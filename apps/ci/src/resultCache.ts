@@ -8,8 +8,8 @@ import { parse as parseYaml } from 'yaml'
 /** Bump only when changed input identities and doubt rules cannot already exclude unsafe older proofs. */
 const CI_RESULT_CACHE_VERSION = 2
 
-/** A test file's input key, or null with the reason it must run. `runnerFreeKey` leaves out the files that run tests
- * (TEST_EXECUTION_FILES): a proof that matches only it was made by another runner, so a sample of such files reruns. */
+/** A test file's input key, or null with the reason it must run. `runnerFreeKey` leaves out runner-only roots and
+ * their imports: a proof that matches only it was made by another runner, so a sample of such files reruns. */
 export interface CiResultKey { key: string | null; reason?: string; runnerFreeKey?: string }
 /** A content identity for a file of a test's own closure in place of its blob (masked by functions the test ran), or
  * undefined to keep the blob. */
@@ -35,6 +35,10 @@ interface Analysis {
   declaredInputs: string[]
   reads: { paths: string[] | null; namesOnly: boolean; recursive: boolean; external: boolean; moduleScope: boolean }[]
   paths: string[]
+  /** Literals passed straight to a call or joined to an unknown base: a file is an input, a directory only a name (its
+   * reader, process or copy keys the data). */
+  arguments: string[]
+  anchors: string[]
   doubt: string | null
   /** A path reference in a static Vitest alias replacement, paired with the import name it replaces. */
   aliasUrls: Record<number, string>
@@ -177,8 +181,8 @@ function externalPath(text: string, code: Uint8Array, expression: string, seen =
 
 /** Path constructors at callers also supply inputs to generic filesystem/process wrappers. Follow the complete
  * constant path when possible, or its named alternatives (for example a TS/JS child URL) otherwise. */
-function constructedPaths(text: string, code: Uint8Array): string[] {
-  const paths: string[] = []
+function constructedPaths(text: string, code: Uint8Array) {
+  const paths: string[] = [], literals: string[] = []
   for (const match of text.matchAll(/\b(?:new\s+URL|(?:[\w$]+\.)?(?:join|resolve))\s*\(/g)) {
     if (!code[match.index]) continue
     const open = match.index + match[0].length - 1, close = closingParen(text, open)
@@ -186,51 +190,153 @@ function constructedPaths(text: string, code: Uint8Array): string[] {
     const expression = text.slice(match.index, close)
     const value = pathValue(text, code, expression)
     if (value !== null) paths.push(value.replace(/^@file\//, ''))
-    else paths.push(...[...expression.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!))
+    // A bare name joined to an unknown directory (`join(release, 'package.json')`) names no repository file.
+    // With an unknown base its literals name files (inputs) or directories whose reader keys their data.
+    else literals.push(...[...expression.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(literal => literal[2]!).filter(literal => literal.includes('/')))
   }
   // A literal passed directly to a wrapper is as visible as a constructor at its caller. Avoid scanning every
   // enclosing call body: nested test callbacks can otherwise make this pass quadratic in the file size.
   for (const match of text.matchAll(/\b[\w$.]+\s*\(\s*(['"`])([^'"`$\n]+)\1/g)) {
-    if (code[match.index] && (match[2]!.includes('/') || /\.(?:[cm]?[jt]sx?|json)$/.test(match[2]!))) paths.push(match[2]!)
+    if (code[match.index] && (match[2]!.includes('/') || /\.(?:[cm]?[jt]sx?|json)$/.test(match[2]!))) literals.push(match[2]!)
   }
-  return paths
+  return { paths, literals }
+}
+
+/** Resolution anchors and output destinations are paths, but do not read their contents. Keep their positions
+ * blank so enclosing computed imports and the loose harness scan cannot turn them back into raw inputs. */
+async function pathContexts(path: string, text: string, code: Uint8Array) {
+  const anchors: string[] = []
+  if (!/\b(?:createRequire|writeFile|writeFileSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|copyFile|copyFileSync|cp|cpSync|rename|renameSync|outdir|outfile)\b/.test(text)) {
+    return { text, anchors }
+  }
+  const ts = (await import('typescript')).default
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
+  const spans: [number, number][] = []
+  const anchorNames = new Set<string>()
+  const outputs = new Set(['writeFile', 'writeFileSync', 'mkdir', 'mkdirSync', 'mkdtemp', 'mkdtempSync'])
+  const copies = new Set(['copyFile', 'copyFileSync', 'cp', 'cpSync', 'rename', 'renameSync'])
+  const omit = (node: import('typescript').Node) => spans.push([node.getStart(source), node.end])
+  const visit = (node: import('typescript').Node) => {
+    if (ts.isCallExpression(node)) {
+      const name = ts.isIdentifier(node.expression) ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : ''
+      const argument = node.arguments[0]
+      if (name === 'createRequire' && argument) {
+        const value = pathValue(text, code, argument.getText(source))
+        if (value !== null) anchors.push(value.replace(/^@file\//, ''))
+        else {
+          const literals = (child: import('typescript').Node) => {
+            if (ts.isStringLiteralLike(child) && child.text.includes('/')) anchors.push(child.text)
+            ts.forEachChild(child, literals)
+          }
+          literals(argument)
+        }
+        if (ts.isIdentifier(argument)) anchorNames.add(argument.text)
+        omit(argument)
+      } else if (outputs.has(name) && argument) omit(argument)
+      else if (copies.has(name) && node.arguments[1]) omit(node.arguments[1])
+    } else if (ts.isPropertyAssignment(node) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
+      && ['outdir', 'outfile'].includes(node.name.text)) omit(node.initializer)
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  const otherUses = (node: import('typescript').Node) => {
+    if (ts.isIdentifier(node) && anchorNames.has(node.text)
+      && !(ts.isVariableDeclaration(node.parent) && node.parent.name === node)
+      && !(ts.isCallExpression(node.parent) && ts.isIdentifier(node.parent.expression)
+        && node.parent.expression.text === 'createRequire' && node.parent.arguments[0] === node)) anchorNames.delete(node.text)
+    ts.forEachChild(node, otherUses)
+  }
+  otherUses(source)
+  // A constant URL used as a createRequire anchor is still only a resolution base.
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && anchorNames.has(declaration.name.text) && declaration.initializer) omit(declaration.initializer)
+    }
+  }
+  const characters = text.split('')
+  for (const [start, end] of spans) for (let index = start; index < end; index++) {
+    if (characters[index] !== '\n') characters[index] = ' '
+  }
+  return { text: characters.join(''), anchors }
+}
+
+/** Repository-qualified paths under a caller-supplied root: `join(repository, 'apps/api/src', skill)` names the constant
+ * suffix after its last unknown segment, or else the qualified literals it contains. */
+function qualifiedPaths(text: string, code: Uint8Array, expression: string) {
+  const qualified = (path: string) => /^(?:apps|packages)\/[^/]+(?:\/|$)|^(?:scripts|runtime|patches)(?:\/|$)/.test(path)
+  const call = /^(?:[\w$]+\.)?(?:join|resolve)\s*\(([^]*)\)$/.exec(expression)
+  if (call) {
+    const values = argumentsOf(call[1]!).map(arg => pathValue(text, code, arg))
+    const suffix = values.slice(values.lastIndexOf(null) + 1)
+    if (suffix.length && qualified(suffix.join('/'))) return [posix.normalize(suffix.join('/'))]
+  }
+  return [...expression.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map(found => found[2]!).filter(qualified)
 }
 
 /** Filesystem readers may be renamed imports or namespace members. */
 function filesystemReads(text: string, code: Uint8Array, moduleScope: (index: number) => boolean): Analysis['reads'] {
-  const readers = 'readFile|readFileSync|readdir|readdirSync|opendir|opendirSync|createReadStream|stat|statSync|lstat|lstatSync|access|accessSync|existsSync|readlink|readlinkSync|realpath|realpathSync|open|openSync|watch|watchFile|glob|globSync'
-  const names = new Map(readers.split('|').map(name => [name, name]))
-  for (const match of text.matchAll(/\bimport\s*\{([^}]+)\}\s*from\s*['"](?:node:)?fs(?:\/promises)?['"]/g)) {
+  const readers = 'readFile|readFileSync|readdir|readdirSync|opendir|opendirSync|createReadStream|stat|statSync|lstat|lstatSync|access|accessSync|existsSync|readlink|readlinkSync|realpath|realpathSync|open|openSync|watch|watchFile|glob|globSync|copyFile|copyFileSync|cp|cpSync'
+  const known = new Set(readers.split('|'))
+  const names = new Map<string, string>()
+  const namespaces = new Set<string>()
+  for (const match of text.matchAll(/\bimport\s+(?:[\w$]+\s*,\s*)?\{([^}]+)\}\s*from\s*['"](?:node:)?fs(?:\/promises)?['"]/g)) {
     if (!code[match.index]) continue
     for (const binding of match[1]!.split(',')) {
       const [original, alias] = binding.trim().split(/\s+as\s+/)
-      if (names.has(original!)) names.set(alias ?? original!, original!)
+      if (known.has(original!)) names.set(alias ?? original!, original!)
+      else if (original === 'promises') namespaces.add(alias ?? original)
+    }
+  }
+  for (const match of text.matchAll(/\bimport\s+(?:\*\s+as\s+)?([\w$]+)(?:\s*,\s*\{[^}]*\})?\s+from\s*['"](?:node:)?fs(?:\/promises)?['"]|\bconst\s+([\w$]+)\s*=\s*(?:require|await\s+import)\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/g)) {
+    if (code[match.index]) namespaces.add(match[1] ?? match[2]!)
+  }
+  for (const match of text.matchAll(/\bconst\s*\{([^}]+)\}\s*=\s*(?:require|await\s+import)\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/g)) {
+    if (!code[match.index]) continue
+    for (const binding of match[1]!.split(',')) {
+      const [original, alias] = binding.trim().split(/\s*:\s*/)
+      if (known.has(original!)) names.set(alias ?? original!, original!)
+      else if (original === 'promises') namespaces.add(alias ?? original)
     }
   }
   // Follow simple reader aliases (including promisify), without treating their uses as path literals.
-  for (const match of text.matchAll(/\bconst\s+([\w$]+)\s*=\s*(?:promisify\(\s*)?(?:[\w$]+\.)?([\w$]+)\s*(?:\)|[;\n])/g)) {
-    if (code[match.index] && names.has(match[2]!)) names.set(match[1]!, names.get(match[2]!)!)
+  for (const match of text.matchAll(/\bconst\s+([\w$]+)\s*=\s*(?:promisify\(\s*)?(?:([\w$]+)\.)?([\w$]+)\s*(?:\)|[;\n])/g)) {
+    if (!code[match.index]) continue
+    const reader = match[2] ? namespaces.has(match[2]) && known.has(match[3]!) ? match[3] : undefined : names.get(match[3]!)
+    if (reader) names.set(match[1]!, reader)
   }
   const reads: Analysis['reads'] = []
-  // Restrict the reader names to files that actually use fs; unrelated methods named stat/open are not fs calls.
-  if (!/['"](?:node:)?fs(?:\/promises)?['"]/.test(text)) return reads
-  const pattern = new RegExp(`(?<![\\w$])(?:${[...names.keys()].map(name => name.replace(/\$/g, '\\$')).join('|')})\\s*\\(`, 'g')
+  const escape = (name: string) => name.replace(/\$/g, '\\$')
+  const bindings = [...names.keys()].map(escape)
+  if (namespaces.size) bindings.push(`(?:${[...namespaces].map(escape).join('|')})(?:\\.promises)?\\.(?:${readers})`)
+  if (!bindings.length) return reads
+  const pattern = new RegExp(`(?<![.\\w$])(?:${bindings.join('|')})\\s*\\(`, 'g')
   for (const match of text.matchAll(pattern)) {
     if (!code[match.index]) continue
     const open = match.index + match[0].length - 1
     const close = closingParen(text, open)
     const args = close < 0 ? [] : argumentsOf(text.slice(open + 1, close - 1))
-    const reader = names.get(match[0].replace(/\s*\($/, ''))!
+    const binding = match[0].replace(/\s*\($/, '')
+    const reader = names.get(binding) ?? binding.split('.').at(-1)!
     // A write-only open observes no existing repository contents.
     if (/^open(?:Sync)?$/.test(reader) && /^['"](?:w|wx|a|ax)['"]$/.test(args[1] ?? '')) continue
     const arg = args[0] ?? ''
     const value = pathValue(text, code, arg)
+    // A repository-qualified suffix (`join(source, 'apps/worker/test')`) names what a reader observes even when the
+    // checkout root is supplied by a caller. A copy consumes exactly it; its destination remains only an output path.
+    const copy = /^(?:copyFile|cp)(?:Sync)?$/.test(reader)
+    const definition = value === null && /^[\w$]+$/.test(arg)
+      ? [...text.matchAll(new RegExp(`\\bconst\\s+${escape(arg)}\\s*=\\s*([^;\\n]+)`, 'g'))].filter(found => code[found.index]) : []
+    const qualified = value === null ? qualifiedPaths(text, code, definition.length === 1 ? definition[0]![1]!.trim() : arg) : []
     const namesOnly = /^(?:readdir|opendir)(?:Sync)?$/.test(reader)
     const options = args[1] ?? ''
     const recursive = /['"]?recursive['"]?\s*:\s*(true|false)\b/.exec(options)?.[1]
     const unknownOptions = namesOnly && (/^[\w$]+$/.test(options) || /\.\.\./.test(options)
       || /\brecursive\b/.test(options) && recursive === undefined)
-    reads.push({ paths: value === null || unknownOptions ? null : [value], namesOnly, recursive: recursive === 'true', external: value === null && externalPath(text, code, arg), moduleScope: moduleScope(match.index) })
+    const read = { namesOnly, recursive: recursive === 'true', external: value === null && externalPath(text, code, arg), moduleScope: moduleScope(match.index) }
+    reads.push({ ...read, paths: unknownOptions ? null : value !== null ? [value] : copy && qualified.length ? qualified : null })
+    if (!copy && !unknownOptions && qualified.length) reads.push({ ...read, external: false, paths: qualified })
   }
   return reads
 }
@@ -307,8 +413,8 @@ function computedCalls(text: string, code: Uint8Array): Analysis['computed'] {
     // `require(sql: JobSql): Promise<void>` or `async require(...) {` declares a method.
     if (close > 0 && /^\s*[:{]/.test(text.slice(close, close + 40))) continue
     const argument = close < 0 ? text.slice(open + 1) : text.slice(open + 1, close - 1)
-    // One literal argument is an ordinary specifier (importSpecifiers reads it), except a createRequire call's.
-    if (/^\s*(['"])[^'"]*\1\s*(?:,[^]*)?$/.test(argument) && !match[0].startsWith('createRequire')) continue
+    // importSpecifiers reads ordinary import/require literals; createRequire calls and their aliases stay here.
+    if (/^\s*(['"])[^'"]*\1\s*(?:,[^]*)?$/.test(argument) && /^(?:import|require)\s*\(/.test(match[0])) continue
     // `import(/* ci-key: <specifier> */ path)` names what a runtime path loads: an installed package the lockfile
     // pins, or the repository file a bundle is built from. The named input joins the key like a literal.
     const declared = [...argument.matchAll(/\/\*\s*ci-key:\s*(\S+)\s*\*\//g)].map(found => found[1]!)
@@ -340,6 +446,8 @@ const PACKAGE = '\0package:'
 const TOOLS = '\0tools:'
 /** Whole project data for parameterized runtime I/O, without pulling all application source into every key. */
 const INPUTS = '\0inputs:'
+/** Directory enumeration observes names and modes, not the bytes of every file a project contains. */
+const NAMES = '\0names:'
 const LOCKFILE = 'pnpm-lock.yaml'
 
 /** Share the read limit across manifests and all test closures of the selection. */
@@ -447,22 +555,26 @@ async function analyze(path: string, source: string): Promise<Analysis> {
   const atModuleScope = (index: number) => moduleScope[index] === 1
   const reads = data ? [] : filesystemReads(text, code, atModuleScope)
   const readPaths = new Set(reads.flatMap(read => read.paths ?? []).map(path => path.replace(/^@file\//, '')))
-  const literals = data ? [] : [...text.matchAll(pathLiteral)]
+  const references = data ? { text, anchors: [] } : await pathContexts(path, text, code)
+  const literals = data ? [] : [...references.text.matchAll(pathLiteral)]
   const aliasUrls = await aliasUrlPositions(path, text)
   return {
     specifiers: css ? cssImports.filter(specifier => !/^(?:https?:)?\/\//.test(specifier))
       : data ? [] : importSpecifiers(text, index => code[index] === 1),
     literals: literals.map(match => match[1]!),
     aliasUrls: Object.fromEntries(literals.flatMap((match, index) => aliasUrls[match.index] ? [[index, aliasUrls[match.index]!]] : [])),
-    computed: data ? [] : computedCalls(text, code),
+    computed: data ? [] : computedCalls(references.text, code),
     reads,
-    paths: data ? [] : constructedPaths(text, code).filter(path => !readPaths.has(path)),
+    ...data ? { paths: [], arguments: [] } : (({ paths, literals }) => ({ paths: paths.filter(path => !readPaths.has(path)),
+      arguments: literals.filter(path => !readPaths.has(path)) }))(constructedPaths(references.text, code)),
+    anchors: references.anchors,
     processes: data || !startsProcesses.test(text) ? [] : processCalls(text, code, atModuleScope),
     // Only a comment line declares inputs; the same words inside a string (a test fixture) do not.
     declaredInputs: data ? [] : [...text.matchAll(/^[ \t]*(?:\/\/|\/\*|\*)[ \t]*ci-key-inputs:[ \t]*([^\n*]+)/gm)]
       .filter(match => declarations[match.index + match[0].search(/\S/)] === 1)
       .flatMap(match => match[1]!.trim().split(/\s+/)),
-    doubt: css ? (/@import\b/.test(text) && cssImports.length < (text.match(/@import\b/g) ?? []).length ? 'imports CSS by a computed name' : null) : DOUBTS.find(([pattern]) => pattern.test(text))?.[1] ?? null,
+    doubt: css ? (/@import\b/.test(text) && cssImports.length < (text.match(/@import\b/g) ?? []).length ? 'imports CSS by a computed name' : null)
+      : DOUBTS.find(([pattern]) => [...text.matchAll(new RegExp(pattern.source, 'g'))].some(match => code[match.index] === 1))?.[1] ?? null,
   }
 }
 
@@ -547,16 +659,25 @@ export class CiResultKeys {
       ? [[manifest.value.name, { directory: posix.dirname(manifest.path), exports: exportsOf(manifests, manifest.path) }] as const] : []))
     const keys = new CiResultKeys(input, tree, exportsOf(manifests, 'packages/contracts/package.json'), workspacePackages, packages, signal)
     const inputs = new Map<string, [string, string][]>()
+    const names = new Map<string, [string, string][]>()
     for (const [path, blob] of tree.blobs) {
+      const project = projectOf(path)
+      const listed = names.get(project) ?? []
+      listed.push([path, blob.split(':')[0]!])
+      names.set(project, listed)
       // Configs keep their effective-field identities unless explicitly read or used to build an artifact.
       if (/(?:^|\/)(?:package\.json|tsconfig[^/]*\.json)$/.test(path)) continue
       if (ciCodeFile.test(path) && !path.endsWith('.json') && !/(?:^|\/)fixtures?\//.test(path)) continue
-      const project = projectOf(path)
       const files = inputs.get(project) ?? []
       files.push([path, blob])
       inputs.set(project, files)
     }
     for (const [project, files] of inputs) keys.identities.set(`${INPUTS}${project}`, sha256Hex(JSON.stringify(files.sort())))
+    for (const [project, files] of names) keys.identities.set(`${NAMES}${project}`, sha256Hex(JSON.stringify(files.sort())))
+    // Every release bumps the root version; a read of the root manifest observes its other fields.
+    const root = manifests.find(manifest => manifest.path === 'package.json')
+    if (root) keys.identities.set('package.json', sha256Hex(JSON.stringify(['manifest-without-version',
+      Object.entries(root.value).filter(([field]) => field !== 'version')])))
     for (const { path, value } of manifests) {
       keys.identities.set(`${CONFIG}${path}`, sha256Hex(JSON.stringify([value.type, value.packageManager])))
       const scripts = value.scripts as Record<string, unknown> | undefined
@@ -616,8 +737,9 @@ export class CiResultKeys {
       const own = await this.sharedClosure(file)
       const tools = this.locked && !['scripts', 'apps/worker'].includes(project) ? [`${PACKAGE}${project}\tvitest`] : []
       // A shared reader can observe data from any calling project in this closure, including the test's own.
-      const data = own.some(path => path.startsWith(INPUTS))
-        ? [...new Set([project, ...own.filter(path => !path.startsWith('\0')).map(projectOf)])].map(project => `${INPUTS}${project}`) : []
+      const markers = [INPUTS, NAMES].filter(marker => own.some(path => path.startsWith(marker)))
+      const data = markers.length ? [...new Set([project, ...own.filter(path => !path.startsWith('\0')).map(projectOf)])]
+        .flatMap(project => markers.map(marker => `${marker}${project}`)) : []
       const paths = [...new Set([...environment, ...harness, ...own, ...tools, ...data])].sort()
       const masked = new Map<string, string>()
       if (mask) {
@@ -636,8 +758,13 @@ export class CiResultKeys {
         selected.map(path => [path, masked.get(path) ?? this.identity(path)])]))
       // Discard earlier function proofs, which could omit teardown calls or escape their smoke computer's scope.
       if (mask) return { key: hash(paths, 'masked-v2') }
+      // A runner's imports belong to that runner too. Configured setup and dependencies the test itself imports
+      // remain inputs even when they also occur in the runner's closure.
+      const runtime = await this.harnessFiles(project, suite, environment, true)
+      let required: Set<string> | undefined
       return { key: hash(paths, 'all'),
-        runnerFreeKey: hash(paths.filter(path => !TEST_EXECUTION_FILES.some(pattern => pattern.test(path))), 'runner-free') }
+        runnerFreeKey: hash(paths.filter(path => !harness.has(path) && !TEST_EXECUTION_FILES.some(pattern => pattern.test(path))
+          || runtime.has(path) || (required ??= new Set(own)).has(path)), 'runner-free') }
     } catch (error) {
       if (error instanceof CacheDoubt) return { key: null, reason: error.message }
       throw error
@@ -689,12 +816,13 @@ export class CiResultKeys {
 
   /** What the environment's configs, setup files and runner scripts load, including files they name by relative path.
    * Shared test helpers are hashed by content; a test that imports one reaches its imports through its own closure. */
-  private harnessFiles(project: string, suite: string, environment: string[]) {
-    const scope = `${project}:${suite}`
+  private harnessFiles(project: string, suite: string, environment: string[], runtime = false) {
+    const scope = `${project}:${suite}${runtime ? ':runtime' : ''}`
     let files = this.harness.get(scope)
     if (!files) {
       const roots = environment.filter(path => scriptFile.test(path) && !/(?:^|\/)eslint\.config\./.test(path)
-        && !/^(?:\.github|\.circleci)\//.test(path) && !path.startsWith('apps/api/test/helpers/'))
+        && !/^(?:\.github|\.circleci)\//.test(path) && !path.startsWith('apps/api/test/helpers/')
+        && (!runtime || !TEST_EXECUTION_FILES.some(pattern => pattern.test(path))))
       files = this.closure(roots, false)
       this.harness.set(scope, files)
       files.catch(error => { if (!(error instanceof CacheDoubt)) this.harness.delete(scope) })
@@ -824,7 +952,7 @@ export class CiResultKeys {
             files.add(file.slice(DATA.length))
             return
           }
-          if (file.startsWith(PACKAGE) || file.startsWith(LISTED) || file.startsWith(CONFIG) || file.startsWith(INPUTS) || file.startsWith(TOOLS)) {
+          if (file.startsWith(PACKAGE) || file.startsWith(LISTED) || file.startsWith(CONFIG) || file.startsWith(INPUTS) || file.startsWith(NAMES) || file.startsWith(TOOLS)) {
             files.add(file)
             return
           }
@@ -868,6 +996,20 @@ export class CiResultKeys {
     // Follow named runtime inputs as well as imports. Parameterized runtime I/O adds project data; only a
     // concrete external input is a reason to refuse a key.
     const edges: string[] = []
+    for (const literal of analysis.anchors) {
+      const target = resolveImport(file, literal, this.tree.blobs, {})
+        ?? (this.tree.blobs.has(literal) ? literal : undefined)
+      // createRequire observes resolution at this manifest, rather than its description, version or scripts.
+      if (target?.endsWith('/package.json') || target === 'package.json') {
+        edges.push(`${CONFIG}${target}`)
+        // A require anchored in another project resolves its packages there, even when this script has a
+        // different nearest importer. Ordinary imports still keep their own project identities below.
+        for (const specifier of [...analysis.specifiers, ...analysis.computed.flatMap(call => call.literals)]) {
+          const name = packageName(specifier)
+          if (this.packages.has(name)) edges.push(`${PACKAGE}${projectOf(target)}\t${name}`)
+        }
+      }
+    }
     if (strict) {
       let directory = posix.dirname(file)
       let manifest = false, compiler = !/\.[cm]?tsx?$/.test(file)
@@ -914,7 +1056,7 @@ export class CiResultKeys {
       for (const read of analysis.reads) {
         if (read.external && (listedTest.test(file) || read.moduleScope)) throw new CacheDoubt(`${file} reads a filesystem path supplied by the host environment.`)
         if (!read.paths) {
-          edges.push(`${INPUTS}${projectOf(file)}`)
+          edges.push(`${read.namesOnly ? NAMES : INPUTS}${projectOf(file)}`)
           continue
         }
         for (const literal of read.paths) {
@@ -943,9 +1085,17 @@ export class CiResultKeys {
         const target = resolveImport(file, literal, this.tree.blobs, {})
         edges.push(...target ? [target] : this.namedFiles(file, literal))
       }
+      // `portionKey('apps/api', 'test')` names a directory without reading it; a wrapper that does read it
+      // reaches the data through its own reader.
+      for (const literal of analysis.arguments) {
+        const target = resolveImport(file, literal, this.tree.blobs, {})
+        edges.push(...target ? [target] : this.namedFiles(file, literal, false, false))
+      }
     }
     for (const call of analysis.computed) {
-      const resolved = call.literals.flatMap(literal => this.computedTarget(file, literal))
+      // A bare file name (`createRequire(join(api, 'package.json'))`) is a segment of a directory path, not a root file.
+      const resolved = call.literals.filter(literal => literal.includes('/') || !this.tree.blobs.has(literal))
+        .flatMap(literal => this.computedTarget(file, literal))
       if (resolved.length) edges.push(...resolved.filter((target): target is string => target !== true))
       else if (strict && !declared) throw new CacheDoubt(`${file} ${call.kind === 'import' ? 'imports' : 'requires'} a computed module.`)
     }
@@ -978,9 +1128,17 @@ export class CiResultKeys {
     }
     // Process arguments name executed scripts; fixture text and comments do not supply edges.
     if (strict && analysis.processes.length) {
-      for (const literal of analysis.processes.flatMap(call => call.literals)) {
-        const target = resolveImport(file, literal, this.tree.blobs, {})
-        edges.push(...target ? [target] : this.namedFiles(file, literal))
+      for (const call of analysis.processes) {
+        // `git ls-files` prints names: a directory it lists joins the key by its file names, not their contents.
+        const names = call.command.includes('git') && call.literals.includes('ls-files')
+          && !call.literals.some(literal => /^(?:-s|--stage|--debug|--eol|-[a-z]*s[a-z]*)$/.test(literal))
+        for (const literal of call.literals) {
+          const target = resolveImport(file, literal, this.tree.blobs, {})
+          const directory = names && !target && !this.tree.blobs.has(literal) && this.directories.has(literal.replace(/\/$/, ''))
+          edges.push(...target ? [target] : directory
+            ? [...this.tree.blobs.keys()].filter(path => path.startsWith(`${literal.replace(/\/$/, '')}/`)).map(path => `${LISTED}${path}`)
+            : this.namedFiles(file, literal))
+        }
       }
     }
     for (const [index, literal] of analysis.literals.entries()) {
@@ -1041,7 +1199,7 @@ export class CiResultKeys {
   }
 
   /** Repository files a literal names. `declared` inputs (`ci-key-inputs`) may name the project itself. */
-  private namedFiles(file: string, literal: string, declared = false): string[] {
+  private namedFiles(file: string, literal: string, declared = false, directories = true): string[] {
     const project = projectOf(file)
     const candidates = literal.startsWith('.') ? [posix.join(posix.dirname(file), literal)] : [literal, `${project}/${literal}`]
     const named: string[] = []
@@ -1050,7 +1208,7 @@ export class CiResultKeys {
       // The project or a directory above it (`resolve('../..')`) is a base for paths, not data: walking it put the
       // whole repository in the keys of every test whose setup names the repository root.
       else if (!declared && (candidate === project || project.startsWith(`${candidate}/`))) continue
-      else if (this.directories.has(candidate)) {
+      else if (directories && this.directories.has(candidate)) {
         // Every file in a named directory joins the key by content; its scripts may be run, so their imports are
         // followed too, loosely like the harness's (what resolves joins the key, nothing doubts).
         const inside = [...this.tree.blobs.keys()].filter(path => path.startsWith(`${candidate}/`))

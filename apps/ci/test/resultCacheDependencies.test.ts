@@ -51,7 +51,7 @@ it('hashes effective runtime manifest and compiler fields, including inherited s
 
 it('uses raw manifests and configs when a test actually reads them', async () => {
   const files: Files = { ...base, 'apps/api/src/value.ts': "import { readFileSync } from 'node:fs'; export const value = readFileSync(new URL('../../../package.json', import.meta.url))" }
-  await changed(files, { 'package.json': JSON.stringify({ ...JSON.parse(base['package.json']!), version: 'new' }) })
+  await changed(files, { 'package.json': JSON.stringify({ ...JSON.parse(base['package.json']!), description: 'new' }) })
 })
 
 it('scopes execution files by suite, including imports reached through a shared runner', async () => {
@@ -127,16 +127,26 @@ it('declared compiled artifacts cover source, build configuration and compiler d
   }
 })
 
-it('covers parameterized production readers, including renamed and namespace readers, with project data', async () => {
+it('covers parameterized content readers, including renamed and namespace readers, with project data', async () => {
   for (const source of [
     "import { readFileSync } from 'node:fs'; export const value = (path) => readFileSync(path)",
-    "import { readdir as list } from 'node:fs/promises'; export const value = (root) => list(root)",
     "import { readFile as $read } from 'node:fs/promises'; export const value = (root) => $read(root)",
-    "import * as fs from 'node:fs'; export const value = (root) => fs.readdirSync(root)",
+    "import * as fs from 'node:fs'; export const value = (root) => fs.readFileSync(root)",
     "import { readFileSync } from 'node:fs'; const path = new URL('./known.json', import.meta.url); export const value = (path) => readFileSync(path)",
   ]) await changed({ ...base, 'apps/api/src/value.ts': source, 'apps/api/src/known.json': 'one' }, { 'apps/api/src/known.json': 'two' })
   await changed({ ...base, 'apps/api/src/value.ts': "import { readFileSync } from 'node:fs'; export const value = readFileSync('apps/api/test/data.json')",
     'apps/api/test/data.json': 'one' }, { 'apps/api/test/data.json': 'two' })
+})
+
+it('keys parameterized directory readers on names instead of unrelated file contents', async () => {
+  for (const source of [
+    "import { readdir as list } from 'node:fs/promises'; export const value = (root) => list(root)",
+    "import * as fs from 'node:fs'; export const value = (root) => fs.readdirSync(root)",
+  ]) {
+    const files = { ...base, 'apps/api/src/value.ts': source, 'apps/api/src/known.json': 'one' }
+    await unchanged(files, { 'apps/api/src/known.json': 'two' })
+    await changed(files, { 'apps/api/src/added.json': 'new name' })
+  }
 })
 
 it('refuses actual external file inputs rather than inferring them from parameters', async () => {
@@ -275,4 +285,151 @@ it('keeps unrelated source out when imported code can build a runtime workspace'
     'apps/api/src/unrelated.ts': 'export const other = 1', 'apps/api/tsconfig.build.json': '{"include":["src"]}' }
   await unchanged(files, { 'apps/api/src/unrelated.ts': 'export const other = 2',
     'apps/api/tsconfig.build.json': '{"include":["other"]}' })
+})
+
+it('keeps a root manifest release bump out of readers that join a file name to a caller-supplied directory', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; export const value = (directory) => readFileSync(join(directory, 'package.json'))" }
+  await unchanged(files, { 'package.json': JSON.stringify({ ...JSON.parse(base['package.json']!), version: '0.0.126' }) })
+  await changed(files, { 'apps/api/src/value.ts': `${files['apps/api/src/value.ts']}\n` })
+})
+
+it('keeps a root manifest release bump out of a computed import resolved from a directory manifest', async () => {
+  const files = { ...base, [test]: "import { createRequire } from 'node:module'; import { join } from 'node:path'; import { pathToFileURL } from 'node:url';\n"
+    + "const api = new URL('../', import.meta.url).pathname; export const load = () => import(pathToFileURL(createRequire(join(api, 'package.json')).resolve('vitest/node')).href)" }
+  await unchanged(files, { 'package.json': JSON.stringify({ ...JSON.parse(base['package.json']!), version: '0.0.126' }) })
+  await changed(files, { 'pnpm-lock.yaml': 'lockfileVersion: 9' })
+})
+
+it('keys an explicit root manifest read on everything but the release version', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { readFileSync } from 'node:fs'; export const value = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'))" }
+  const manifest = JSON.parse(base['package.json']!)
+  await unchanged(files, { 'package.json': JSON.stringify({ ...manifest, version: '0.0.126' }) })
+  await changed(files, { 'package.json': JSON.stringify({ ...manifest, packageManager: 'pnpm@12.0.0' }) })
+})
+
+it('does not load every source and helper named by formatting arguments or output directories', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { mkdir } from 'node:fs/promises'; import { join } from 'node:path';\n"
+      + "const portionKey = (...parts) => parts.join(':'); export const value = portionKey('apps/api', 'test');\n"
+      + "export const prepare = (output) => mkdir(join(output, 'test/helpers'), { recursive: true })",
+    'apps/api/test/helpers/fleetSync.ts': 'export const settle = () => 1',
+    'apps/api/src/unrelated.ts': 'export const other = 1' }
+  await unchanged(files, { 'apps/api/test/helpers/fleetSync.ts': 'export const settle = () => 2',
+    'apps/api/src/unrelated.ts': 'export const other = 2' })
+  await changed(files, { 'apps/api/src/value.ts': `${files['apps/api/src/value.ts']}\n` })
+})
+
+it('keeps copied source directories and explicit manifest reads as content inputs', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { cp } from 'node:fs/promises'; export const value = (output) => cp(new URL('./assets', import.meta.url), output, { recursive: true })",
+    'apps/api/src/assets/child.mjs': 'export const value = 1' }
+  await changed(files, { 'apps/api/src/assets/child.mjs': 'export const value = 2' })
+  await changed({ ...files, 'apps/api/src/value.ts': "import { cp } from 'node:fs/promises'; import { join } from 'node:path';\n"
+    + "const source = join(repository, 'apps/api/src/assets'); export const value = (output) => cp(source, output, { recursive: true })" },
+    { 'apps/api/src/assets/child.mjs': 'export const value = 2' })
+  await changed({ ...files, 'apps/api/src/value.ts': "import { readFileSync } from 'node:fs'; export const value = readFileSync(new URL('../package.json', import.meta.url))" },
+    { 'apps/api/package.json': JSON.stringify({ ...JSON.parse(base['apps/api/package.json']!), description: 'read by the test' }) })
+})
+
+it('keeps createRequire anchors out of raw harness inputs while retaining package resolution', async () => {
+  const manifest = JSON.parse(base['apps/api/package.json']!)
+  const files = { ...base, 'pnpm-lock.yaml': lock(),
+    'scripts/ci-package-paths.mjs': "import { createRequire } from 'node:module';\n"
+      + "const anchor = new URL('../apps/api/package.json', import.meta.url); const require = createRequire(anchor);\n"
+      + "export const value = require('zod')" }
+  await unchanged(files, { 'apps/api/package.json': JSON.stringify({ ...manifest, version: '2', description: 'new description' }) })
+  await changed(files, { 'pnpm-lock.yaml': lock('1', '1', '2') })
+  const aliased = { ...files, 'scripts/ci-package-paths.mjs': files['scripts/ci-package-paths.mjs']
+    .replace('const require =', 'const load =').replace("require('zod')", "load('zod')") }
+  await changed(aliased, { 'pnpm-lock.yaml': lock('1', '1', '2') })
+  await changed(files, { 'apps/api/package.json': JSON.stringify({ ...manifest, type: 'commonjs' }) })
+  const alsoReads = { ...files, 'scripts/ci-package-paths.mjs': files['scripts/ci-package-paths.mjs']
+    + "; import { readFileSync } from 'node:fs'; const read = (path) => readFileSync(path); export const contents = read(anchor)" }
+  await changed(alsoReads, { 'apps/api/package.json': JSON.stringify({ ...manifest, description: 'observed contents' }) })
+})
+
+it('uses the require anchors importer when a script loads a package from another project', async () => {
+  const rootZod = '  .:\n    dependencies:\n      zod: { version: \'root\' }'
+  const files = { ...base, 'package.json': JSON.stringify({ name: 'root', dependencies: { zod: 'root' } }),
+    'scripts/anchor.test.mjs': "import { createRequire } from 'node:module'; const require = createRequire(new URL('../apps/api/package.json', import.meta.url)); export const value = require('zod')",
+    'pnpm-lock.yaml': lock().replace('  .: {}', rootZod) }
+  await changed(files, { 'pnpm-lock.yaml': lock('1', '1', '2').replace('  .: {}', rootZod) }, 'scripts/anchor.test.mjs')
+})
+
+it('does not refuse keys for glob syntax inside strings or comments', async () => {
+  const source = "export const value = (name) => name === 'import.meta.glob';\n// import.meta.glob('./*.ts')\n"
+  const files = { ...base, 'apps/api/src/value.ts': source }
+  await changed(files, { 'apps/api/src/value.ts': `${source}export const other = 1\n` })
+  expect(await key({ ...files, 'apps/api/src/value.ts': `${source}export const modules = import.meta.glob('./*.ts')` }))
+    .toMatchObject({ key: null })
+})
+
+it('distinguishes application open methods from bound filesystem readers', async () => {
+  const files = { ...base, [test]: "import { rm } from 'node:fs/promises';\n"
+    + "const Journal = { open: async (path) => path }; export const journal = Journal.open(process.env.TMPDIR); export { rm }" }
+  expect((await key(files)).key).toMatch(/^[a-f0-9]{64}$/)
+  for (const source of [
+    "import { readFileSync as read } from 'node:fs'; export const value = read(process.env.FILE)",
+    "import * as fs from 'node:fs'; export const value = fs.readFileSync(process.env.FILE)",
+    "import { promises as fs } from 'node:fs'; export const value = fs.readFile(process.env.FILE)",
+    "const { readFileSync: read } = require('node:fs'); export const value = read(process.env.FILE)",
+  ]) expect(await key({ ...files, [test]: source })).toMatchObject({ key: null })
+})
+
+it('keeps transitive runner dependencies out of runner-free keys unless the test or setup loads them', async () => {
+  const helper = 'packages/verification-runner/src/process.mjs'
+  const files = { ...base,
+    'scripts/ci-watchdog.mjs': `import { stop } from '../${helper}'; export { stop }`,
+    [helper]: 'export const stop = () => 1' }
+  const first = await key(files)
+  expect(first.key).toMatch(/^[a-f0-9]{64}$/)
+  const changes = { [helper]: 'export const stop = () => 2' }
+  const after = await key({ ...files, ...changes })
+  expect(after.key).not.toBe(first.key)
+  expect(after.runnerFreeKey).toBe(first.runnerFreeKey)
+  for (const loads of [{ [test]: `import '../../../${helper}'` },
+    { 'apps/api/vitest.config.mjs': `import '../../${helper}'; export default {}` }]) {
+    const before = await key({ ...files, ...loads })
+    expect(before.key).toMatch(/^[a-f0-9]{64}$/)
+    expect((await key({ ...files, ...loads, ...changes })).runnerFreeKey).not.toBe(before.runnerFreeKey)
+  }
+})
+
+it('keeps a directory named only as a call argument out of the key while its reader covers the data', async () => {
+  const files = { ...base, [test]: "import '../../../packages/runner/src/runner.mjs'",
+    'packages/runner/src/runner.mjs': "import { readdirSync } from 'node:fs'; const portionKey = (...parts) => parts.join(':');\n"
+      + "export const key = portionKey('apps/api', 'test'); export const list = (root) => readdirSync(root)",
+    'apps/api/src/other.ts': 'export const other = 1' }
+  await unchanged(files, { 'apps/api/src/other.ts': 'export const other = 2' })
+  await changed(files, { 'apps/api/src/added.ts': 'export const added = 1' })
+})
+
+it('keys a directory listed under a caller-supplied checkout by its names, not its file contents', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { readdir } from 'node:fs/promises'; import { join } from 'node:path';\n"
+      + "export const value = async (source) => { const tests = join(source, 'apps/worker/test'); return readdir(tests) }",
+    'apps/worker/test/other.test.mjs': 'export const other = 1' }
+  await unchanged(files, { 'apps/worker/test/other.test.mjs': 'export const other = 2' })
+  await changed(files, { 'apps/worker/test/added.test.mjs': 'export const added = 1' })
+})
+
+it('keys a directory listed by git ls-files on its file names, not their contents', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { execFileSync } from 'node:child_process'; export const value = (cwd) => execFileSync('git', ['ls-files', '--', 'apps/worker'], { cwd })",
+    'apps/worker/src/other.mjs': 'export const other = 1' }
+  await unchanged(files, { 'apps/worker/src/other.mjs': 'export const other = 2' })
+  await changed(files, { 'apps/worker/src/added.mjs': 'export const added = 1' })
+  const staged = { ...files, 'apps/api/src/value.ts': files['apps/api/src/value.ts'].replace("'ls-files',", "'ls-files', '--stage',") }
+  await changed(staged, { 'apps/worker/src/other.mjs': 'export const other = 2' })
+})
+
+it('keys a file copied from a caller-supplied checkout by that file, not its whole directory', async () => {
+  const files = { ...base,
+    'apps/api/src/value.ts': "import { copyFile } from 'node:fs/promises'; import { join } from 'node:path'; const skill = 'skill/guide.md';\n"
+      + "export const value = (repository, output) => copyFile(join(repository, 'apps/worker/src', skill), join(output, skill))",
+    'apps/worker/src/skill/guide.md': 'one', 'apps/worker/src/other.mjs': 'export const other = 1' }
+  await unchanged(files, { 'apps/worker/src/other.mjs': 'export const other = 2' })
+  await changed(files, { 'apps/worker/src/skill/guide.md': 'two' })
 })

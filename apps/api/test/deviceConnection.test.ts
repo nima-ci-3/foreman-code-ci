@@ -58,10 +58,10 @@ const hello = { ...identity, connectionEpoch: '55555555-5555-4555-8555-555555555
 const welcome = { ...hello, type: 'welcome', connectionEpoch: '66666666-6666-4666-8666-666666666666', capabilities: { heartbeat: true, dispatch: false, transfer: false } }
 const signedWelcome = async (sent: Record<string, unknown>, epoch = welcome.connectionEpoch) => ({ ...welcome, connectionEpoch: epoch, connectionGeneration: sent.connectionGeneration, mainIdentityProof: await proof({ audience: 'graphql-worker-main-v1', ...identity, nonce: sent.nonce as string, connectionGeneration: sent.connectionGeneration as number, connectionEpoch: sent.connectionEpoch as string, mainConnectionEpoch: epoch, protocolVersion: 1, workerApplicationVersion: 'build', negotiationHash: deviceNegotiationHash([]) }) })
 const flush = async () => { for (let i = 0; i < 80; i++) await Promise.resolve() }
-const makeEndpoint = (extensions?: DeviceExtensionRegistration[], handshakeMs = 100, reconcile: (binding: DeviceSessionBinding, signal: AbortSignal) => Promise<void> = async () => {}) => {
+const makeEndpoint = (extensions?: DeviceExtensionRegistration[], handshakeMs = 100, reconcile: (binding: DeviceSessionBinding, signal: AbortSignal) => Promise<void> = async () => {}, heartbeatMs = 100) => {
   const presence = vi.fn()
   const auth = { authenticateDevice: vi.fn(async () => principal), revalidateDevice: vi.fn(async () => {}) }
-  const endpoint = new DeviceEndpoint({ mainId: identity.mainId, appVersion: 'build', signMainIdentityProof: proof, auth, reconcile, presence, handshakeMs, heartbeatMs: 100, ...(extensions ? { extensions } : {}) })
+  const endpoint = new DeviceEndpoint({ mainId: identity.mainId, appVersion: 'build', signMainIdentityProof: proof, auth, reconcile, presence, handshakeMs, heartbeatMs, ...(extensions ? { extensions } : {}) })
   return { endpoint, auth, presence }
 }
 afterEach(() => { vi.useRealTimers() })
@@ -443,7 +443,7 @@ describe('pinned ws adapter on disposable loopback transport', () => {
       expect(endpoint.currentBinding(identity.deviceId, 'execution-v1')).toBeUndefined(); expect(endpoint.captureRequest(identity.deviceId, 'execution-v1')).toBeUndefined()
       synchronizedReply = (await endpoint.request(identity.deviceId, 'execution-v1', { grant: 'exact-operation' }, { signal })).payload
       expect(presence.mock.calls.some(([view]) => view.phase === 'ready')).toBe(false)
-    })
+    }, 5000)
     const server = createServer(), carrier = new WebSocketServer({ noServer: true, maxPayload: 16384, perMessageDeflate: false })
     server.on('upgrade', deviceUpgradeHandler(endpoint, carrier)); server.listen(0, '127.0.0.1'); await once(server, 'listening')
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('missing address')
@@ -452,7 +452,7 @@ describe('pinned ws adapter on disposable loopback transport', () => {
       return { payload: { receipt: 'actual-handler', epoch: context.binding.connectionEpoch } }
     })
     const connect = deviceConnector({ url: 'wss://main/device/connect', credential: 'device', create: (_url, options) => new WebSocket(`ws://127.0.0.1:${address.port}/device/connect`, options) })
-    const worker = new DeviceConnectionSupervisor({ identity, appVersion: 'build', mainPublicKeyFingerprint: fingerprint, connect, reconcile: async () => {}, heartbeatMs: 20, extensions: mainExtensions.map(extension => ({ ...extension, handle: workerHandler })) })
+    const worker = new DeviceConnectionSupervisor({ identity, appVersion: 'build', mainPublicKeyFingerprint: fingerprint, connect, reconcile: async () => {}, heartbeatMs: 1000, extensions: mainExtensions.map(extension => ({ ...extension, handle: workerHandler })) })
     try {
       worker.start(); await vi.waitFor(() => expect(worker.status().phase).toBe('ready'), { timeout: 2000, interval: 10 })
       await vi.waitFor(() => expect(endpoint.currentBinding(identity.deviceId, 'execution-v1')).toBeDefined())
