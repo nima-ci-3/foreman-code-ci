@@ -56,6 +56,8 @@ function fixture(type: string, expiresBeforeCommit = false, persistedSequences =
         first_native_sequence: value.firstNativeSequence })), rowCount: candidates.length }
     }
     if (sql.startsWith('delete from run_native_projection_checkpoints')) return { rows: [], rowCount: 1 }
+    // No projection checkpoint is stored in this fixture.
+    if (sql.startsWith('select revision::text,checkpoint from run_native_projection_checkpoints')) return { rows: [], rowCount: 0 }
     if (sql.startsWith('select record from runs')) return { rows: [{ record: run }], rowCount: 1 }
     if (sql.startsWith('select record from harness_executions')) return { rows: [{ record: execution }], rowCount: 1 }
     if (sql.includes('select record,harness,native_session_id')) return { rows: [{ record: laneRecord,
