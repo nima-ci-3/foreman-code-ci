@@ -38,7 +38,7 @@ it.each(['succeeded', 'failed'] as const)('shows remote Claude corrective work r
     configDirectory: '/recorded/profile', permissionMode: 'default', sandbox: 'danger-full-access', tools: [],
     mcpServers: { graphql: { type: 'http', url: 'http://127.0.0.1:3041/mcp' } }, permissionRules: [], instructions: '' }
   const first = deferred(), releaseFirst = deferred(), correctionOffered = deferred(), acknowledgeCorrection = deferred()
-  const correction = deferred(), releaseCorrection = deferred()
+  const correction = deferred(), releaseCorrection = deferred(), correctionCompleted = deferred(), finishExecution = deferred()
   const data = { latestDeliverable: { summary: 'Corrected result' }, remainingFindings: [] }
   let messages = 0
   sdk.client = {
@@ -132,6 +132,17 @@ it.each(['succeeded', 'failed'] as const)('shows remote Claude corrective work r
         return host!.handle(frame.method === 'prepare' ? { ...frame, request: workerRequest() } : frame)
       } }, observeReceipt: async () => {},
       controlFor: async () => { throw new Error('No controls expected') } })
+    const start = proxy.startTurn.bind(proxy)
+    proxy.startTurn = async function* (session, input, signal) {
+      for await (const event of start(session, input, signal)) {
+        yield event
+        if (input.clientCorrelationId?.endsWith(':result-repair:1')
+          && (event.type === 'turn.completed' || event.type === 'turn.failed')) {
+          correctionCompleted.resolve()
+          await finishExecution.promise
+        }
+      }
+    }
     return proxy
   } })
   const task = f.engine.start(f.f.run.id)
@@ -145,20 +156,24 @@ it.each(['succeeded', 'failed'] as const)('shows remote Claude corrective work r
     const original = await running()
     releaseFirst.resolve()
     await Promise.race([correctionOffered.promise, stopped])
-    expect(await running()).toMatchObject({ state: { lifecycle: 'unknown' }, activity: { status: 'none' } })
+    expect(await running()).toMatchObject({ state: { lifecycle: 'starting' }, activity: { status: 'none' } })
     acknowledgeCorrection.resolve()
     await Promise.race([correction.promise, stopped])
     await expect.poll(running).toMatchObject({ state: { lifecycle: 'running' }, activity: { status: 'active',
       acknowledgementId: expect.any(String), correlationId: expect.any(String), action: 'working' } })
     expect((await running())?.activity.correlationId).not.toBe(original?.activity.correlationId)
     releaseCorrection.resolve()
+    await Promise.race([correctionCompleted.promise, stopped])
+    expect(await running()).toMatchObject({ state: { lifecycle: 'starting' }, activity: { status: 'none' } })
+    expect((await f.runs.getDetails(f.f.scope.workspaceId, f.f.run.id))?.executions[0]?.state).toBe('running')
+    finishExecution.resolve()
     if (outcome === 'failed') await expect(task).rejects.toMatchObject({ code: 'WORK_SELECTED_EXECUTION_FAILED' })
     else await task
     expect((await parity.compare()).state.nodes[0]).toMatchObject({ state: { lifecycle: outcome }, activity: { status: 'none' } })
     expect(messages).toBe(2)
     expect((await f.runs.getDetails(f.f.scope.workspaceId, f.f.run.id))?.executions).toHaveLength(1)
   } finally {
-    releaseFirst.resolve(); acknowledgeCorrection.resolve(); releaseCorrection.resolve()
+    releaseFirst.resolve(); acknowledgeCorrection.resolve(); releaseCorrection.resolve(); finishExecution.resolve()
     await stopped.catch(() => { /* ignore: the engine outcome is asserted through task and graph reads. */ })
     await task.catch(() => { /* ignore: cleanup waits for the engine; assertions above report its outcome. */ })
     await host?.shutdown()

@@ -25,7 +25,9 @@ export function publicNodeLifecycle(state: string | undefined, outcome?: string 
   if (state === 'queued' || state === 'waiting') return state
   if (context.continuationBlocked) return 'unknown'
   if (state === 'starting' || state === 'running') {
-    if (!context.native) return 'starting'
+    // A native turn can finish before result repair or execution settlement.
+    // No active turn is preparation, not unavailable telemetry or a native ACK.
+    if (!context.native || context.native.status === 'none') return 'starting'
     return context.native.status === 'active' && !!context.native.acknowledgementId
       && !!context.native.correlationId && !!context.native.action
       && context.native.action !== 'reviewing' && context.native.action !== 'waiting_approval'
