@@ -15,7 +15,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '../../..')
 const state = process.env.ENG07_STATE
 const owner = process.env.ENG07_OWNER
 const kind = process.argv[2]
-const source = (path) => import(pathToFileURL(join(root, 'apps/api/src', path)).href)
+const source = (path) => import(/* ci-key: apps/api/src/config.ts */ /* ci-key: apps/api/src/infrastructure/database.ts */
+  /* ci-key: apps/api/src/composition/checkpoints.ts */ /* ci-key: apps/api/src/production.ts */
+  /* ci-key: apps/api/src/modules/access/postgres.ts */ pathToFileURL(join(root, 'apps/api/src', path)).href)
 const send = (message) => { if (process.connected) process.send(message) }
 let close = async () => {}, closing = false
 let stage = 'ownership'

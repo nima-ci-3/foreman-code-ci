@@ -433,3 +433,10 @@ it('keys a file copied from a caller-supplied checkout by that file, not its who
   await unchanged(files, { 'apps/worker/src/other.mjs': 'export const other = 2' })
   await changed(files, { 'apps/worker/src/skill/guide.md': 'two' })
 })
+
+it('keys a data: URL import by the code that builds its text instead of refusing the key', async () => {
+  const files = { ...base, [test]: "import { inline } from '../src/standalone.js'\n"
+    + 'export const load = () => { const text = inline(); return import(`data:text/javascript,${encodeURIComponent(text)}`) }',
+  'apps/api/src/standalone.ts': "export const inline = () => 'export const read = () => []'" }
+  await changed(files, { 'apps/api/src/standalone.ts': "export const inline = () => 'export const read = () => [1]'" })
+})

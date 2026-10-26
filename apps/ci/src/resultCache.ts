@@ -414,6 +414,8 @@ function computedCalls(text: string, code: Uint8Array): Analysis['computed'] {
     if (close > 0 && /^\s*[:{]/.test(text.slice(close, close + 40))) continue
     const argument = close < 0 ? text.slice(open + 1) : text.slice(open + 1, close - 1)
     // importSpecifiers reads ordinary import/require literals; createRequire calls and their aliases stay here.
+    // A data: URL carries its module text inline; whatever produced that text is an input of its own.
+    if (/^\s*[`'"]data:/.test(argument)) continue
     if (/^\s*(['"])[^'"]*\1\s*(?:,[^]*)?$/.test(argument) && /^(?:import|require)\s*\(/.test(match[0])) continue
     // `import(/* ci-key: <specifier> */ path)` names what a runtime path loads: an installed package the lockfile
     // pins, or the repository file a bundle is built from. The named input joins the key like a literal.

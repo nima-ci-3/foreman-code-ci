@@ -252,7 +252,8 @@ test('cheap V8 collection records executed repository files with portable paths'
   const file = join(f.root, 'executed.mjs')
   writeFileSync(file, 'export function value() { return 42 }')
   const stop = await startFileCoverage()
-  const loaded = await import(file)
+  // The loaded module's text is written by this test.
+  const loaded = await import(/* ci-key: scripts/ci-integration-coverage.test.mjs */ file)
   assert.equal(loaded.value(), 42)
   const files = await stop(f.root, new Set(['executed.mjs']))
   assert.deepEqual(files, ['executed.mjs'])
@@ -288,7 +289,7 @@ test('function coverage names the functions a module ran, through nested and cla
     'export class Box { constructor(value) { this.value = value } get doubled() { return this.value * 2 } }',
   ].join('\n'))
   const stop = await startFileCoverage()
-  const lib = await import(join(f.root, 'lib.mjs'))
+  const lib = await import(/* ci-key: scripts/ci-integration-coverage.test.mjs */ join(f.root, 'lib.mjs'))
   assert.equal(lib.used(1), 2)
   assert.equal(new lib.Box(3).value, 3)
   await stop(f.root, new Set(['lib.mjs']))

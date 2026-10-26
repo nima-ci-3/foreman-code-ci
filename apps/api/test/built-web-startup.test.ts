@@ -8,7 +8,7 @@ import { buildApp } from '../src/app.js'
 import { retryStartupDatabase } from '../src/infrastructure/databaseRetry.js'
 
 const requireStatic = createRequire(createRequire(import.meta.url).resolve('@fastify/static'))
-const glob = requireStatic('glob') as { glob: (...args: unknown[]) => Promise<string[]> }
+const glob = requireStatic(/* ci-key: @fastify/static */ 'glob') as { glob: (...args: unknown[]) => Promise<string[]> }
 const originalGlob = glob.glob
 const cleanup: (() => Promise<unknown>)[] = []
 let slowDiscovery = false
