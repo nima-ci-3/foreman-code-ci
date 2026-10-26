@@ -18,7 +18,8 @@ function requirementsFor(graph: Graph, agents: Agents): RunRequirementsInput[] {
   const targets: RunRequirementsInput[] = []
   for (const node of graph.nodes) {
     if (node.kind === 'job') {
-      let jobs = targets.find(target => target.harness === 'job')
+      let jobs = targets.find(target => target.harness === 'job' && (target.jobDefinitions.length < 100
+        || target.jobDefinitions.some(job => job.id === node.jobDefinitionId && job.revision === node.jobDefinitionRevision)))
       if (!jobs) {
         jobs = { workspaceId: graph.workspaceId, harness: 'job', agentIds: [], browserProfiles: [], jobDefinitions: [], action: 'check' }
         targets.push(jobs)
@@ -36,6 +37,8 @@ function requirementsFor(graph: Graph, agents: Agents): RunRequirementsInput[] {
     const rootPolicyId = node.placement?.rootPolicyId
     let target = targets.find(value => value.harness === harness
       && sameWorkflowValue(value.hostRef, hostRef) && sameWorkflowValue(value.rootBinding, rootBinding) && value.rootPolicyId === rootPolicyId
+      && (value.agentIds.length < 100 || value.agentIds.includes(node.agentId))
+      && (!node.browser?.enabled || value.browserProfiles.length < 100 || value.browserProfiles.includes(node.browser.profileId ?? null))
       && !value.agentConfigurations?.some(config => config.agentId === node.agentId
         && (config.placementInstanceId !== node.placement?.instanceId
           || config.placementInstanceRevision !== node.placement?.instanceRevision)))
@@ -88,16 +91,26 @@ export function useRunSetup() {
   const computerName = useComputerName()
   const [requirements, setRequirements] = useState<Requirement[]>()
   const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string>()
   const pending = useRef<() => Promise<unknown>>(undefined)
+  const checkingRef = useRef(false)
 
   const guard = async (graph: Graph, agents: Agents, run: () => Promise<unknown>) => {
-    const inputs = requirementsFor(graph, agents)
-    const checked = await Promise.all(inputs.map(readRequirements))
-    if (checked.every(({ result }) => result.items.every(item => item.state === 'ready'))) return run()
-    pending.current = run
-    setError(undefined)
-    setRequirements(checked)
+    if (checkingRef.current) return
+    checkingRef.current = true
+    setChecking(true)
+    try {
+      const inputs = requirementsFor(graph, agents)
+      const checked = await Promise.all(inputs.map(readRequirements))
+      if (checked.every(({ result }) => result.items.every(item => item.state === 'ready'))) return await run()
+      pending.current = run
+      setError(undefined)
+      setRequirements(checked)
+    } finally {
+      checkingRef.current = false
+      setChecking(false)
+    }
   }
 
   const setUp = async () => {
@@ -141,5 +154,5 @@ export function useRunSetup() {
       <ul>{group.items.map(item => <li key={`${item.id}:${item.message}`} style={{ whiteSpace: 'pre-wrap' }}>{item.message}</li>)}</ul></div>)}
     {error ? <p className="n-field-error" role="alert">{error}</p> : null}
   </Dialog>
-  return { guard, dialog }
+  return { guard, dialog, checking }
 }

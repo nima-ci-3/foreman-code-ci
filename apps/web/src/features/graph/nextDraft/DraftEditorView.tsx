@@ -52,7 +52,7 @@ export function DraftEditorView({ draftKey, edit, updateFailures, changedElsewhe
   const editLocked = editIntent.locked || !!board?.boardRunLive
   const uncertainStart = !!pendingStart && !starting
   const runAction = <><Button size={board?.runActionHost ? 'sm' : undefined} variant="primary" leading={<Icon name="play" size={14} />} aria-label={uncertainStart ? 'Reconcile Start' : needsSave ? 'Save and run' : 'Start saved version'}
-    title={startReason} disabled={startDisabled} loading={starting} onClick={() => void (pendingStart ? start() : prepare(() => runSetup.guard(graph, agents, () => needsSave ? startMutation.mutateAsync({ saveFirst: true }) : start()))).catch(report)}>{starting ? 'Starting…' : uncertainStart ? 'Confirm start' : needsSave ? 'Save and run' : board?.authoringActive === false ? 'Run current workflow' : 'Run'}</Button>
+    title={startReason} disabled={startDisabled || runSetup.checking} loading={starting || runSetup.checking} onClick={() => void (pendingStart ? start() : prepare(() => runSetup.guard(graph, agents, () => needsSave ? startMutation.mutateAsync({ saveFirst: true }) : start()))).catch(report)}>{starting ? 'Starting…' : runSetup.checking ? 'Checking setup…' : uncertainStart ? 'Confirm start' : needsSave ? 'Save and run' : board?.authoringActive === false ? 'Run current workflow' : 'Run'}</Button>
 </>
   const toolbar = <>
         <div className="board-title">
