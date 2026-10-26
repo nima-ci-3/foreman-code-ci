@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.128] - 2026-10-26
+
+### CI
+
+- A data: URL import no longer refuses a result key; the acceptance service, integration-coverage and built-web tests name the modules they load, so six more files are proven instead of always rerunning.
+
 ## [0.0.127] - 2026-10-26
 
 ### CI
