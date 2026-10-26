@@ -401,7 +401,10 @@ it('checks every package when typecheck has no commit it passed on, since a diff
     f.selections.set(commit('2'), [])
     const started = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'typecheck', commit: commit('2'), scope: 'affected',
       commandId: randomUUID() }))
-    expect((await f.read(started.ticketId)).run).toMatchObject({ state: 'queued', scope: 'full' })
+    // Background dispatch may already have started it on the builder; what matters is that it checks everything.
+    const run = (await f.read(started.ticketId)).run
+    expect(run).toMatchObject({ scope: 'full' })
+    expect(['queued', 'starting', 'running']).toContain(run.state)
   } finally { await f.close() }
 })
 
