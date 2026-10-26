@@ -26,9 +26,10 @@ it('plans from an observed computer’s capacity while its expired status refres
         provider: 'github', owner: 'fixture', name: 'project', defaultBranch: 'main',
       },
     } }] }
-    // Capture persisted run records without depending on the insert's optional metadata columns.
-    if (typeof parameters?.[3] === 'string' && parameters[3].startsWith('{')) {
-      const record = CiRunRecordSchema.safeParse(JSON.parse(parameters[3]))
+    // Capture every persisted run, including batched inserts, without depending on column positions.
+    for (const value of parameters ?? []) {
+      if (typeof value !== 'string' || !value.startsWith('{')) continue
+      const record = CiRunRecordSchema.safeParse(JSON.parse(value))
       if (record.success) records.push(record.data)
     }
     return { rows: [], rowCount: 1 }
