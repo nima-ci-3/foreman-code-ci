@@ -658,9 +658,13 @@ export class RemoteNativeSessionManager implements NativeHarnessSessionManager {
           await this.observeSource(streamed.receipt, { type: 'history', history }, signal)
           return { history, receipt: streamed.receipt }
         }
+        // Once the terminal page is drained, a cursor after its last event would
+        // hide the provider terminal frame needed for result validation/settlement.
+        const terminalDrained = streamed?.value.terminalTurn && !streamed.page.hasMore
+          && streamed.afterSequence === streamed.page.nextAfterSequence
         const { value, receipt } = await this.readHistoryResponse({
           ...(correlationId ? { correlationId } : {}),
-          ...(streamed ? { afterSequence: streamed.afterSequence } : {}),
+          ...(streamed && !terminalDrained ? { afterSequence: streamed.afterSequence } : {}),
         }, signal)
         if (correlationId) this.assertHistoryIdentity(value.history, session, correlationId, receipt)
         if (value.context !== undefined) this.context = value.context

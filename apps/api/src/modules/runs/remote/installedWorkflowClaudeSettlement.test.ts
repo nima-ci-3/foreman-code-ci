@@ -16,6 +16,7 @@ import { RemoteNativeSessionManager } from './nativeManagerProxy.js'
 import { createRemoteWorkflowPhysicalVerification } from './workflowPhysicalVerification.js'
 import { remoteWorkflowSourceDigest } from './workflowPhysicalReadout.js'
 import * as mcp from './workerMcpEndpoint.js'
+import { assertOriginalWorkflowTerminal } from '../../interactions/workflowTerminalSource.js'
 
 const sdk = vi.hoisted(() => ({ client: undefined as ClaudeSdkClient | undefined }))
 vi.mock('../../harnesses/claudeSdk/official.js', () => ({ loadOfficialClaudeSdk: async () => sdk.client }))
@@ -26,7 +27,7 @@ vi.mock('../../harnesses/claudeSdk/configuration.js', () => ({
 }))
 vi.mock('../../harnesses/claudeSdk/mcpPolicy.js', () => ({ acceptedClaudeAppTools: async () => [] }))
 
-it.each([false, true])('settles and retires installed Claude after a lost event ACK response without Stop (corrective=%s)', async corrective => {
+it.each([false, true])('settles and retires installed Claude after delayed terminal reads and a lost event ACK response without Stop (corrective=%s)', async corrective => {
   const f = await sourceFixture(), native = nativeFixture()
   const configuration = { ...f.request.configuration, harness: { harness: 'claude' as const, model: 'claude-haiku-4-5',
     authMode: 'subscription' as const, configDirectory: join(f.root, 'profile'), permissionMode: 'default' as const,
@@ -123,9 +124,18 @@ it.each([false, true])('settles and retires installed Claude after a lost event 
     let current = correlation
     for (let turn = 0; turn <= Number(corrective); turn++) {
       current = turn ? `${correlation}:result-repair:1` : correlation
-      for await (const event of proxy.startTurn(session, { prompt: 'Complete the work', clientCorrelationId: current, deferSettlement: true })) void event
+      for await (const event of proxy.startTurn(session, { prompt: 'Complete the work', clientCorrelationId: current, deferSettlement: true })) {
+        if (event.type === 'turn.completed') {
+          // Main has published the last frame; its history refresh outlasts the stream cache.
+          const later = Date.now() + 31_000
+          const clock = vi.spyOn(Date, 'now').mockReturnValue(later)
+          try { await proxy.history(session) } finally { clock.mockRestore() }
+        }
+      }
       const history = await proxy.reconcile(session, current)
       expect(history.terminalTurn?.result).toEqual({ outcome: 'succeeded', output: 'Complete' })
+      expect(() => assertOriginalWorkflowTerminal({ id: intent.executionId, agentId: configuration.agentId },
+        session, history, current)).not.toThrow()
       await call({ method: 'physical-ack', intent, placement, receiptSequence: receipt!.sequence,
         sourceDigest: remoteWorkflowSourceDigest({ type: 'history', history }) })
     }

@@ -136,6 +136,11 @@ it.each(['succeeded', 'failed'] as const)('shows remote Claude corrective work r
     proxy.startTurn = async function* (session, input, signal) {
       for await (const event of start(session, input, signal)) {
         yield event
+        if (event.type === 'turn.completed' || event.type === 'turn.failed') {
+          // A slow terminal publication requires another authenticated history observation.
+          const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000)
+          try { await proxy.history(session, signal) } finally { clock.mockRestore() }
+        }
         if (input.clientCorrelationId?.endsWith(':result-repair:1')
           && (event.type === 'turn.completed' || event.type === 'turn.failed')) {
           correctionCompleted.resolve()

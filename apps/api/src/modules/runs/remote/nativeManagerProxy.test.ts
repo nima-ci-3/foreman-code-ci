@@ -990,6 +990,24 @@ describe('remote native history streaming', () => {
     expect(frame).toMatchObject({ method: 'prepare', sessionContinuation,
       intent: { executionId: f.start.request.executionId }, request: f.start.request })
   })
+  it('keeps every unconsumed event when a slow history refresh interrupts a paged terminal stream', async () => {
+    const events = Array.from({ length: 40 }, (_, sequence) => event(sequence, 'x'.repeat(20_000)))
+    const history = terminal(events)
+    const f = setup(() => history)
+    const session = await f.proxy.createSession(f.start)
+    const delivered: NativeHarnessEvent[] = []
+    for await (const value of f.proxy.startTurn(session, { prompt: 'prompt', clientCorrelationId: f.start.correlationId })) {
+      delivered.push(value)
+      if (value.sequence === 0) {
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000)
+        try { await f.proxy.history(session) } finally { clock.mockRestore() }
+      }
+    }
+    expect(delivered).toEqual(events)
+    expect((await f.proxy.reconcile(session, f.start.correlationId)).terminalTurn).toEqual(history.terminalTurn)
+    expect(f.request.mock.calls.filter(([method]) => method === 'start-turn')).toHaveLength(1)
+  })
+
   it('refreshes authenticated history before a slow consumer uses expired event observations', async () => {
     let now = Date.now()
     let observedAt = now
