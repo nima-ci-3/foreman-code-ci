@@ -28,6 +28,7 @@ export async function probeRepository(ports: MaintenancePorts, raw: RepositoryPr
   const result = await run(['ls-remote', '--exit-code', `https://github.com/${input.repository}.git`, 'HEAD'])
   signal.throwIfAborted()
   if (result.code === 0) return { ready: true, reason: null }
+  if (result.code === null) return { ready: false, reason: 'The GitHub access check did not finish. Check Git and the network on this computer, then retry.' }
   // Git credential helpers may print secrets; never return their stderr.
   const reason = /could not resolve (?:host|proxy)/iu.test(result.stderr)
     ? 'GitHub could not be reached because DNS failed. Check the network on this computer.'

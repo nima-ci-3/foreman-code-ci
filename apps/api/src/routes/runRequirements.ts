@@ -156,13 +156,22 @@ async function repairSavedWorkflows(services: OperatorServices, principal: Manag
               const rootPolicyId = node.placement?.rootPolicyId
               let request = requests.find(value => value.harness === harness && value.rootPolicyId === rootPolicyId
                 && sameWorkflowValue(value.rootBinding, rootBinding) && value.agentIds.length < 100
-                && value.browserProfiles.length < 100)
+                && value.browserProfiles.length < 100 && !value.agentConfigurations?.some(snapshot => snapshot.agentId === node.agentId
+                  && (snapshot.placementInstanceId !== node.placement?.instanceId
+                    || snapshot.placementInstanceRevision !== node.placement?.instanceRevision)))
               if (!request) {
                 request = { workspaceId, harness, hostRef, ...(rootBinding ? { rootBinding } : {}),
                   ...(rootPolicyId ? { rootPolicyId } : {}), agentIds: [], browserProfiles: [], jobDefinitions: [], action: 'fix' }
                 requests.push(request)
               }
               if (!request.agentIds.includes(node.agentId)) request.agentIds.push(node.agentId)
+              if (agent.harnessConfiguration && !request.agentConfigurations?.some(value => value.agentId === node.agentId)) {
+                request.agentConfigurations ??= []
+                request.agentConfigurations.push({ agentId: node.agentId, configuration: agent.harnessConfiguration,
+                  ...(agent.harnessProfileSelection ? { selection: agent.harnessProfileSelection } : {}),
+                  ...(node.placement ? { placementInstanceId: node.placement.instanceId,
+                    placementInstanceRevision: node.placement.instanceRevision } : {}) })
+              }
               if (node.browser?.enabled && !request.browserProfiles.includes(node.browser.profileId ?? null)) {
                 request.browserProfiles.push(node.browser.profileId ?? null)
               }
@@ -259,15 +268,24 @@ export async function runRequirements(services: OperatorServices, principal: Man
   const repository = workspace.workspace.repository
   const repositoryProbe = repository ? { repository: `${repository.owner}/${repository.name}`,
     ...(selectedSource?.manifest.git?.commit ? { commit: selectedSource.manifest.git.commit } : {}) } : undefined
-  const status = (await services.computerMaintenance.readTarget(principal, 'http', {
-    target, refresh: true, ...(input.browserProfiles.length ? { browserProbe: true } : {}),
-    ...(repositoryProbe ? { repositoryProbe } : {}),
-  })).computers[0]
+  let status = (await services.computerMaintenance.readTarget(principal, 'http', { target, refresh: true })).computers[0]
+  // Older Workers reject probe fields in their strict protocol. Read bundle
+  // readiness first so they can be updated before attempting the new probes.
+  if ((target.hostRef.kind === 'main' || status?.workerReadiness?.ready)
+    && (input.browserProfiles.length || repositoryProbe)) {
+    status = (await services.computerMaintenance.readTarget(principal, 'http', {
+      target, refresh: true, ...(input.browserProfiles.length ? { browserProbe: true } : {}),
+      ...(repositoryProbe ? { repositoryProbe } : {}),
+    })).computers[0]
+  }
   const account = accountFacts?.accounts.find(value => value.tool === input.harness) ?? null
   const selected = await Promise.all(input.agentIds.map(async id => {
-    const edited = input.agentConfigurations?.find(value => value.agentId === id)?.configuration
-    if (edited) return { id, harnessConfiguration: edited }
-    return (await services.agents.get(principal, input.workspaceId, id)).agent
+    const edited = input.agentConfigurations?.find(value => value.agentId === id)
+    if (edited) return { id, harnessConfiguration: edited.configuration, selection: edited.selection,
+      placementInstanceId: edited.placementInstanceId, placementInstanceRevision: edited.placementInstanceRevision }
+    const agent = (await services.agents.get(principal, input.workspaceId, id)).agent
+    return { id, harnessConfiguration: agent.harnessConfiguration, selection: agent.harnessProfileSelection,
+      placementInstanceId: undefined, placementInstanceRevision: undefined }
   }))
   const managed = selected.filter(agent => agent.harnessConfiguration?.harness === input.harness && agent.harnessConfiguration.accountId)
   const needsDefault = selected.length === 0 || managed.length !== selected.length
@@ -313,13 +331,21 @@ export async function runRequirements(services: OperatorServices, principal: Man
       continue
     }
     const profile = profiles?.find(value => value.enabled && value.driverId === input.harness
+        && (agent.placementInstanceId ? value.instanceId === agent.placementInstanceId
+          && value.instanceRevision === agent.placementInstanceRevision
+          : agent.selection ? value.instanceId === agent.selection.instanceId
+            && value.instanceRevision === agent.selection.instanceRevision && sameWorkflowValue(value.target, agent.selection.target)
+            : true)
         && sameWorkflowValue(withAdvancedDefaults(value.configuration), withAdvancedDefaults(configuration)))
     if (profiles) {
       items.push(profile?.qualification === 'qualified'
         ? item(`profile:${agent.id}`, 'ready', `${label(input.harness)} profile for this Agent is ready.`)
         : item(`profile:${agent.id}`, 'missing', profile?.qualificationFailure?.message
           ?? (profile ? `The ${label(input.harness)} profile needs to be checked on this computer.`
-            : `This computer needs a ${label(input.harness)} profile matching this Agent.`), true))
+            : agent.placementInstanceId || agent.selection
+              ? `The Agent's selected ${label(input.harness)} profile is unavailable or changed on this computer. Select its current profile and save the workflow.`
+              : `This computer needs a ${label(input.harness)} profile matching this Agent.`),
+        !!profile || !agent.placementInstanceId && !agent.selection))
     }
     if (account?.installed && services.extensions?.native) {
       try {
@@ -448,6 +474,11 @@ export async function runRequirements(services: OperatorServices, principal: Man
           const configuration = agent?.harnessConfiguration
           if (!configuration || configuration.harness !== input.harness) throw new Error('Agent configuration is unavailable.')
           const profile = profiles?.find(value => value.enabled && value.driverId === input.harness
+            && (agent?.placementInstanceId ? value.instanceId === agent.placementInstanceId
+              && value.instanceRevision === agent.placementInstanceRevision
+              : agent?.selection ? value.instanceId === agent.selection.instanceId
+                && value.instanceRevision === agent.selection.instanceRevision && sameWorkflowValue(value.target, agent.selection.target)
+                : true)
             && sameWorkflowValue(withAdvancedDefaults(value.configuration), withAdvancedDefaults(configuration)))
           if (profile) {
             await services.harnessInstances.check(principal, 'http', { commandId: randomUUID(), instanceId: profile.instanceId,

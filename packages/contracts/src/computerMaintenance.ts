@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { DeviceProvisioningHostReferenceSchema, DeviceProvisioningTargetSchema } from './deviceResources.js'
 import { SourceRootReferenceSchema } from './worktreeSettings.js'
 import { RecordedHarnessConfigurationSchema } from './index.js'
+import { HarnessProfileSelectionSchema } from './harnessProfileSelection.js'
 import { HarnessMcpArgumentSchema, HarnessMcpEndpointSchema, HarnessMcpPresetStatus } from './management/harnessSettings.js'
 import { ComputerAccountsSchema } from './computerAccounts.js'
 import { PluginMarketplaceSourceSchema } from './management/claudePlugins.js'
@@ -28,7 +29,12 @@ export const RunRequirementsInputSchema = z.object({
   rootPolicyId: z.uuid().optional(),
   agentIds: z.array(z.string().min(1).max(200)).max(100),
   agentConfigurations: z.array(z.object({ agentId: z.string().min(1).max(200),
-    configuration: RecordedHarnessConfigurationSchema }).strict()).max(100).optional(),
+    configuration: RecordedHarnessConfigurationSchema,
+    selection: HarnessProfileSelectionSchema.optional(),
+    placementInstanceId: z.string().min(1).optional(),
+    placementInstanceRevision: z.string().min(1).optional(),
+  }).strict().refine(value => (value.placementInstanceId === undefined) === (value.placementInstanceRevision === undefined),
+    'Include both placement instance fields.')).max(100).optional(),
   browserProfiles: z.array(z.string().min(1).max(200).nullable()).max(100),
   jobDefinitions: z.array(z.object({ id: z.string().min(1).max(200), revision: z.number().int().positive() }).strict()).max(100),
   action: z.enum(['check', 'fix']),

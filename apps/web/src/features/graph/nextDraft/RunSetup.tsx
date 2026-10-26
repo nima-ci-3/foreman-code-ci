@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { RunRequirementsInputSchema, RunRequirementsResultSchema,
   type RunRequirementsInput, type RunRequirementsResult } from '@foreman-code/contracts/computer-maintenance'
+import type { Agent } from '@foreman-code/contracts'
 import { sameWorkflowValue } from '@foreman-code/contracts/current'
 import { apiClient } from '../../../shared/api/client'
 import { useComputerName } from '../../../shared/api/computerActivity'
@@ -10,7 +11,7 @@ import { Button, Dialog } from '../../../shared/ui/nocturne'
 import { agentNodeFacts, type NextDraftEdit } from '../../board-core'
 
 type Graph = NextDraftEdit['context']['draft']['graph']
-type Agents = readonly (Parameters<typeof agentNodeFacts>[0] & { id: string })[]
+type Agents = readonly (Parameters<typeof agentNodeFacts>[0] & Pick<Agent, 'id' | 'harnessProfileSelection'>)[]
 type Requirement = { input: RunRequirementsInput; result: RunRequirementsResult }
 
 function requirementsFor(graph: Graph, agents: Agents): RunRequirementsInput[] {
@@ -34,7 +35,10 @@ function requirementsFor(graph: Graph, agents: Agents): RunRequirementsInput[] {
     const rootBinding = node.placement?.rootBinding ?? (!hostRef ? graph.defaultWorktree?.rootBinding : undefined)
     const rootPolicyId = node.placement?.rootPolicyId
     let target = targets.find(value => value.harness === harness
-      && sameWorkflowValue(value.hostRef, hostRef) && sameWorkflowValue(value.rootBinding, rootBinding) && value.rootPolicyId === rootPolicyId)
+      && sameWorkflowValue(value.hostRef, hostRef) && sameWorkflowValue(value.rootBinding, rootBinding) && value.rootPolicyId === rootPolicyId
+      && !value.agentConfigurations?.some(config => config.agentId === node.agentId
+        && (config.placementInstanceId !== node.placement?.instanceId
+          || config.placementInstanceRevision !== node.placement?.instanceRevision)))
     if (!target) {
       target = { workspaceId: graph.workspaceId, harness, ...(hostRef ? { hostRef } : {}),
         ...(rootBinding ? { rootBinding } : {}), ...(rootPolicyId ? { rootPolicyId } : {}), agentIds: [], browserProfiles: [], jobDefinitions: [], action: 'check' }
@@ -43,7 +47,10 @@ function requirementsFor(graph: Graph, agents: Agents): RunRequirementsInput[] {
     if (!target.agentIds.includes(node.agentId)) target.agentIds.push(node.agentId)
     if (agent?.harnessConfiguration && !target.agentConfigurations?.some(value => value.agentId === node.agentId)) {
       target.agentConfigurations ??= []
-      target.agentConfigurations.push({ agentId: node.agentId, configuration: agent.harnessConfiguration })
+      target.agentConfigurations.push({ agentId: node.agentId, configuration: agent.harnessConfiguration,
+        ...(agent.harnessProfileSelection ? { selection: agent.harnessProfileSelection } : {}),
+        ...(node.placement ? { placementInstanceId: node.placement.instanceId,
+          placementInstanceRevision: node.placement.instanceRevision } : {}) })
     }
     if (node.browser?.enabled) {
       const profile = node.browser.profileId ?? null
