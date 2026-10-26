@@ -9,7 +9,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- Deploys are about two minutes faster: the API exits as soon as its shutdown finishes instead of waiting 60 s for systemd to kill it (and logs any handle still open), an already installed browser runtime is reused without copying 850 MB again, and the web build cache resolves the Vite config's imports.
+- Deploys are about two minutes faster: the API exits as soon as its shutdown finishes instead of waiting 60 s for systemd to kill it (and logs any handle still open), an already installed browser runtime is reused without copying or rehashing 850 MB again, and the web build cache resolves the Vite config's imports.
+- A gate no longer stops when one part fails: every part runs to the end, so one round shows every failure.
 
 ## [0.0.129] - 2026-10-26
 

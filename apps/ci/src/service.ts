@@ -993,10 +993,7 @@ export class HostCiService {
 
   private async cancelObsoleteTickets() {
     const rows = (await this.pool.query<{ record: unknown }>(`select record from ci_runs
-      where state in ('queued','starting','running') and (record->>'supersededBy' is not null
-        or record->>'gate'='true' and exists (
-          select 1 from ci_runs failed where failed.workspace_id=ci_runs.workspace_id
-            and failed.group_id=ci_runs.group_id and failed.state='failed' and failed.record->>'gate'='true'))`)).rows
+      where state in ('queued','starting','running') and record->>'supersededBy' is not null`)).rows
     const all = rows.map(row => CiRunRecordSchema.parse(row.record))
     const tracked = new Set(all.map(run => run.id))
     for (const [id, retry] of this.cancelRetries) {
@@ -1006,10 +1003,7 @@ export class HostCiService {
     let canceled = false
     await inBatches(runs, 8, async run => {
       try {
-        const audit: CiCancellation | undefined = run.supersededBy ? undefined : {
-          principalId: run.initiator.principalId, source: 'mcp', commandId: randomUUID(), reason: 'gate_failed',
-        }
-        const result = await this.retryCancelTicket(run.workspaceId, run.id, audit)
+        const result = await this.retryCancelTicket(run.workspaceId, run.id, undefined)
         if (result.run.state === 'canceled') canceled = true
       } catch (error) {
         const failures = this.cancelRetries.get(run.id)?.failures ?? 1
