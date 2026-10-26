@@ -263,24 +263,27 @@ export class FleetMaintenanceService {
 
   private async keepCurrentNow(): Promise<void> {
     const targets = await this.allTargets()
-    const requirements = await this.repairRequirements(targets)
-    const artifacts = await this.workerArtifacts()
-    const sync = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
-    await Promise.all(targets.map(async target => {
-      const status = await this.status(target, true)
-      if (!status) return
-      const behind = status.harnesses.filter(entry => entry.latest && entry.version !== entry.latest).map(entry => entry.harness)
-      if (behind.length) await this.startOn(target, { kind: 'update-harnesses', harnesses: behind })
-        .catch(ignoreError('lifecycle', 'start harness update on computer', { host: target.hostRef, nextRetryMs: 60_000 }))
-      if (target.hostRef.kind === 'main') return
-      await this.syncWorkerUpdate(target, status, artifacts)
-      for (const task of sync) {
-        if (task.status === 'fulfilled') await this.syncSource(target, task.value, status)
-      }
-    }))
-    const failures = sync.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
-    if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
-    if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+    const pendingRequirements = this.repairRequirements(targets)
+    try {
+      const artifacts = await this.workerArtifacts()
+      const sync = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
+      await Promise.all(targets.map(async target => {
+        const status = await this.status(target, true)
+        if (!status) return
+        const behind = status.harnesses.filter(entry => entry.latest && entry.version !== entry.latest).map(entry => entry.harness)
+        if (behind.length) await this.startOn(target, { kind: 'update-harnesses', harnesses: behind })
+          .catch(ignoreError('lifecycle', 'start harness update on computer', { host: target.hostRef, nextRetryMs: 60_000 }))
+        if (target.hostRef.kind === 'main') return
+        await this.syncWorkerUpdate(target, status, artifacts)
+        for (const task of sync) {
+          if (task.status === 'fulfilled') await this.syncSource(target, task.value, status)
+        }
+      }))
+      const requirements = await pendingRequirements
+      const failures = sync.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
+      if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
+      if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+    } finally { await pendingRequirements }
   }
 
   private readonly deliveries = new Map<string, {
@@ -301,21 +304,25 @@ export class FleetMaintenanceService {
   }
 
   private async syncChangedSourcesNow(): Promise<void> {
-    const sources = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
+    const pendingSources = Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
     const allTargets = await this.allTargets()
-    const requirements = await this.repairRequirements(allTargets)
-    const targets = allTargets.filter(target => target.hostRef.kind !== 'main')
-    const artifacts = await this.workerArtifacts()
-    await Promise.all(targets.map(async target => {
-      const status = await this.status(target, true)
-      await this.syncWorkerUpdate(target, status, artifacts)
-      await Promise.all(sources.map(async source => {
-        if (source.status === 'fulfilled') await this.syncSource(target, source.value, status)
+    const pendingRequirements = this.repairRequirements(allTargets)
+    try {
+      const sources = await pendingSources
+      const targets = allTargets.filter(target => target.hostRef.kind !== 'main')
+      const artifacts = await this.workerArtifacts()
+      await Promise.all(targets.map(async target => {
+        const status = await this.status(target, true)
+        await this.syncWorkerUpdate(target, status, artifacts)
+        await Promise.all(sources.map(async source => {
+          if (source.status === 'fulfilled') await this.syncSource(target, source.value, status)
+        }))
       }))
-    }))
-    const failures = sources.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
-    if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
-    if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+      const requirements = await pendingRequirements
+      const failures = sources.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
+      if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
+      if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+    } finally { await pendingRequirements }
   }
 
   private async repairRequirements(targets: DeviceProvisioningTarget[]): Promise<unknown[]> {

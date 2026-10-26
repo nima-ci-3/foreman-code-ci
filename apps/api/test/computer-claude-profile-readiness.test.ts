@@ -11,12 +11,17 @@ it('checks the selected Claude profile without exposing credentials or accepting
     await Promise.all([mkdir(signedIn), mkdir(signedOut), symlink(signedIn, alias)])
     const computer = fakeComputer()
     computer.ports.environment.ANTHROPIC_API_KEY = 'ambient-secret'
+    computer.ports.environment.OPERATOR_CONTEXT = 'controller-context'
+    computer.ports.environment.FOREMAN_CODE_APP_CONTEXT = 'application-context'
     const run = computer.ports.run
     let probes = 0
     computer.ports.run = async (binary, args, options) => {
       if (!binary.endsWith('claude') || args[0] !== 'auth') return run(binary, args, options)
       probes++
       if (options.environment?.ANTHROPIC_API_KEY !== undefined) throw new Error('Ambient API key was inherited')
+      if (options.environment?.OPERATOR_CONTEXT !== undefined || options.environment?.FOREMAN_CODE_APP_CONTEXT !== undefined) {
+        throw new Error('Controller environment was inherited')
+      }
       const loggedIn = options.environment?.CLAUDE_CONFIG_DIR === signedIn
       return { code: loggedIn ? 0 : 1, stdout: JSON.stringify({ loggedIn, token: 'private-token' }), stderr: '' }
     }

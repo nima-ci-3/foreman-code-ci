@@ -14,7 +14,7 @@ const request = { workspaceId: 'workspace', harness: 'codex', agentIds: [], brow
 
 function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: 'missing' | 'installed';
   repository?: boolean; repositoryReady?: boolean; claudeDefault?: boolean; selectionMismatch?: boolean; priorityCodex?: boolean;
-  oldWorker?: boolean; browserMissing?: boolean; selectedProfileSignedIn?: boolean; apostrophePath?: boolean } = {}) {
+  oldWorker?: boolean; browserMissing?: boolean; selectedProfileSignedIn?: boolean; apostrophePath?: boolean; multipleAgents?: boolean } = {}) {
   let preset = options.mcp ?? 'missing'
   let browserReady = !options.browserMissing
   const selectedTarget = options.oldWorker ? { hostRef: { kind: 'device' as const, mainId,
@@ -36,6 +36,10 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
     ...(options.oldWorker ? { workerReadiness: { ready: false, code: 'WORKER_VERSION_SKEW' } } : {}),
     observation: { status: options.online === false ? 'unavailable' : 'available' } }] }))
   const startMaintenance = vi.fn(async () => { browserReady = true; return { computers: [{ task: { state: 'succeeded' } }] } })
+  const nativeOptions = vi.fn(async () => ({ authenticated: true, models: [
+    options.priorityCodex ? { id: configuration.model, reasoningEfforts: ['medium'], serviceTiers: ['priority'] }
+      : { id: 'resolved-claude-model', defaultPriority: -1, reasoningEfforts: [], serviceTiers: [] },
+  ] }))
   const services = {
     computerAccounts: { list: async () => ({ computers: [{ target: selectedTarget }] }),
       readTarget: async () => ({ computers: [{ target: selectedTarget,
@@ -45,11 +49,8 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
     harnessInstances: { list: async () => ({ overrides: options.claudeDefault
       ? [{ enabled: true, driverId: 'claude', configuration, qualification: 'qualified' }] : [] }),
       check: async () => ({ proof: { authenticated: true, qualified: true } }) },
-    extensions: { native: { options: async () => ({ authenticated: true, models: [
-      options.priorityCodex ? { id: configuration.model, reasoningEfforts: ['medium'], serviceTiers: ['priority'] }
-        : { id: 'resolved-claude-model', defaultPriority: -1, reasoningEfforts: [], serviceTiers: [] },
-    ] }) } },
-    agents: { get: async () => ({ agent: { id: 'agent', harnessConfiguration: configuration } }) },
+    extensions: { native: { options: nativeOptions } },
+    agents: { get: async (_principal: unknown, _workspaceId: string, id: string) => ({ agent: { id, harnessConfiguration: configuration } }) },
     workspaces: { get: async () => ({ workspace: options.repository ? { repository: { owner: 'owner', name: 'public' } } : {},
       locationValidation: { status: 'ready' } }) },
   } as unknown as OperatorServices
@@ -59,14 +60,14 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
   const call = async (action: 'check' | 'fix') => (await app.inject({ method: 'POST',
     url: '/api/management/computers/run-requirements', payload: { ...request, action,
       ...(options.claudeDefault ? { harness: 'claude', agentIds: ['agent'] } : {}),
-      ...(options.priorityCodex ? { agentIds: ['agent'] } : {}),
+      ...(options.priorityCodex ? { agentIds: options.multipleAgents ? ['agent', 'agent2'] : ['agent'] } : {}),
       ...(options.selectionMismatch ? { agentConfigurations: [{ agentId: 'agent', configuration,
         selection: { instanceId: '44444444-4444-4444-8444-444444444444', instanceRevision: 'revision-1',
           target: { hostRef: target.hostRef, applicationInstallationId: mainId,
             harnessInstallationId: 'claude', installationFingerprint: 'fingerprint' } } }] } : {}),
       ...(options.oldWorker ? { hostRef: selectedTarget.hostRef } : {}),
       ...(options.browserMissing || options.oldWorker ? { browserProfiles: [null] } : {}) } })).json()
-  return { app, call, applyManaged, readMaintenance, startMaintenance }
+  return { app, call, applyManaged, readMaintenance, startMaintenance, nativeOptions }
 }
 
 describe('computer Run requirements', () => {
@@ -140,6 +141,16 @@ describe('computer Run requirements', () => {
     try {
       const result = await f.call('check')
       expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent', state: 'ready' }))
+    } finally { await f.app.close() }
+  })
+
+  it('checks native options once for Agents sharing a computer account', async () => {
+    const f = fixture({ signedIn: true, mcp: 'installed', priorityCodex: true, multipleAgents: true })
+    try {
+      const result = await f.call('check')
+      expect(f.nativeOptions).toHaveBeenCalledOnce()
+      expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent', state: 'ready' }))
+      expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent2', state: 'ready' }))
     } finally { await f.app.close() }
   })
 

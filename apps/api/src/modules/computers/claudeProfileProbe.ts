@@ -1,6 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { parseClaudeAuthStatus } from '../provider-accounts/index.js'
+import { isControllerEnvironmentVariable } from '../harnesses/index.js'
 import type { MaintenancePorts } from './maintenancePorts.js'
 
 /** Read subscription authentication from the selected host-local profile without opening a native turn. */
@@ -19,7 +20,7 @@ export async function probeClaudeProfile(ports: MaintenancePorts, profileDirecto
     ['BASH_ENV', 'ENV', 'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'SSH_AUTH_SOCK'].includes(key)
     || /(?:^|_)(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS)(?:_|$)/.test(key)
     || /^(?:ANTHROPIC_|CLAUDE_|CLAUDECODE$|OPENAI_|CODEX_|GOOGLE_|GEMINI_|AWS_|AZURE_|VERTEX_|BEDROCK_)/.test(key)
-    || key === 'DATABASE_URL' || key.endsWith('_DATABASE_URL') || key === 'PGPASSWORD').map(key => [key, undefined]))
+    || isControllerEnvironmentVariable(key)).map(key => [key, undefined]))
   const result = await ports.run(binary, ['auth', 'status'], { signal, timeoutMs: 15_000,
     environment: { ...stripped, CLAUDE_CONFIG_DIR: profileDirectory, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' } })
   signal.throwIfAborted()

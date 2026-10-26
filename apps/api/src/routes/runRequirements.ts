@@ -328,6 +328,7 @@ export async function runRequirements(services: OperatorServices, principal: Man
     } catch (error) { items.push(item('profiles', 'unknown', `Could not read harness profiles: ${errorText(error)}`)) }
   }
   const claudeProbes = new Map<string, ReturnType<NonNullable<OperatorServices['computerMaintenance']>['readTarget']>>()
+  const nativeOptions = new Map<string, ReturnType<NonNullable<OperatorServices['extensions']>['native']['options']>>()
   for (const agent of selected) {
     const configuration = agent.harnessConfiguration
     if (!configuration || configuration.harness !== input.harness) {
@@ -389,7 +390,13 @@ export async function runRequirements(services: OperatorServices, principal: Man
       try {
         const binding = configuration.accountId ? accountBindings.get(configuration.accountId) : undefined
         if (configuration.accountId && !binding) throw new Error('The selected provider account binding is unavailable.')
-        const options = await services.extensions.native.options(input.harness, binding, target.hostRef)
+        const key = configuration.accountId ?? ''
+        let discovery = nativeOptions.get(key)
+        if (!discovery) {
+          discovery = services.extensions.native.options(input.harness, binding, target.hostRef)
+          nativeOptions.set(key, discovery)
+        }
+        const options = await discovery
         if (!configuration.accountId && options.authenticated) {
           const auth = items.find(value => value.id === 'sign-in')
           if (auth?.state === 'unknown') Object.assign(auth, item('sign-in', 'ready', `${label(input.harness)} is signed in.`))
