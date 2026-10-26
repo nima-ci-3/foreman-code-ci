@@ -23,7 +23,8 @@ export function configuredReservedCloudSlots(context: CiContext, environment: No
 
 /** The cloud slots gate tickets never plan or run on, taken round-robin over providers (each CircleCI org on its own)
  * from each provider's highest slots so every provider keeps capacity for non-gate work. Each provider keeps at least
- * one slot for the gate. */
+ * one slot for the gate. Pass the full eligible fleet, including slots whose readiness is still pending, so status
+ * reply order cannot move a reservation onto a slot the gate has already started using. */
 export function reservedCloudSlotKeys(computers: readonly HostCiComputer[], count: number): Set<string> {
   const providers = new Map<string, HostCiComputer[]>()
   for (const computer of computers) {

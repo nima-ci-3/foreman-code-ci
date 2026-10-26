@@ -11,9 +11,11 @@ import { CircleStandby } from '@foreman-code/ci/circleStandby'
 import type { HostCiComputer, HostCiEndpoint } from '@foreman-code/ci/serviceTypes'
 import { mainCiContext } from '../src/modules/ci/context.js'
 
-it('reserves ordinary cloud capacity on active standby orgs instead of exhausted primaries', async () => {
+it.each([false, true])('reserves ordinary cloud capacity on active standby orgs instead of exhausted primaries (late slot status: %s)', async lateSlotStatus => {
   const db = await migratedDatabase()
   let service: HostCiService | undefined
+  let releaseStatus!: () => void
+  const statusReady = new Promise<void>(resolve => { releaseStatus = resolve })
   try {
     const owners = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta']
     const organizations = owners.flatMap((owner, index) => Array.from({ length: 2 }, (_, slot): HostCiComputer => ({
@@ -56,10 +58,15 @@ it('reserves ordinary cloud capacity on active standby orgs instead of exhausted
     const started: string[] = []
     const endpoint: HostCiEndpoint = { computers: async () => [...github, ...organizations],
       request: async (computer, request) => {
-        if (request.operation === 'status') return { operation: 'status', ready: true, reasons: [],
-          cpuCount: 4, memoryBytes: 16 * 2 ** 30, slotsTotal: 1, slotsUsed: 0, runs: [] }
+        if (request.operation === 'status') {
+          // Let delta's highest slot answer first; its lower slot arrives after the other orgs start.
+          if (lateSlotStatus && computer.key === 'fixture:cloud:circleci~reserve@delta:0') await statusReady
+          return { operation: 'status', ready: true, reasons: [],
+            cpuCount: 4, memoryBytes: 16 * 2 ** 30, slotsTotal: 1, slotsUsed: 0, runs: [] }
+        }
         if (request.operation === 'start') {
           started.push(computer.key)
+          if (started.filter(key => !key.includes('@delta:')).length === 3) releaseStatus()
           return { operation: 'start', run: { runId: request.runId, state: 'running', step: 'integration',
             exitCode: null, startedAt: now, finishedAt: null, logBytes: 0, message: null } }
         }
@@ -75,13 +82,13 @@ it('reserves ordinary cloud capacity on active standby orgs instead of exhausted
       endpoint, undefined, { circleStandby: selector, reservedCloudSlots: 4 })
     await service.dispatch()
     await service.drain()
-    // A rare run started 5; name every started slot so the next failure shows which one was extra.
     expect(started, `started: ${started.join(', ')}`).toHaveLength(4)
     for (const owner of owners.slice(3)) expect(started.filter(key => key.includes(`@${owner}:`))).toHaveLength(1)
     expect(started.some(key => key.endsWith(':1'))).toBe(false)
     const queued = await db.pool.query("select id from ci_runs where state='queued'")
     expect(queued.rows, `started: ${started.join(', ')}`).toHaveLength(4)
   } finally {
+    releaseStatus()
     await service?.close()
     await db.close()
   }

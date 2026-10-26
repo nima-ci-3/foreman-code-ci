@@ -1778,7 +1778,7 @@ export class HostCiService {
       const keys = new Set(computers.map(computer => computer.key))
       result.push(...await splitUnavailableGateParts(this.context, this.pool, [run], { ...capacity, computers,
         shards: new Map([...capacity.shards].filter(([key]) => keys.has(key))),
-        reservedCloud: reservedCloudSlotKeys(computers.filter(computer => capacity.shards.has(computer.key)), this.reservedCloudSlots) }))
+        reservedCloud: reservedCloudSlotKeys(computers, this.reservedCloudSlots) }))
     }
     return result
   }
@@ -1902,8 +1902,7 @@ export class HostCiService {
         ? { gate: true, scope: 'full' as const, integrationShards: run.integrationShards!, files: run.files }
         : affectedFiles
       const eligible = await this.schedulingFleet(computers, { mirrorName: run.ciMirror?.split('/')[1], snapshots })
-      const reservedCloud = reservedCloudSlotKeys(eligible.filter(computer => gateShards.has(computer.key)),
-        this.reservedCloudSlots)
+      const reservedCloud = reservedCloudSlotKeys(eligible, this.reservedCloudSlots)
       const order = eligible
         .filter(computer => runsOnCircleCi(run)
         || computer.hostRef.kind !== 'cloud' || computer.hostRef.provider !== 'circleci')
