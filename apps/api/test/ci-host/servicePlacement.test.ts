@@ -63,7 +63,9 @@ function fleet(records: CiRunRecord[], available: HostCiComputer[],
         .map(record => ({ id: record.id })) }
     }
     if (sql.startsWith('insert into ci_runs')) {
-      records.push(CiRunRecordSchema.parse(JSON.parse(parameters![3] as string)))
+      for (let offset = 0; offset < parameters!.length; offset += 10) {
+        records.push(CiRunRecordSchema.parse(JSON.parse(parameters![offset + 3] as string)))
+      }
       return { rows: [], rowCount: 1 }
     }
     if (sql.startsWith('update ci_runs')) {

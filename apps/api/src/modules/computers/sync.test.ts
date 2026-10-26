@@ -45,6 +45,7 @@ async function fixture() {
     grants: [{ actions: ['settings:update'], scope: {} }] }
   const principals = new Map([['writer', writer], ['reader', reader], ['update-only', updateOnly]])
   const identities = new Map<string, { target: unknown; identity: unknown }>()
+  const preferenceReads = { count: 0 }
   const preferences = new Map<string, { target: DeviceProvisioningTarget; revision: string; enabled: boolean }>()
   const workspaces = [{ id: 'workspace-a', name: 'Client/Web', active: true }, { id: 'workspace-b', name: 'Client-Web', active: true }]
   const hosts = [{ workspace_id: 'workspace-a', host: targets[1]!.hostRef,
@@ -66,7 +67,19 @@ async function fixture() {
         identity: JSON.parse(values[2] as string) })
     }
     const key = `${values[0]}:${values[1]}`
-    if (text.includes('select target,revision')) return { rows: preferences.has(key) ? [preferences.get(key)!] : [] }
+    if (text.includes('select workspace_id,host_key,target,revision')) {
+      preferenceReads.count++
+      return { rows: [...preferences.entries()].flatMap(([key, row]) => {
+        const workspace_id = workspaces.find(workspace => key.startsWith(`${workspace.id}:`))?.id
+        const host_key = workspace_id ? key.slice(workspace_id.length + 1) : ''
+        return (values[0] as string[]).includes(workspace_id ?? '') && (values[1] as string[]).includes(host_key)
+          ? [{ ...row, workspace_id, host_key }] : []
+      }) }
+    }
+    if (text.includes('select target,revision')) {
+      preferenceReads.count++
+      return { rows: preferences.has(key) ? [preferences.get(key)!] : [] }
+    }
     if (text.includes('insert into computer_sync_preferences')) {
       preferences.set(key, { target: JSON.parse(values[2] as string) as DeviceProvisioningTarget,
         revision: String(values[3]), enabled: values[4] as boolean })
@@ -97,7 +110,7 @@ async function fixture() {
     } }
   const createService = () => new ComputerSyncService(pool, mainId, () => endpoint, commands, computers[0])
   return { service: createService(), createService, targets, rest, computers, workspaces, hosts, devices,
-    writer, reader, principals, preferences, identities, denied, commands, pool, endpoint }
+    writer, reader, principals, preferences, preferenceReads, identities, denied, commands, pool, endpoint }
 }
 
 it('serves authenticated Agent context while optional shared-file installation is pending', async () => {
@@ -687,4 +700,15 @@ it('backs off shared-file polling failures and resets on success', async () => {
   vi.setSystemTime(Date.now() + 1)
   await expect(f.service.poll()).rejects.toThrow('Query read timeout')
   expect(failedAgain).toHaveBeenCalledTimes(2)
+})
+
+it('reads preferences once for all polling workspaces and once for a status page', async () => {
+  const f = await fixture()
+  for (let index = 0; index < 8; index++) f.workspaces.push({ id: `workspace-bulk-${index}`, name: 'Bulk', active: true })
+  await f.service.poll()
+  expect(f.preferenceReads.count).toBe(1)
+  const status = await f.service.read(f.reader, 'http', { target: f.targets[0] })
+  expect(status.folders).toHaveLength(10)
+  expect(status.folders.every(folder => folder.enabled && folder.revision === 0)).toBe(true)
+  expect(f.preferenceReads.count).toBe(2)
 })

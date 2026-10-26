@@ -31,28 +31,8 @@ function verifiedVersion(record: unknown): SkillVersion {
 export async function resolveAssignedSkills(client: SqlQuery, workspaceId: string, references: readonly AssignedSkill[],
   retained: readonly AssignedSkill[] = []): Promise<ResolvedSkill[]> {
   if (references.length > 100) throw new DomainError('SKILL_LIMIT_EXCEEDED', 'At most 100 skills can be assigned.', 400)
-  const seen = new Set<string>()
-  const resolved: ResolvedSkill[] = []
-  for (const reference of references) {
-    if (seen.has(reference.skillId)) throw new DomainError('SKILL_DUPLICATE', 'Assign only one version of each skill.', 400)
-    seen.add(reference.skillId)
-    // Share-lock the head so an archive cannot commit between this check and publication.
-    const head = (await client.query<{ archived_at: Date | null }>(
-      'select archived_at from workspace_skills where workspace_id=$1 and skill_id=$2 for share', [workspaceId, reference.skillId])).rows[0]
-    const result = await client.query<{ record: unknown }>(
-      'select record from workspace_skill_versions where workspace_id=$1 and skill_id=$2 and version=$3',
-      [workspaceId, reference.skillId, reference.version],
-    )
-    if (!head || !result.rows[0]) throw new DomainError('SKILL_VERSION_NOT_FOUND', `Skill '${reference.skillId}@${reference.version}' is not in this workspace's skills.`, 409)
-    if (head.archived_at && !retained.some((item) => item.skillId === reference.skillId && item.version === reference.version)) {
-      throw new DomainError('SKILL_ARCHIVED', `Skill '${reference.skillId}' is archived. Restore it before assigning it.`, 409)
-    }
-    const skill = SkillVersionSchema.parse(result.rows[0].record)
-    if (skill.workspaceId !== workspaceId || skill.skillId !== reference.skillId || skill.version !== reference.version
-      || skill.contentHash !== skillHash(skill.instructions)) throw new DomainError('SKILL_INTEGRITY_FAILED', 'The saved skill version failed its identity/integrity check.', 409)
-    resolved.push({ skillId: skill.skillId, version: skill.version, name: skill.name, instructions: skill.instructions, contentHash: skill.contentHash })
-  }
-  return resolved
+  return resolveSkillReferences(client, references.map(reference => ({ ...reference, workspaceId })),
+    retained.map(reference => ({ ...reference, workspaceId })))
 }
 
 /** For the application-level Operator, whose ordered references may span workspaces. */
@@ -60,13 +40,59 @@ export async function resolveWorkspaceSkills(client: pg.ClientBase, references: 
   retained: readonly WorkspaceSkillReference[] = []): Promise<ResolvedSkill[]> {
   if (references.length > 100) throw new DomainError('SKILL_LIMIT_EXCEEDED', 'At most 100 skills can be assigned.', 400)
   if (new Set(references.map((item) => JSON.stringify([item.workspaceId, item.skillId]))).size !== references.length) throw new DomainError('SKILL_DUPLICATE', 'Assign only one version of each skill.', 400)
-  const resolved: ResolvedSkill[] = []
-  for (const reference of references) {
-    const snapshots = await resolveAssignedSkills(client, reference.workspaceId, [{ skillId: reference.skillId, version: reference.version }],
-      retained.filter((item) => item.workspaceId === reference.workspaceId))
-    resolved.push(...snapshots.map((skill) => ({ ...skill, workspaceId: reference.workspaceId })))
+  return (await resolveSkillReferences(client, references, retained)).map((skill, index) =>
+    ({ ...skill, workspaceId: references[index]!.workspaceId }))
+}
+
+interface SkillReferenceRow {
+  workspace_id: string; skill_id: string; version: string; archived_at: Date | null; record: unknown
+}
+async function readSkillReferences(client: SqlQuery, references: readonly WorkspaceSkillReference[]) {
+  if (!references.length) return new Map<string, SkillReferenceRow>()
+  // Lock every existing head, including heads whose requested version is missing.
+  const rows = (await client.query<SkillReferenceRow>(`
+    select s.workspace_id,s.skill_id,r.version,s.archived_at,v.record
+    from jsonb_to_recordset($1::jsonb) as r(workspace_id text,skill_id text,version text,ordinal integer)
+    join workspace_skills s on s.workspace_id=r.workspace_id and s.skill_id=r.skill_id
+    left join workspace_skill_versions v on v.workspace_id=s.workspace_id and v.skill_id=s.skill_id and v.version=r.version
+    order by r.ordinal for share of s`, [JSON.stringify(references.map((reference, ordinal) => ({
+    workspace_id: reference.workspaceId, skill_id: reference.skillId, version: reference.version, ordinal })))])).rows
+  return new Map(rows.map(row => [JSON.stringify([row.workspace_id, row.skill_id, row.version]), row]))
+}
+
+/** Resolve node reference sets in one read while retaining each node's archive exceptions and validation order. */
+export async function resolveAssignedSkillSets(client: SqlQuery, workspaceId: string,
+  sets: { references: readonly AssignedSkill[]; retained?: readonly AssignedSkill[] }[]): Promise<ResolvedSkill[][]> {
+  const indexed = await readSkillReferences(client, sets.flatMap(set =>
+    set.references.map(reference => ({ ...reference, workspaceId }))))
+  const result: ResolvedSkill[][] = []
+  for (const set of sets) {
+    if (set.references.length > 100) throw new DomainError('SKILL_LIMIT_EXCEEDED', 'At most 100 skills can be assigned.', 400)
+    result.push(await resolveSkillReferences(client, set.references.map(reference => ({ ...reference, workspaceId })),
+      (set.retained ?? []).map(reference => ({ ...reference, workspaceId })), indexed))
   }
-  return resolved
+  return result
+}
+
+async function resolveSkillReferences(client: SqlQuery, references: readonly WorkspaceSkillReference[],
+  retained: readonly WorkspaceSkillReference[], snapshots?: Map<string, SkillReferenceRow>): Promise<ResolvedSkill[]> {
+  const indexed = snapshots ?? await readSkillReferences(client, references)
+  const seen = new Set<string>()
+  return references.map(reference => {
+    const { workspaceId } = reference
+    const key = JSON.stringify([workspaceId, reference.skillId])
+    if (seen.has(key)) throw new DomainError('SKILL_DUPLICATE', 'Assign only one version of each skill.', 400)
+    seen.add(key)
+    const row = indexed.get(JSON.stringify([workspaceId, reference.skillId, reference.version]))
+    if (!row || !row.record) throw new DomainError('SKILL_VERSION_NOT_FOUND', `Skill '${reference.skillId}@${reference.version}' is not in this workspace's skills.`, 409)
+    if (row.archived_at && !retained.some(item => item.workspaceId === workspaceId && item.skillId === reference.skillId && item.version === reference.version)) {
+      throw new DomainError('SKILL_ARCHIVED', `Skill '${reference.skillId}' is archived. Restore it before assigning it.`, 409)
+    }
+    const skill = SkillVersionSchema.parse(row.record)
+    if (skill.workspaceId !== workspaceId || skill.skillId !== reference.skillId || skill.version !== reference.version
+      || skill.contentHash !== skillHash(skill.instructions)) throw new DomainError('SKILL_INTEGRITY_FAILED', 'The saved skill version failed its identity/integrity check.', 409)
+    return { skillId: skill.skillId, version: skill.version, name: skill.name, instructions: skill.instructions, contentHash: skill.contentHash }
+  })
 }
 
 interface HeadRow {

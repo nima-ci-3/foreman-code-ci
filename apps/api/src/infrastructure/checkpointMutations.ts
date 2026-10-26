@@ -39,10 +39,12 @@ export class CheckpointMutationSaver extends LangGraphPostgresSaver {
     const serializedCheckpoint = this.dumpCheckpoint(checkpoint)
     await retryDatabaseTimeout(() => withTransaction(this.mutationPool, async client => {
       await this.checkOwner(client, config)
-      for (const blob of blobs) {
+      for (let offset = 0; offset < blobs.length; offset += 1000) {
+        const batch = blobs.slice(offset, offset + 1000)
+        const values = batch.map((_, row) => `(${Array.from({ length: 6 }, (_value, column) => `$${row * 6 + column + 1}`).join(',')})`).join(',')
         await client.query(`insert into "${this.mutationOptions.schema}".checkpoint_blobs
-          (thread_id,checkpoint_ns,channel,version,type,blob) values($1,$2,$3,$4,$5,$6)
-          on conflict(thread_id,checkpoint_ns,channel,version) do nothing`, blob)
+          (thread_id,checkpoint_ns,channel,version,type,blob) values ${values}
+          on conflict(thread_id,checkpoint_ns,channel,version) do nothing`, batch.flat())
       }
       await client.query(`insert into "${this.mutationOptions.schema}".checkpoints
         (thread_id,checkpoint_ns,checkpoint_id,parent_checkpoint_id,checkpoint,metadata)
@@ -63,12 +65,16 @@ export class CheckpointMutationSaver extends LangGraphPostgresSaver {
     const dumped = await this.dumpWrites(threadId, namespace, checkpointId, taskId, writes)
     const upsert = writes.every(([channel]) => channel in WRITES_IDX_MAP)
     const conflict = upsert ? 'do update set channel=excluded.channel,type=excluded.type,blob=excluded.blob' : 'do nothing'
+    // A reserved channel may occur more than once; sequential upserts retained the last value.
+    const rows = upsert ? [...new Map(dumped.map(write => [write[4], write])).values()] : dumped
     await retryDatabaseTimeout(() => withTransaction(this.mutationPool, async client => {
       await this.checkOwner(client, config)
-      for (const write of dumped) {
+      for (let offset = 0; offset < rows.length; offset += 1000) {
+        const batch = rows.slice(offset, offset + 1000)
+        const values = batch.map((_, row) => `(${Array.from({ length: 8 }, (_value, column) => `$${row * 8 + column + 1}`).join(',')})`).join(',')
         await client.query(`insert into "${this.mutationOptions.schema}".checkpoint_writes
-          (thread_id,checkpoint_ns,checkpoint_id,task_id,idx,channel,type,blob) values($1,$2,$3,$4,$5,$6,$7,$8)
-          on conflict(thread_id,checkpoint_ns,checkpoint_id,task_id,idx) ${conflict}`, write)
+          (thread_id,checkpoint_ns,checkpoint_id,task_id,idx,channel,type,blob) values ${values}
+          on conflict(thread_id,checkpoint_ns,checkpoint_id,task_id,idx) ${conflict}`, batch.flat())
       }
     }), { signal: config.signal })
   }

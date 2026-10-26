@@ -247,7 +247,7 @@ export async function readWorkflowNativeNotSubmitted(sql: SqlQuery,
   await assertRepeatCanonicalReceipt(sql, notSubmittedReceipt(row, reservation))
   return structuredClone(row.transition!)
 }
-function notSubmittedReceipt(row: NativeEntryRow, reservation: WorkflowNativeReservation): RepeatCanonicalReceipt {
+export function notSubmittedReceipt(row: NativeEntryRow, reservation: WorkflowNativeReservation): RepeatCanonicalReceipt {
   if (row.phase !== 'not_submitted' || row.transition?.phase !== 'not_submitted'
     || !sameRepeatValue(row.transition.reservation, reservation) || !row.source_id || !row.source_digest) return conflict()
   return { scope: reservation.scope,

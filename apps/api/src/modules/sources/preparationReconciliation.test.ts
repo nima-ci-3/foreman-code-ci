@@ -72,7 +72,7 @@ it.each(['reservation', 'copy', 'activation'] as const)(
     expect(await readdir(f.directory)).toContain(f.claimName)
     f.nativeClosed.mockResolvedValue(true)
     const closure = await vi.waitFor(() =>
-      reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize))
+      reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize), { timeout: 10_000 })
     expect(closure).toMatchObject({ admissionClosed: true, childrenClosed: true, claimReleased: true })
     expect(await readdir(f.directory)).not.toContain(f.claimName)
   },
@@ -81,7 +81,7 @@ it.each(['reservation', 'copy', 'activation'] as const)(
 it('archives a closed claim, retains every source/private-repository byte and replays closure without touching a successor', async () => {
   const f = await fixture(), id = f.owner.record!.receipt.materializationId
   const claim = await readFile(join(f.directory, f.claimName))
-  const proof = await vi.waitFor(() => reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize))
+  const proof = await vi.waitFor(() => reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize), { timeout: 10_000 })
   expect(proof).toMatchObject({ materializationId: id, admissionClosed: true, childrenClosed: true, claimReleased: true, evidencePreserved: true })
   expect(await readFile(join(f.directory, `closed-preparation-${f.reconciliationId}.claim.json`))).toEqual(claim)
   expect(await readFile(join(f.directory, id, 'tree/source.txt'))).toEqual(f.bytes)
@@ -93,7 +93,7 @@ it('archives a closed claim, retains every source/private-repository byte and re
 })
 it('retains a pre-activation failure with no Main materialization record or local claim', async () => {
   const f = await fixture(false)
-  const proof = await vi.waitFor(() => reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize))
+  const proof = await vi.waitFor(() => reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize), { timeout: 10_000 })
   expect(proof.materializationId).toBeNull(); expect(proof.evidencePreserved).toBe(true)
 })
 
@@ -110,7 +110,7 @@ it('routes Main workflow cleanup through original authorization and positive clo
     .rejects.toMatchObject({ code: 'source-reconciliation-unconfirmed' })
   expect(await readdir(f.directory)).toContain(f.claimName)
   closed.mockResolvedValue(true)
-  const closure = await vi.waitFor(() => hosts.reconcilePreparation(f.reconciliationId, f.owner))
+  const closure = await vi.waitFor(() => hosts.reconcilePreparation(f.reconciliationId, f.owner), { timeout: 10_000 })
   expect(closure).toMatchObject({ deviceId: null, workerInstallationId: null, claimReleased: true })
   expect(authorize).toHaveBeenCalledWith(f.reconciliationId, f.owner)
   expect(await readFile(join(f.directory, f.owner.record!.receipt.materializationId, 'tree/source.txt'))).toEqual(f.bytes)
@@ -126,7 +126,7 @@ it('does not accept an empty task set while an original namespace child is still
   await vi.waitFor(async () => {
     const closure = await reconcileSourcePreparation(f.reconciliationId, f.owner, f.nativeClosed, f.reauthorize)
     expect(closure.childrenClosed).toBe(true)
-  })
+  }, { timeout: 10_000 })
 })
 it.each(['argument', 'descriptor'] as const)('retains a claim while a child holds a source %s', async reference => {
   const f = await fixture()

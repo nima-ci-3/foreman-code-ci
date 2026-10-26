@@ -4,3 +4,4 @@ export { assertGraphTransaction, withExclusiveGraphConnection } from './connecti
 export { didGraphTransactionCommit, isGraphTransactionFinalizing } from './connection.js'
 export { RunGraphError } from './errors.js'
 export { parseNativeCheckpoint } from './nativeCheckpoint.js'
+export { assertRepeatCanonicalReceiptRows, type RepeatCanonicalReceiptRow } from './repeatReceipts.js'

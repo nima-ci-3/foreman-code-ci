@@ -51,7 +51,9 @@ function fixture(audience: 'worker' | 'operator' = 'worker') {
     if (sql.includes('from workspaces')) return { rows: [{ record: { id: 'workspace', name: 'CI fixture',
       repository: { provider: 'github', owner: 'example', name: 'project', defaultBranch: 'main' } } }], rowCount: 1 }
     if (sql.startsWith('insert into ci_runs')) {
-      records.push(CiRunRecordSchema.parse(JSON.parse(values[3] as string)))
+      for (let offset = 0; offset < values.length; offset += 10) {
+        records.push(CiRunRecordSchema.parse(JSON.parse(values[offset + 3] as string)))
+      }
     }
     if (sql.includes('from ci_runs where group_id=$1')) {
       const rows = records.filter(run => run.groupId === values[0] && run.workspaceId === values[1])

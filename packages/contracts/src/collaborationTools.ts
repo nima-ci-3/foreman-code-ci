@@ -29,6 +29,19 @@ export function memoryBoardTools(access: MemoryBoardToolAccess): CollaborationAg
       && (access === 'write' || COLLABORATION_AGENT_TOOLS[name].readOnly));
 }
 
+/** Owner rule: a workflow's Kanban is written by its Master when it has one, else by its Orchestrators, else by its
+ * Workers. Everyone else reads it. */
+export function maySaveToKanban(role: string, workflowRoles: readonly string[]): boolean {
+  const writer = workflowRoles.includes('master') ? 'master' : workflowRoles.includes('orchestrator') ? 'orchestrator' : 'coder';
+  return role === writer;
+}
+
+/** Removes the Kanban write tools, leaving reads. */
+export function withoutKanbanWrites<T extends string>(tools: readonly T[]): T[] {
+  const writes = new Set<string>(memoryBoardTools('write').filter((tool) => !COLLABORATION_AGENT_TOOLS[tool].readOnly));
+  return tools.filter((tool) => !writes.has(tool));
+}
+
 /** Every new Agent can keep its workflow's Kanban; read-only Agents are narrowed to read at run time. */
 export function newAgentMemoryBoardAccess(): MemoryBoardToolAccess {
   return 'write';

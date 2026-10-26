@@ -2,16 +2,15 @@ import { expect } from 'vitest'
 import type pg from 'pg'
 import { HarnessExecutionSchema } from '@foreman-code/contracts'
 import { makeCurrentWorkflowFixture } from '@foreman-code/contracts/current'
-import { hasSaveNativeSettlement } from '../../src/modules/graph-drafts/saveNativeSettlement.js'
+import { readSaveNativeSettlements } from '../../src/modules/graph-drafts/saveNativeSettlement.js'
 import type { SqlQuery } from '../../src/infrastructure/transaction.js'
 import { nativeEntrySourceId, workflowNativeReservation, type WorkflowNativeEntryRecord } from '../../src/modules/runs/workflowNativeEntry.js'
 import { repeatDigest } from '../../src/modules/runs/repeatResolution.js'
 import { recoveryDatabase, recoveryIdentity } from './recoveryExecution.testSupport.js'
 
 export type SaveNativeProof = 'closed' | 'recovered' | 'unbound-disposal' | 'unbound-recovery' | 'not-submitted' | 'none'
-/** Query-boundary rows only, not physical/native evidence. Every read invokes
- * the production canonical readers; unknown SQL fails instead of returning an
- * empty success. The caller may use its own exact immutable snapshot. */
+/** Query-boundary rows only, not physical/native evidence. The production
+ * validators check the scripted batch evidence against the exact snapshot. */
 export function saveNativeProtocolFixture(proof: SaveNativeProof,
   f = makeCurrentWorkflowFixture('save-native-proof', 'single')) {
   const unbound = ['unbound-disposal', 'unbound-recovery', 'not-submitted', 'none'].includes(proof)
@@ -45,34 +44,34 @@ export function saveNativeProtocolFixture(proof: SaveNativeProof,
   const result = <R extends pg.QueryResultRow>(rows: unknown[]): pg.QueryResult<R> => ({
     rows: structuredClone(rows) as R[], rowCount: rows.length, command: 'SELECT', oid: 0, fields: [],
   })
+  let evidenceRead = 0
   const sql: SqlQuery = { async query<R extends pg.QueryResultRow>(text: string, values: unknown[] = []) {
     statements.push(text)
     try {
-      expect(text).toMatch(/^select\b/i)
-      expect(text).not.toMatch(/\b(insert|update|delete|begin|commit|rollback)\b/i)
-      if (text.includes('o.record as occurrence_record')) {
-        expect(values[0]).toBe(f.scope.runId)
-        const execution = db.state.execution
+      const execution = db.state.execution
+      if (values.length === 2) {
+        expect(values[0]).toEqual([f.scope.runId])
+        evidenceRead = 0
         return result<R>(values[1] ? [] : [{ id: execution.id, run_id: execution.runId, workflow_node_id: execution.workflowNodeId,
           agent_id: execution.agentId, attempt: execution.attempt, record: execution, repeat_occurrence_id: state.occurrenceId,
-          occurrence_record: null, native_reference: db.state.session }])
+          occurrence_record: null, native_reference: db.state.session,
+          entry: state.entry ? entry : null, entry_receipts: state.receipt ? [receipt] : [] }])
       }
-      if (text.includes('select phase,reservation,reservation_digest,transition,source_id,source_digest')) {
-        expect(values).toEqual([db.state.execution.id, f.scope.runId])
-        return result<R>(state.entry ? [entry] : [])
-      }
-      if (text.includes('join run_graph_sources s')) {
-        expect(values).toEqual([f.scope.runId, 'execution', entry.source_id, '1', null, null])
-        return result<R>(state.receipt ? [receipt] : [])
-      }
-      return await db.connection.query<R>(text, values)
+      expect(values).toEqual([[execution.id]])
+      evidenceRead++
+      if (evidenceRead === 1) return result<R>([{ id: execution.id, native: null, dispatch: null, parent: null, source: null }])
+      expect(evidenceRead).toBe(2)
+      const lifetime = db.state.lifetime
+      const recovery = db.state.proof && lifetime && db.state.proof.generation === lifetime.generation
+        && !lifetime.prior_unclosed ? db.state.proof : null
+      return result<R>([{ id: execution.id, record: execution, reference: db.state.session,
+        bound: Boolean(db.state.session), closure: lifetime ?? null, recovery }])
     } catch (error) { queryFailures.push(error); throw error }
   } }
   return { f, db, sql, state, entry, receipt, statements,
-    check: () => hasSaveNativeSettlement(sql, f.scope, f.version),
+    check: async () => (await readSaveNativeSettlements(sql, [{ scope: f.scope, version: f.version }])).get(f.scope.runId),
     async close() {
-      // Receipt readers deliberately translate unknown failures into a denial.
-      // A stale SQL script must still FAIL the test, not pass a negative case.
+      // A stale query script must fail rather than accidentally pass a denial case.
       try { expect(queryFailures).toEqual([]) } finally { await db.owner.release() }
     } }
 }

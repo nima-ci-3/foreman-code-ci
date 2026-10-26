@@ -32,10 +32,11 @@ async function writeItem(sql: SqlQuery, kind: 'message' | 'tool', item: Subagent
   [item.subagentId, kind, item.id, item.revision, JSON.stringify(item)])
 }
 export async function applySubagentChanges(sql: SqlQuery, context: SubagentProjectionContext, event: HarnessNativeEvent,
-  changes: readonly SubagentChange[]): Promise<void> {
+  changes: readonly SubagentChange[], children?: RunSubagent[],
+  onLifecycle?: (child: RunSubagent, change: SubagentChange) => void, receipts?: Map<string, string>): Promise<void> {
   const digest = subagentId(event)
+  children ??= await readChildren(sql, context.runId, context.parentExecutionId)
   for (const change of changes) {
-    const children = await readChildren(sql, context.runId, context.parentExecutionId)
     let child = children.find(value => (value.native.childSessionId ?? value.native.agentId) === change.childId)
     if (change.kind === 'discover') {
       const parent = change.parentSessionId === context.parentSessionId ? undefined
@@ -61,12 +62,14 @@ export async function applySubagentChanges(sql: SqlQuery, context: SubagentProje
           coverage: { transcript: 'unavailable', tools: 'unavailable', gaps: true }, capabilities: subagentCapabilities(change.nativeMode) })
         await sql.query(`insert into run_subagents(id,run_id,parent_execution_id,native_mode,parent_native_session_id,provider_child_id,parent_subagent_id,revision,record)
           values($1,$2,$3,$4,$5,$6,$7,1,$8::jsonb)`, [id, context.runId, context.parentExecutionId, change.nativeMode, change.parentSessionId, change.childId, parent?.id ?? null, JSON.stringify(child)])
+        children.push(child)
       }
     }
     if (!child) continue
-    const receipt = (await sql.query<{ digest: string }>('select digest from run_subagent_sources where subagent_id=$1 and execution_id=$2 and sequence=$3', [child.id, event.executionId, event.sequence])).rows[0]
-    if (receipt) {
-      if (receipt.digest !== digest) throw new DomainError('SUBAGENT_SOURCE_CONFLICT', 'The durable source identity changed.', 409)
+    const receiptKey = JSON.stringify([child.id, event.sequence])
+    const receipt = receipts ? receipts.get(receiptKey) : (await sql.query<{ digest: string }>('select digest from run_subagent_sources where subagent_id=$1 and execution_id=$2 and sequence=$3', [child.id, event.executionId, event.sequence])).rows[0]?.digest
+    if (receipt !== undefined) {
+      if (receipt !== digest) throw new DomainError('SUBAGENT_SOURCE_CONFLICT', 'The durable source identity changed.', 409)
       continue
     }
     const next = structuredClone(child)
@@ -96,8 +99,9 @@ export async function applySubagentChanges(sql: SqlQuery, context: SubagentProje
         if (terminal(change.status)) next.finishedAt = newTurn || next.status !== child.status ? event.occurredAt : child.finishedAt ?? event.occurredAt
         if (change.status !== 'unknown') await sql.query('update run_subagents set lifecycle_at=$2 where id=$1', [child.id, event.occurredAt])
       }
-      await sql.query('insert into run_subagent_lifecycle(subagent_id,execution_id,sequence,fact) values($1,$2,$3,$4::jsonb) on conflict do nothing',
+      const lifecycle = await sql.query('insert into run_subagent_lifecycle(subagent_id,execution_id,sequence,fact) values($1,$2,$3,$4::jsonb) on conflict do nothing',
         [child.id, event.executionId, event.sequence, JSON.stringify({ ...change, occurredAt: event.occurredAt, source: source(event) })])
+      if (lifecycle.rowCount) onLifecycle?.(child, change)
     } else {
       const kind = change.kind
       const nativeId = change.kind === 'message' ? [change.nativeMessageId, change.blockId ?? null] : [change.nativeToolId]
@@ -135,6 +139,8 @@ export async function applySubagentChanges(sql: SqlQuery, context: SubagentProje
       }
     }
     await writeChild(sql, next)
+    children[children.findIndex(value => value.id === child.id)] = next
     await sql.query('insert into run_subagent_sources(subagent_id,execution_id,sequence,digest) values($1,$2,$3,$4)', [child.id, event.executionId, event.sequence, digest])
+    receipts?.set(receiptKey, digest)
   }
 }

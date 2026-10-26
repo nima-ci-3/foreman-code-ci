@@ -11,6 +11,8 @@ import { identity, openPrivateRoot } from './privateFilesystem.js'
 import { persistentFixtureRoot } from '../../../test/helpers/fixtureStorage.js'
 import { gitFixtureEnvironment } from '../../../test/helpers/gitFixture.js'
 import { fetchingApi, interruptedFetchWriter, makeStale } from '../../../test/helpers/interruptedGitFetch.js'
+import { runGitWithCacheStorage } from './gitCacheStorage.js'
+import { runGitProcess } from './gitProcess.js'
 
 const disk = vi.hoisted(() => ({ full: false }))
 const filesystemRace = vi.hoisted(() => ({ beforeLstat: undefined as
@@ -134,6 +136,42 @@ it('acquires a tiny accepted tree without its large history and accounts retaine
   try { expect(stored.filesystem).toEqual(await identity(handle)) }
   finally { await handle.close() }
 })
+
+it('compacts a cache repository with 64 packs into one pack on the next fetch', async () => {
+  const f = await fixture()
+  const signal = AbortSignal.timeout(30_000)
+  const clone = await ensureCommit(f.ports, 'fixture/project', f.commit, signal)
+  git(clone, 'config', 'gc.auto', '0')
+  git(clone, 'config', 'maintenance.auto', 'false')
+  git(clone, 'reset', '--hard', 'HEAD')
+  // Geometric repacking compares object counts: 512 seed blobs outweigh 63 three-object packs.
+  await mkdir(join(clone, 'seed'))
+  for (let object = 0; object < 512; object++) {
+    await writeFile(join(clone, 'seed', `${object}.txt`), `seed object ${object}`)
+  }
+  git(clone, 'add', '.')
+  git(clone, 'commit', '-qm', 'Seed pack')
+  git(clone, 'repack', '-a', '-d', '-l')
+  for (let pack = 1; pack < 64; pack++) {
+    await writeFile(join(clone, 'source.txt'), `retained result ${pack}`)
+    git(clone, 'add', '.')
+    git(clone, 'commit', '-qm', `Result ${pack}`)
+    git(clone, 'repack', '-d', '-l')
+  }
+  const head = git(clone, 'rev-parse', 'HEAD')
+  const packs = async () => (await readdir(join(clone, '.git', 'objects', 'pack')))
+    .filter(name => name.endsWith('.pack'))
+  expect(await packs()).toHaveLength(64)
+
+  const result = await runGitWithCacheStorage(f.cache, ['fetch', 'origin'], { cwd: clone, signal },
+    (args, options) => runGitProcess(args, options, gitFixtureEnvironment()))
+
+  expect(result.code, result.stderr).toBe(0)
+  expect(await packs()).toHaveLength(1)
+  expect(git(clone, 'rev-parse', 'HEAD')).toBe(head)
+  expect(git(clone, 'show', 'HEAD:source.txt')).toBe('retained result 63')
+  expect(git(clone, 'show', 'HEAD:seed/511.txt')).toBe('seed object 511')
+}, 30_000)
 
 it('bounds a later fetch, cleans its partial transfer, and preserves active work and result branches', async () => {
   const f = await fixture()

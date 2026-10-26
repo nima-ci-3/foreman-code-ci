@@ -1,5 +1,5 @@
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
-import { isReadOnlyHarnessConfiguration, COLLABORATION_AGENT_TOOLS, memoryBoardTools, RecordedHarnessConfigurationSchema } from '@foreman-code/contracts'
+import { isReadOnlyHarnessConfiguration, COLLABORATION_AGENT_TOOLS, memoryBoardTools, maySaveToKanban, RecordedHarnessConfigurationSchema, withoutKanbanWrites } from '@foreman-code/contracts'
 import { browserAgentTools } from '../collaboration/index.js'
 import { readConversationCredential } from '../access/conversationCredentials.js'
 import {
@@ -192,7 +192,13 @@ export class PostgresAppInteractionService implements AppInteractionService {
       if (!operation) return true
       return false
     })
-    return { role, tools, ...(subject ? { subject } : {}) }
+    const roles = await this.pool.query<{ role: string | null }>(
+      `select c.record->>'productRole' as role from worker_credential_bindings b join runs r on r.id=b.run_id
+         join lateral jsonb_each_text(r.record->'agentConfigurationVersionIds') ids on true
+         join agent_configuration_versions c on c.id=ids.value
+       where b.principal_id=$1 and b.agent_id=$2 and b.revoked_at is null`, [principal.id, principal.agentId])
+    const writer = maySaveToKanban(role, roles.rows.flatMap(value => value.role ? [value.role] : []))
+    return { role, tools: writer ? tools : withoutKanbanWrites(tools), ...(subject ? { subject } : {}) }
   }
 
   async canRead(principal: ManagementPrincipal): Promise<boolean> {

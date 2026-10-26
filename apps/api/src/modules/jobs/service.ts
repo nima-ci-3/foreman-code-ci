@@ -445,9 +445,7 @@ export class JobService {
       [...filters, input.historyBeforeSequence ?? null, input.historyLimit + 1])).rows
       const hasMore = history.length > input.historyLimit
       const historyTickets = history.slice(0, input.historyLimit).map(row => JobQueueTicketSchema.parse(row.record))
-      const tickets: JobQueueTicket[] = []
-      for (const row of rows) tickets.push(await this.repository.queuePosition(sql, JobQueueTicketSchema.parse(row.record)))
-      for (const ticket of historyTickets) tickets.push(await this.repository.queuePosition(sql, ticket))
+      const tickets = await this.repository.queuePositions(sql, [...rows.map(row => JobQueueTicketSchema.parse(row.record)), ...historyTickets])
       return JobQueuePageSchema.parse({ tickets,
         nextHistoryCursor: hasMore ? historyTickets.at(-1)!.enqueueSequence : null })
     }, source, scope)

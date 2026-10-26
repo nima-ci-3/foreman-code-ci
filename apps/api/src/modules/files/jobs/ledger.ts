@@ -29,10 +29,12 @@ export class PostgresJobPublicationLedger implements JobPublicationLedger {
         and f.scope_kind='job_execution' and f.workspace_id=$1 and f.job_execution_id=$2 and a.state='finalized'
       order by p.record->>'path',p.request_id limit 65`,[workspaceId,executionId])
     if (rows.rows.length > 64) throw new DomainError('JOB_OUTPUT_MANIFEST_OVERFLOW','Job publication manifest exceeds its accepted output count.',409)
+    const snapshots = new Map((await this.files.readMany(rows.rows.map(row => row.record.ref), query))
+      .map(stored => [JSON.stringify([stored.value.file.fileId, stored.value.revision.revisionId]), stored]))
     const output = []
     for (const row of rows.rows) {
       const link = row.record
-      const stored = await this.files.read(link.ref.fileId,link.ref.revisionId,query)
+      const stored = snapshots.get(JSON.stringify([link.ref.fileId, link.ref.revisionId]))
       if (!stored) throw new DomainError('JOB_ARTIFACT_NOT_FOUND','The retained canonical artifact metadata is missing.',410)
       const scope = JobExecutionFileScopeSchema.parse(stored.value.file.scope)
       if (scope.workspaceId !== workspaceId || scope.jobExecutionId !== executionId) throw new DomainError('JOB_ARTIFACT_SCOPE_CONFLICT','The artifact does not belong to the requested execution.',409)

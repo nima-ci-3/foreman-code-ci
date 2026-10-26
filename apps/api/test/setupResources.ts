@@ -7,3 +7,5 @@ installTestConnectionGuard()
 recordIntegrationStartup('worker-setup')
 // Production retries wait 10 s, 30 s, then 60 s; tests keep the attempt order without the wait.
 process.env.FOREMAN_EXECUTION_RETRY_BACKOFF_MS ??= '20'
+// Private roots refuse group-writable ancestors, so fixtures need CI's umask; desktop shells default to 0002.
+process.umask(0o022)
