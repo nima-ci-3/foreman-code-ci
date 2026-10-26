@@ -25,7 +25,7 @@ export const privateCanary = 'ENG04-PRIVATE-INPUT-MUST-NOT-REACH-GRAPH'
  * SQL receipts/audit and canonical publication are actual production services. */
 export async function graphFixture(db: GraphTestDatabase, options: { insert?: boolean; qualifiedReads?: boolean;
   form?: CurrentFixtureForm; handoffs?: boolean; maxNodeExecutions?: number; intervalEverySeconds?: number;
-  harness?: AgentConfigurationVersion['harness']; nodeToolOverrides?: ForemanToolOverride[] } = {}) {
+  harness?: AgentConfigurationVersion['harness']; nodeToolOverrides?: ForemanToolOverride[]; initialPrompt?: string } = {}) {
   const f = makeCurrentWorkflowFixture(randomUUID(), options.form ?? 'repeat')
   if (options.harness) {
     for (const configuration of f.configurations) configuration.harness = structuredClone(options.harness)
@@ -82,6 +82,7 @@ export async function graphFixture(db: GraphTestDatabase, options: { insert?: bo
         // exact creation stamps; publication assigns the first immutable V3.
         graph: { ...f.version.definition,
           nodes: f.version.definition.nodes.map((node, index) => ({ ...node,
+            ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
             ...(options.nodeToolOverrides?.[index] ? { graphqlTools: options.nodeToolOverrides[index] } : {}),
           })),
           ...(options.maxNodeExecutions === undefined ? {} : {
