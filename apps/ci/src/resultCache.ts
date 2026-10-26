@@ -178,10 +178,15 @@ const TEST_DOUBTS: [RegExp, string][] = [
 const testSupport = /(?:^|\/)(?:test|tests|__tests__|fixtures?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|test-?support|test-?utils/i
 const pathLiteral = /['"`]((?:\.{1,2}\/)*[A-Za-z0-9_@-][A-Za-z0-9_.@-]*(?:\/[A-Za-z0-9_.@-]+)+)['"`]/g
 const scriptFile = /\.[cm]?[jt]sx?$/
+/** Another test in a named directory (fixture tests excepted: runner tests execute those). */
+const listedTest = /^(?!.*(?:^|\/)fixtures?\/).*\.(?:test|spec)\.[cm]?[jt]sx?$/
 /** Marks an edge whose file joins the key by content only (a file inside a named directory). */
 const DATA = '\0data:'
 /** Marks an edge whose imports are followed without doubts (a script inside a named directory). */
 const LOOSE = '\0loose:'
+/** Marks a test file a named directory lists; it joins the key by name only (`foreman/no-source-text-tests` forbids
+ * tests from reading another test's source, so only the file's presence can matter). */
+const LISTED = '\0listed:'
 /** Marks an installed package a file imports (`<project>\t<name>`); it joins the key by its locked dependency tree. */
 const PACKAGE = '\0package:'
 /** Marks a project's development tools (test runner, loaders); they join the key by their locked dependency trees. */
@@ -424,7 +429,7 @@ export class CiResultKeys {
             files.add(file.slice(DATA.length))
             return
           }
-          if (file.startsWith(PACKAGE)) {
+          if (file.startsWith(PACKAGE) || file.startsWith(LISTED)) {
             files.add(file)
             return
           }
@@ -485,7 +490,7 @@ export class CiResultKeys {
     for (const input of declared ? analysis.declaredInputs : []) {
       const targets = this.computedTarget(file, input)
       const named = targets.length ? targets.filter((target): target is string => target !== true)
-        : this.namedFiles(file, input)
+        : this.namedFiles(file, input, true)
       if (!targets.length && !named.length) throw new CacheDoubt(`${file} declares the input ${input}, which is not a repository path or pinned package.`)
       edges.push(...named.map(path => path.startsWith('\0') ? path : `${scriptFile.test(path) ? LOOSE : DATA}${path}`))
     }
@@ -588,17 +593,21 @@ export class CiResultKeys {
     return resolveImport(file, `./${posix.relative(posix.dirname(file), target)}`, this.tree.blobs, {})
   }
 
-  private namedFiles(file: string, literal: string): string[] {
+  /** Repository files a literal names. `declared` inputs (`ci-key-inputs`) may name the project itself. */
+  private namedFiles(file: string, literal: string, declared = false): string[] {
     const project = projectOf(file)
     const candidates = literal.startsWith('.') ? [posix.join(posix.dirname(file), literal)] : [literal, `${project}/${literal}`]
     const named: string[] = []
     for (const candidate of candidates) {
       if (this.tree.blobs.has(candidate)) named.push(candidate)
+      // The project or a directory above it (`resolve('../..')`) is a base for paths, not data: walking it put the
+      // whole repository in the keys of every test whose setup names the repository root.
+      else if (!declared && (candidate === project || project.startsWith(`${candidate}/`))) continue
       else if (this.directories.has(candidate)) {
         // Every file in a named directory joins the key by content; its scripts may be run, so their imports are
         // followed too, loosely like the harness's (what resolves joins the key, nothing doubts).
         const inside = [...this.tree.blobs.keys()].filter(path => path.startsWith(`${candidate}/`))
-        named.push(...inside.map(path => `${scriptFile.test(path) ? LOOSE : DATA}${path}`))
+        named.push(...inside.map(path => `${listedTest.test(path) ? LISTED : scriptFile.test(path) ? LOOSE : DATA}${path}`))
       }
     }
     return named

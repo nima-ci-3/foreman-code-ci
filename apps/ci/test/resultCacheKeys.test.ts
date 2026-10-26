@@ -219,3 +219,34 @@ it('changes only the keys of tests that import a package whose locked tree chang
   const [, schemaNewRunner] = await keysOf(lock('8.1.0', '4.1.0'))
   expect(schemaNewRunner).not.toBe(schema)
 })
+
+it('treats the repository root a test setup resolves as a base, not as files the test reads', async () => {
+  // Production: setupCoverage.ts's `resolve('../..')` put all 5,422 repository files in 178 tests' keys, so editing
+  // any other test file reran them.
+  const files = { ...base,
+    'apps/api/test/setupCoverage.ts': "import { resolve } from 'node:path'\nexport const root = resolve('../..')\n",
+    'apps/api/test/covered.test.ts': "import { root } from './setupCoverage.js'\nexport const value = root\n",
+    'apps/api/test/other.test.ts': 'export const other = 1\n' }
+  const keyOf = async (changes: Record<string, string>) => (await (await CiResultKeys.create(tree({ ...files, ...changes }),
+    AbortSignal.timeout(10_000))).key('apps/api/test/covered.test.ts', 'unit', 'unit-api')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'apps/api/test/other.test.ts': 'export const other = 2\n' })).toBe(first)
+})
+
+it('keys a named test directory on the names of its tests, not their source', async () => {
+  // Production: a fixture string "apps/api/test" in cloud.testSupport.ts put the source of ~2,200 tests in the keys
+  // of 74 tests; editing any test reran them all. Adding or removing a test there still changes the key.
+  const files = { ...base,
+    'apps/api/test/ci-host/support.ts': "export const repository = { 'apps/api/test': 'fixture' }\n",
+    'apps/api/test/ci-host/one.test.ts': "import { repository } from './support.js'\nexport const value = repository\n",
+    'apps/api/test/two.test.ts': 'export const two = 1\n',
+    'apps/api/test/data.json': '{"a":1}\n' }
+  const keyOf = async (changes: Record<string, string>) => (await (await CiResultKeys.create(tree({ ...files, ...changes }),
+    AbortSignal.timeout(10_000))).key('apps/api/test/ci-host/one.test.ts', 'unit', 'unit-api')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'apps/api/test/two.test.ts': 'export const two = 2\n' })).toBe(first)
+  expect(await keyOf({ 'apps/api/test/three.test.ts': 'export const three = 3\n' })).not.toBe(first)
+  expect(await keyOf({ 'apps/api/test/data.json': '{"a":2}\n' })).not.toBe(first)
+})
