@@ -3,10 +3,7 @@ import { ReadObservationSchema } from './readObservation.js'
 import { OperationalFailureSchema } from './operationalFailures.js'
 import { optionalCommandId } from './management/commands.js'
 import { z } from 'zod'
-import { DeviceProvisioningHostReferenceSchema, DeviceProvisioningTargetSchema } from './deviceResources.js'
-import { SourceRootReferenceSchema } from './worktreeSettings.js'
-import { RecordedHarnessConfigurationSchema } from './index.js'
-import { HarnessProfileSelectionSchema } from './harnessProfileSelection.js'
+import { DeviceProvisioningTargetSchema } from './deviceResources.js'
 import { HarnessMcpArgumentSchema, HarnessMcpEndpointSchema, HarnessMcpPresetStatus } from './management/harnessSettings.js'
 import { ComputerAccountsSchema } from './computerAccounts.js'
 import { PluginMarketplaceSourceSchema } from './management/claudePlugins.js'
@@ -20,35 +17,6 @@ export const COMPUTER_MAINTENANCE_VERSION = 2
 /** Harnesses kept installed and current on every computer: Codex and Claude. */
 const MaintainedHarnessSchema = z.enum(['codex', 'claude'])
 export type MaintainedHarness = z.infer<typeof MaintainedHarnessSchema>
-
-export const RunRequirementsInputSchema = z.object({
-  workspaceId: z.string().min(1).max(200),
-  harness: z.enum(['codex', 'claude', 'job']),
-  hostRef: DeviceProvisioningHostReferenceSchema.optional(),
-  rootBinding: SourceRootReferenceSchema.optional(),
-  rootPolicyId: z.uuid().optional(),
-  agentIds: z.array(z.string().min(1).max(200)).max(100),
-  agentConfigurations: z.array(z.object({ agentId: z.string().min(1).max(200),
-    configuration: RecordedHarnessConfigurationSchema,
-    selection: HarnessProfileSelectionSchema.optional(),
-    placementInstanceId: z.string().min(1).optional(),
-    placementInstanceRevision: z.string().min(1).optional(),
-  }).strict().refine(value => (value.placementInstanceId === undefined) === (value.placementInstanceRevision === undefined),
-    'Include both placement instance fields.')).max(100).optional(),
-  browserProfiles: z.array(z.string().min(1).max(200).nullable()).max(100),
-  jobDefinitions: z.array(z.object({ id: z.string().min(1).max(200), revision: z.number().int().positive() }).strict()).max(100),
-  action: z.enum(['check', 'fix']),
-}).strict()
-export type RunRequirementsInput = z.infer<typeof RunRequirementsInputSchema>
-export const RunRequirementSchema = z.object({
-  id: z.string().min(1).max(300), state: z.enum(['ready', 'missing', 'unknown']),
-  message: z.string().min(1).max(4000), fixable: z.boolean(),
-}).strict()
-export type RunRequirement = z.infer<typeof RunRequirementSchema>
-export const RunRequirementsResultSchema = z.object({
-  target: DeviceProvisioningTargetSchema.nullable(), items: z.array(RunRequirementSchema).max(500),
-}).strict()
-export type RunRequirementsResult = z.infer<typeof RunRequirementsResultSchema>
 const HarnessSelectionSchema = z.array(MaintainedHarnessSchema).min(1).max(2)
   .refine(harnesses => new Set(harnesses).size === harnesses.length, 'Choose each harness once.')
 
@@ -108,20 +76,9 @@ export const MaintenanceTaskStartSchema = z.discriminatedUnion('kind', [
 ])
 export type MaintenanceTaskStart = z.infer<typeof MaintenanceTaskStartSchema>
 
-export const RepositoryProbeInputSchema = z.object({
-  repository: z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/u)
-    .refine(value => !['.', '..'].includes(value.split('/')[1]!)),
-  commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u).optional(),
-}).strict()
-export type RepositoryProbeInput = z.infer<typeof RepositoryProbeInputSchema>
-const RepositoryProbeResultSchema = z.object({ ready: z.boolean(), reason: z.string().max(2000).nullable() }).strict()
-const ClaudeProfileProbeSelectionSchema = z.object({ instanceId: z.uuid(), instanceRevision: z.string().min(1).max(500) }).strict()
-const ClaudeProfileProbeRequestSchema = z.object({ profileDirectory: z.string().startsWith('/').max(4096) }).strict()
-
 export const MaintenanceRequestSchema = z.discriminatedUnion('operation', [
   /** scope 'worker' reads only the Worker update state, without the slow harness, registry and OS inspections. */
-  z.object({ operation: z.literal('status'), scope: z.literal('worker').optional(), browserProbe: z.boolean().optional(),
-    repositoryProbe: RepositoryProbeInputSchema.optional(), claudeProfileProbe: ClaudeProfileProbeRequestSchema.optional() }).strict(),
+  z.object({ operation: z.literal('status'), scope: z.literal('worker').optional() }).strict(),
   z.object({ operation: z.literal('start'), commandId: z.uuid(), task: MaintenanceTaskStartSchema }).strict(),
 ])
 
@@ -179,9 +136,6 @@ export const MaintenanceStatusSchema = z.object({
   services: z.array(ServiceHealthSchema).max(50).optional(),
   worker: WorkerUpdateStatusSchema.optional(),
   browserRuntime: BrowserRuntimeStatusSchema.optional(),
-  browserProbe: z.object({ ready: z.boolean(), reason: z.string().max(2000).nullable() }).strict().optional(),
-  repositoryProbe: RepositoryProbeResultSchema.optional(),
-  claudeProfileProbe: z.object({ authenticated: z.boolean().nullable(), reason: z.string().max(500).nullable() }).strict().optional(),
   harnesses: z.array(HarnessVersionSchema).max(2),
   system: z.object({
     /** Pending OS upgrades, including APT-held and phased updates; null when the count cannot be verified. */
@@ -233,9 +187,6 @@ export const ComputerMaintenanceListInputSchema = z.object({
 
 export const ComputerMaintenanceReadInputSchema = z.object({
   target: DeviceProvisioningTargetSchema, refresh: z.boolean().optional(),
-  browserProbe: z.boolean().optional(),
-  repositoryProbe: RepositoryProbeInputSchema.optional(),
-  claudeProfileProbe: ClaudeProfileProbeSelectionSchema.optional(),
   taskLimit: MaintenanceTaskLimitSchema.optional(),
 }).strict()
 

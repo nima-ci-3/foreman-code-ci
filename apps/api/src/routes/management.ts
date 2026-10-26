@@ -11,7 +11,6 @@ import { registerPromptSettingsRoutes } from './promptSettings.js'
 import { registerHarnessSettingsRoutes } from './harnessSettings.js'
 import { pluginHttpRead } from './pluginReadCancellation.js'
 import { registerSkillRoutes } from './skills.js'
-import { registerRunRequirementsRoutes } from './runRequirements.js'
 
 import {
   AgentGetInputSchema,
@@ -82,7 +81,6 @@ export function registerManagementRoutes(app: FastifyInstance, services: Operato
   registerRunSubagentRoutes(app, services)
   registerWorkspaceDefaultsRoutes(app, services)
   registerHarnessSettingsRoutes(app, services)
-  registerRunRequirementsRoutes(app, services)
   // Board authoring creates and edits Agents through the same service as the
   // Operator MCP agent_create/agent_update tools (graph:edit via HTTP policy).
   if (services.extensions) registerSkillRoutes(app, services.extensions.skills, services.extensions.skillUsage)

@@ -16,7 +16,7 @@ const CiRunInputObjectSchema = z.object({
     + 'never falls back to a different computer.'),
   gate: z.boolean().optional().describe('Operator/orchestrator only. With suite=integration and scope=full, '
     + 'queue typecheck, lint, unit and duration-balanced integration as one gate. Gates run one at a time. '
-    + 'A failed part cancels the gate’s remaining queued and running parts.'),
+    + 'Every part runs to the end even after another part fails.'),
   priority: CiPrioritySchema.optional().describe('Defaults to normal. Callers authorized for ci can request high priority. '
     + 'Commits changing only CI infrastructure are automatically high priority.'),
   suite: CiSuiteSchema.describe('Repositories with the CI suite hook queue unit, lint, typecheck and build parts; '

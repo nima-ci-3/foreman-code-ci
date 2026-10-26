@@ -5,8 +5,6 @@ import { readServiceHealth } from '../diagnostics/index.js'
 import { readClaudePlugins, claudeCliResult } from './claudePlugins.js'
 import { isCodexStagingRenameError, removeCodexStagingDirectories } from './npmStaging.js'
 import { syncFingerprint } from './syncFingerprint.js'
-import { probeRepository } from './repositoryProbe.js'
-import { probeClaudeProfile } from './claudeProfileProbe.js'
 import { matchesMcpDefinition } from './mcpDefinitions.js'
 import { assertStdioAvailable } from './stdioAvailability.js'
 import { verifyPluginRelease, type AcquiredPluginRelease } from './pluginAcquisition.js'
@@ -29,7 +27,6 @@ import {
   type MaintainedHarness, type MaintenanceStatus, type MaintenanceTask,
   type MaintenanceTaskStart, type SyncedMarketplace, type SyncedMcpServer,
   type WorkerUpdateStatus,
-  type RepositoryProbeInput,
   SyncedPluginSchema, type SyncedPlugin,
 } from '@foreman-code/contracts/computer-maintenance'
 import { runProcessSettled, hostEnvironment } from '../../shared/process.js'
@@ -108,35 +105,14 @@ export class ComputerMaintenance {
     if (this.storageFailure) throw this.storageFailure
   }
 
-  async status(signal: AbortSignal, options: { browserProbe?: boolean; repositoryProbe?: RepositoryProbeInput;
-    claudeProfileProbe?: { profileDirectory: string } } = {}): Promise<MaintenanceStatus> {
+  async status(signal: AbortSignal): Promise<MaintenanceStatus> {
     await this.loadTasks()
     for (;;) {
       signal.throwIfAborted()
       const revision = this.taskRevision
       const status = await this.observe(signal)
       await this.taskStore.flushed()
-      if (revision === this.taskRevision) {
-        const [repositoryProbe, browserProbe, claudeProfileProbe] = await Promise.all([
-          options.repositoryProbe ? probeRepository(this.ports, options.repositoryProbe, signal).catch(() => {
-            signal.throwIfAborted()
-            return { ready: false, reason: 'Could not check repository access on this computer. Check Git and retry.' }
-          }) : undefined,
-          options.browserProbe ? (this.ports.browserRuntime?.probe
-            ? this.ports.browserRuntime.probe(AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
-            : Promise.resolve({ ready: false, reason: 'Browser readiness inspection is unavailable on this computer.' }))
-            .catch(error => {
-              signal.throwIfAborted()
-              return { ready: false, reason: errorMessage(error, 'Browser readiness inspection failed.').slice(0, 2000) }
-            }) : undefined,
-          options.claudeProfileProbe ? probeClaudeProfile(this.ports, options.claudeProfileProbe.profileDirectory, signal).catch(() => {
-            signal.throwIfAborted()
-            return { authenticated: null, reason: 'Claude sign-in status could not be verified for the selected profile.' }
-          }) : undefined,
-        ])
-        return MaintenanceStatusSchema.parse({ ...status, ...(browserProbe ? { browserProbe } : {}),
-          ...(repositoryProbe ? { repositoryProbe } : {}), ...(claudeProfileProbe ? { claudeProfileProbe } : {}) })
-      }
+      if (revision === this.taskRevision) return status
     }
   }
 

@@ -69,9 +69,9 @@ export interface MemoryBoardAuthority {
   node(tx: SqlTransaction, node: AgentNodeRef, scope: MemoryBoardScope): Promise<void>
   work(tx: SqlTransaction, work: LogicalWorkRef): Promise<ResolvedWork>
   currentWork(tx: SqlTransaction, subject: AgentSubject): Promise<ResolvedWork | null>
-  /** Recheck authoritative saved node/work/execution identity at engine seams. */
+  /** Recheck saved node/work/execution identity and return whether its Agent keeps the Kanban. */
   lifecycle(tx: SqlTransaction, agent: AgentIdentity, work: LogicalWorkRef,
-    executionId?: string): Promise<void>
+    executionId?: string): Promise<boolean>
 }
 export interface MemoryBoardDependencies {
   transaction<T>(perform: (tx: SqlTransaction) => Promise<T>): Promise<T>

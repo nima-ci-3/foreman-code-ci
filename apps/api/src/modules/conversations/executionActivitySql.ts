@@ -32,7 +32,8 @@ function utf8Prefix(value: string, limit: string) {
 // All aggregates below consume bounded prefixes, even when a message has millions of deltas.
 // The native journal remains the history store; readers retain no complete-execution cache.
 export const executionItemsSql = `with identities as (
-  select ${itemKey} as item_key,min(n.sequence) as first_sequence,max(n.sequence) as revision
+  select ${itemKey} as item_key,min(n.sequence) as first_sequence,max(n.sequence) as revision,
+    bool_or(n.record#>>'{payload,item,type}'='userMessage' or n.record#>>'{payload,role}'='user') as user_message
   from harness_native_events n where ${publicEvents}
   group by ${itemKey}
   having bool_or(coalesce(n.record#>>'{payload,item,type}','')<>'reasoning'
@@ -234,7 +235,9 @@ export const executionItemsSql = `with identities as (
     first_sequence desc,item_key rows between unbounded preceding and 1 preceding),0) as preceding_bytes
   from projected
 )
-select item_key,first_sequence,revision,preceding_bytes,case when preceding_bytes<$13 then record end as record
+select item_key,first_sequence,revision,preceding_bytes,
+  item_key=(select item_key from identities where user_message order by first_sequence,item_key limit 1) as opening_user_message,
+  case when preceding_bytes<$13 then record end as record
 from costed order by case when $3='changes' then revision end asc,
   case when $3='changes' then item_key end asc,first_sequence desc,item_key`
 

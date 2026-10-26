@@ -62,15 +62,6 @@ it('keeps invalid source configuration and stale saved revisions out of launch a
     .rejects.toMatchObject({ code: 'REVISION_CONFLICT' })
 })
 
-it('checks matching computers for an automatic Job instead of rejecting its source as uncheckable', async () => {
-  const f = fixture()
-  const placementOverride = { kind: 'auto' as const }
-  f.validate.mockResolvedValue({ valid: false, reasons: ['AUTO_SOURCE_VALIDATION_UNAVAILABLE'], sideEffects: false })
-  f.validateRequest.mockResolvedValue({ valid: true, canQueue: true, reasons: [], sideEffects: false })
-  expect(await f.service.validateLaunch(f.principal, f.definition.workspaceId, { ...f.input, placementOverride }))
-    .toEqual({ valid: true, canQueue: true, reasons: [], sideEffects: false })
-})
-
 it.each([
   { reason: 'offline', canQueue: true },
   { reason: 'authorization_revoked', canQueue: false },

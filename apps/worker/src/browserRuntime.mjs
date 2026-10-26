@@ -4,8 +4,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { readInstalledRelease } from './installation.mjs';
 import { readUpdateRecord } from './updateRecord.mjs';
 import { readInstalledBrowserRuntime, readBrowserRuntimeStatus, writeBrowserRuntimeStatus,
-  stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime, browserRuntimeMatchesRelease,
-  probeBrowserRuntime, provisionBrowserVirtualDisplay } from './browserRuntimeInstall.mjs';
+  stageBundledBrowserRuntime, offlineBrowserRuntimeLifecycle, activateBrowserRuntime, browserRuntimeMatchesRelease } from './browserRuntimeInstall.mjs';
 
 // Loads the installed native host: the release's bundle of hostFactory.ts.
 const importHost = path => import(/* ci-key: apps/api/src/modules/browser-runtime/hostFactory.ts */ pathToFileURL(path).href);
@@ -123,10 +122,7 @@ export function createWorkerBrowserRuntime(options) {
 
   async function retryInstallation() {
     if (closed) throw unavailable('This browser runtime owner has been closed.');
-    if (host) {
-      await provisionBrowserVirtualDisplay();
-      return status();
-    }
+    if (host) return status();
     await assertHostOwnership();
     const release = await readSelectedRelease({ root, facts, expected });
     try {
@@ -185,17 +181,6 @@ export function createWorkerBrowserRuntime(options) {
       return startHost();
     }),
     retry: () => serialize(retryInstallation),
-    probe: async signal => {
-      signal?.throwIfAborted();
-      const current = status();
-      if (!current.ready || !installed) return { ready: false, reason: current.message ?? 'The browser runtime is not ready.' };
-      await assertHostOwnership();
-      const release = await readSelectedRelease({ root, facts, expected });
-      approveRuntime(release, installed);
-      const selected = installed;
-      const result = await probeBrowserRuntime(selected, { signal, releaseDirectory: release.directory });
-      return selected === installed && status().ready ? result : { ready: false, reason: 'The browser runtime changed during inspection. Retry.' };
-    },
     status,
     getHost: () => host,
     getModule: () => nativeModule,
