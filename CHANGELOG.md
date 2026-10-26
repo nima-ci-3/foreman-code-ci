@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.123] - 2026-10-26
+
+### Runs
+
+- A node whose execution is running between native turns (before a corrective turn is acknowledged or the result settles) shows Starting instead of Unavailable.
+
 ## [0.0.122] - 2026-10-26
 
 ### Runs
