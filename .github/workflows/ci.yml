@@ -158,7 +158,11 @@ jobs:
             packages/*/node_modules/.cache/tsc
             packages/*/node_modules/.cache/eslint
           key: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-${{ inputs.ref }}
-          restore-keys: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
+          # Another package set's state is safe to start from: TypeScript compares every input file's content and
+          # lint keys carry each imported package's locked tree, so only what a dependency change reaches re-checks.
+          restore-keys: |
+            suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
+            suite-state-v2-${{ runner.os }}-node24.22.1-
       # Snapshot refs can read only main's cache, so a branch's runs never saw each other's state and re-checked
       # everything that differs from main. Each part's newest state is a release asset (any ref, any provider); its
       # contents are keyed by file content, so a newer state from another commit is safe to start from; each state file
@@ -184,7 +188,9 @@ jobs:
         with:
           path: apps/web/node_modules/.cache/tsc
           key: web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**', 'apps/web/*.ts', 'apps/web/tsconfig*.json', 'apps/web/package.json', 'packages/contracts/src/**', 'packages/contracts/tsconfig*.json') }}
-          restore-keys: web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-
+          restore-keys: |
+            web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-
+            web-typecheck-${{ runner.os }}-node24.22.1-
       # Suite state is private to each immutable ci-snapshot ref. Do not upload rolling
       # archives here: later snapshots cannot restore them, and they evict shared package caches.
       - name: Suite

@@ -16,6 +16,7 @@ function project(realLint = false) {
   copyFileSync(script, join(root, 'scripts/eslint-closure-cache.mjs'))
   mkdirSync(join(root, 'packages/contracts/src'), { recursive: true })
   copyFileSync(resolve(import.meta.dirname, '../packages/contracts/src/ciImportGraph.mjs'), join(root, 'packages/contracts/src/ciImportGraph.mjs'))
+  copyFileSync(resolve(import.meta.dirname, '../packages/contracts/src/ciLockIdentities.mjs'), join(root, 'packages/contracts/src/ciLockIdentities.mjs'))
   writeFileSync(join(root, 'scripts/eslint-plugin-foreman/index.mjs'), 'export const rules = {}')
   writeFileSync(join(root, 'scripts/lint-allowlist.json'), '{}')
   writeFileSync(join(root, 'scripts/lint-allowlist.mjs'), 'export const allowlist = {}')
@@ -25,6 +26,7 @@ function project(realLint = false) {
   writeFileSync(join(directory, 'node_modules/eslint/package.json'), '{"type":"commonjs"}')
   const require = createRequire(new URL('../apps/api/package.json', import.meta.url))
   symlinkSync(dirname(require.resolve('typescript/package.json')), join(directory, 'node_modules/typescript'))
+  symlinkSync(dirname(require.resolve('yaml/package.json')), join(directory, 'node_modules/yaml'))
   mkdirSync(join(directory, 'src'))
   writeFileSync(join(directory, 'node_modules/eslint/bin/eslint.js'), `
     const { appendFileSync, readFileSync, writeFileSync } = require('node:fs')
@@ -82,6 +84,18 @@ test('lints every file once, then only files whose own text or imported files ch
     // A type the user file imports changed: a typed rule may now judge the user file differently.
     fixture.write('types.ts', 'export type Shape = { a: number }\n')
     assert.deepEqual(fixture.lint(), { status: 0, linted: ['types.ts', 'user.ts'] })
+  } finally { fixture.close() }
+})
+
+test('a version bump or new script in a manifest keeps earlier passes, a dependency change does not', () => {
+  const fixture = project()
+  try {
+    assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts', 'types.ts', 'user.ts'] })
+    writeFileSync(join(fixture.root, 'package.json'), '{"private":true,"version":"1.0.1","scripts":{"round":"x"}}')
+    writeFileSync(join(fixture.directory, 'package.json'), '{"name":"closure-fixture","version":"2.0.0"}')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: [] })
+    writeFileSync(join(fixture.directory, 'package.json'), '{"name":"closure-fixture","version":"2.0.0","dependencies":{"a":"1"}}')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts', 'types.ts', 'user.ts'] })
   } finally { fixture.close() }
 })
 
@@ -176,6 +190,45 @@ test('workspace packages invalidate consumers of their own workspace dependencie
     assert.deepEqual(fixture.lint().linted, [])
     writeFileSync(base, 'export type Shape = { a: number }')
     assert.ok(fixture.lint().linted.includes('user.ts'))
+  } finally { fixture.close() }
+})
+
+test('a lockfile change relints only files importing a package whose locked tree changed, or all on a tool change', () => {
+  const fixture = project()
+  const lock = (pad, other, eslint) => writeFileSync(join(fixture.root, 'pnpm-lock.yaml'), [
+    "lockfileVersion: '9.0'", 'importers:', "  '.':", '    dependencies:', `      other: { specifier: '1', version: ${other} }`,
+    '  apps/api:', '    dependencies:', `      left-pad: { specifier: '1', version: ${pad} }`,
+    '    devDependencies:', `      eslint: { specifier: '9', version: ${eslint} }`, 'packages:',
+    ...[`left-pad@${pad}`, `other@${other}`, `eslint@${eslint}`].map(key => `  ${key}: { resolution: { integrity: sha-${key} } }`),
+    'snapshots:', ...[`left-pad@${pad}`, `other@${other}`, `eslint@${eslint}`].map(key => `  ${key}: {}`), ''].join('\n'))
+  try {
+    lock('1.0.0', '1.0.0', '9.0.0')
+    fixture.write('alone.ts', "import pad from 'left-pad'\nexport const alone = pad\n")
+    assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts', 'types.ts', 'user.ts'] })
+    lock('1.0.1', '1.0.0', '9.0.0')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts'] })
+    // Another project's dependency is not in this project's files.
+    lock('1.0.1', '2.0.0', '9.0.0')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: [] })
+    lock('1.0.1', '2.0.0', '9.1.0')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts', 'types.ts', 'user.ts'] })
+  } finally { fixture.close() }
+})
+
+test('a workspace package import keys only the exported source it resolves to', () => {
+  const fixture = project()
+  try {
+    const contracts = join(fixture.root, 'packages/contracts')
+    writeFileSync(join(contracts, 'package.json'), JSON.stringify({ name: '@foreman-code/contracts',
+      exports: { './a': { types: './dist/a.d.ts', import: './dist/a.js' }, './b': { import: './dist/b.js' } } }))
+    writeFileSync(join(contracts, 'src/a.ts'), 'export type A = { a: string }\n')
+    writeFileSync(join(contracts, 'src/b.ts'), 'export const b = 1\n')
+    fixture.write('user.ts', "import type { A } from '@foreman-code/contracts/a'\nexport const value: A = { a: '' }\n")
+    assert.equal(fixture.lint().status, 0)
+    writeFileSync(join(contracts, 'src/b.ts'), 'export const b = 2\n')
+    assert.deepEqual(fixture.lint().linted, [])
+    writeFileSync(join(contracts, 'src/a.ts'), 'export type A = { a: number }\n')
+    assert.deepEqual(fixture.lint().linted, ['user.ts'])
   } finally { fixture.close() }
 })
 

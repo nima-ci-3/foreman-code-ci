@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import { releaseRoundProblems } from './verify-release-round.mjs'
 
 const releaseScript = new URL('./release.mjs', import.meta.url).pathname
+const roundScript = new URL('./ci-round.mjs', import.meta.url).pathname
 const verifyScript = new URL('./verify-release-round.mjs', import.meta.url).pathname
 const workspaceId = 'workspace-release-test'
 
@@ -161,6 +162,21 @@ test('a release reuses the gate that already passed on HEAD instead of running a
   assert.equal(main.groups.size, groupsBefore)
   const trailer = git('log', '-1', '--format=%(trailers:key=Clean-Round,valueonly)')
   assert.deepEqual(trailer.split('=')[1].split(',').sort(), earlier.partitions.map(value => value.ticketId).sort())
+  const verified = await run(verifyScript, ['HEAD'], work, main, env)
+  assert.equal(verified.status, 0, verified.output)
+})
+
+test('a release after `corepack pnpm round` on HEAD starts no second round', async t => {
+  const main = await fakeMain(t)
+  const { work, git, env } = repository(t)
+  const tested = git('rev-parse', 'HEAD')
+  const round = await run(roundScript, [], work, main, env)
+  assert.equal(round.status, 0, round.output)
+  const groupsAfterRound = main.groups.size
+  const result = await run(releaseScript, ['1.1.0'], work, main, env)
+  assert.equal(result.status, 0, result.output)
+  assert.equal(main.groups.size, groupsAfterRound)
+  assert.equal(git('rev-parse', 'HEAD^'), tested)
   const verified = await run(verifyScript, ['HEAD'], work, main, env)
   assert.equal(verified.status, 0, verified.output)
 })

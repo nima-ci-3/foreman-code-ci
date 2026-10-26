@@ -81,7 +81,11 @@ jobs:
             packages/*/node_modules/.cache/tsc
             packages/*/node_modules/.cache/eslint
           key: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-${{ github.sha }}
-          restore-keys: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
+          # Another package set's state is safe to start from: TypeScript compares every input file's content and
+          # lint keys carry each imported package's locked tree, so only what a dependency change reaches re-checks.
+          restore-keys: |
+            suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
+            suite-state-v2-${{ runner.os }}-node24.22.1-
       - name: Record restored suite state
         id: suite-state-before
         run: node scripts/ci-suite-state.mjs record

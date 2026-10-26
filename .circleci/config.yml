@@ -153,6 +153,7 @@ jobs:
             - restore_cache:
                 keys:
                   - ci-<< pipeline.parameters.suite >>-{{ checksum "pnpm-lock.yaml" }}-
+                  - ci-<< pipeline.parameters.suite >>-
             # Main's typecheck and lint state (the mirror's warm-up job) and the newest run's state of this part (any
             # provider): each state file keeps its freshest copy among them and this suite's last CircleCI run.
             - run:

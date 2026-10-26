@@ -82,7 +82,8 @@ not a reason to leave the result slow or broken. Report what was fixed and how i
   run every test file without a passing result at its current inputs — a file's key covers its text, its imports and
   the shared inputs (lockfile, CI scripts, test config) — while files no key can prove always run. `--full` runs every
   file. Owner decision 2026-10-25: no full run is required before a release.
-- The round runs through Foreman CI, not locally. Release only with `corepack pnpm release <X.Y.Z>`
+- The round runs through Foreman CI, not locally: `corepack pnpm round` gates the pushed HEAD, and the release reuses
+  that gate instead of running a second round. Release only with `corepack pnpm release <X.Y.Z>`
   (`scripts/release.mjs`), which records the passing tickets in the commit's `Clean-Round` trailers. Deployers
   verify a release commit with `node scripts/verify-release-round.mjs <commit>` before deploying it.
 

@@ -1,6 +1,7 @@
 import { isBuiltin } from 'node:module'
 import { posix } from 'node:path'
 import { ciCodeFile, ciExportSource, importSpecifiers, resolveImport } from '@foreman-code/contracts/ci-import-graph'
+import { lockIdentities, type CiLockfile } from '@foreman-code/contracts/ci-lock-identities'
 import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
 import { parse as parseYaml } from 'yaml'
 
@@ -314,7 +315,8 @@ export class CiResultKeys {
     const root = manifests.find(manifest => manifest.path === 'package.json')
     if (root) keys.identities.set('package.json', `version-free:${sha256Hex(JSON.stringify({ ...root.value, version: null }))}`)
     if (tree.blobs.has(LOCKFILE)) {
-      for (const [marker, identity] of lockIdentities(parseYaml(await tree.read(LOCKFILE, signal)) as Lockfile)) keys.identities.set(marker, identity)
+      for (const [marker, identity] of lockIdentities(parseYaml(await tree.read(LOCKFILE, signal)) as CiLockfile,
+        { packageMarker: PACKAGE, toolsMarker: TOOLS })) keys.identities.set(marker, identity)
     }
     return keys
   }
@@ -614,58 +616,3 @@ export class CiResultKeys {
   }
 }
 
-interface Lockfile {
-  lockfileVersion?: unknown; settings?: unknown; overrides?: unknown; patchedDependencies?: unknown
-  importers?: Record<string, Partial<Record<'dependencies' | 'devDependencies' | 'optionalDependencies', Record<string, { version?: string }>>>>
-  packages?: Record<string, { resolution?: unknown }>
-  snapshots?: Record<string, Partial<Record<'dependencies' | 'optionalDependencies', Record<string, string>>>>
-}
-
-/** Identities of every package each lockfile importer declares: the package's locked tree (each snapshot it reaches
- * with its resolution) plus the lockfile settings that change how anything installs. A lockfile change then
- * reaches only tests that import a package whose tree changed, or whose project's development tools changed. */
-function lockIdentities(lock: Lockfile): Map<string, string> {
-  const base = JSON.stringify([lock.lockfileVersion, lock.settings, lock.overrides, lock.patchedDependencies])
-  const snapshotKey = (name: string, version: string) => version.startsWith('link:') ? null
-    // An aliased dependency's version is the real package's `<name>@<version>`.
-    : /^@?[^@]+@/.test(version) && !/^\d/.test(version) ? version : `${name}@${version}`
-  const trees = new Map<string, string>()
-  const treeOf = (root: string) => {
-    let identity = trees.get(root)
-    if (identity) return identity
-    const reached = new Set<string>()
-    const frontier = [root]
-    while (frontier.length) {
-      const key = frontier.pop()!
-      if (reached.has(key)) continue
-      reached.add(key)
-      const snapshot = lock.snapshots?.[key]
-      for (const field of ['dependencies', 'optionalDependencies'] as const) {
-        for (const [name, version] of Object.entries(snapshot?.[field] ?? {})) {
-          const next = snapshotKey(name, version)
-          if (next) frontier.push(next)
-        }
-      }
-    }
-    identity = sha256Hex(JSON.stringify([base, [...reached].sort().map(key =>
-      [key, lock.packages?.[key.replace(/\(.*$/, '')]?.resolution ?? null, lock.snapshots?.[key] ?? null])]))
-    trees.set(root, identity)
-    return identity
-  }
-  const identities = new Map<string, string>()
-  for (const [importer, declared] of Object.entries(lock.importers ?? {})) {
-    const tools: string[] = []
-    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies'] as const) {
-      for (const [name, entry] of Object.entries(declared[field] ?? {})) {
-        const key = typeof entry?.version === 'string' ? snapshotKey(name, entry.version) : null
-        if (!key) continue
-        const identity = treeOf(key)
-        identities.set(`${PACKAGE}${importer}\t${name}`, identity)
-        if (!identities.has(`${PACKAGE}*\t${name}`)) identities.set(`${PACKAGE}*\t${name}`, identity)
-        if (field === 'devDependencies') tools.push(`${name}:${identity}`)
-      }
-    }
-    identities.set(`${TOOLS}${importer}`, sha256Hex(JSON.stringify([base, tools.sort()])))
-  }
-  return identities
-}
