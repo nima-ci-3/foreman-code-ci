@@ -245,18 +245,18 @@ async function fixture(options: { cloudSlots?: number; files?: string[]; offline
     expect(result.isError, JSON.stringify(result.content)).not.toBe(true)
     return decodeMcpToolResult(result)
   }
-  const finishGate = async (ticketId: string) => {
+  const finishGate = async (ticketId: string, state: 'passed' | 'failed' = 'passed') => {
     const initial = CiGetOutputSchema.parse(await value('ci_get', { ticketId }))
     const ids = new Set(initial.partitions!.map(ciExecutionRunId))
     for (let wave = 0; wave < initial.partitions!.length; wave++) {
       for (const [id, run] of runs) {
-        if (ids.has(id)) runs.set(id, { ...run, state: 'passed', exitCode: 0,
+        if (ids.has(id) && ['starting', 'running'].includes(run.state)) runs.set(id, { ...run, state: 'passed', exitCode: 0,
           finishedAt: new Date(Date.parse(run.startedAt) + 1000).toISOString() })
       }
       await settle(ci)
       const read = CiGetOutputSchema.parse(await value('ci_get', { ticketId }))
-      if (read.group?.state === 'passed') {
-        await ciRunReadback(input => value('ci_get', input), ticketId, 'passed')
+      if (read.group?.state === state && read.partitions!.every(run => ['passed', 'failed'].includes(run.state))) {
+        await ciRunReadback(input => value('ci_get', input), ticketId, state)
         return
       }
     }
@@ -434,7 +434,7 @@ it.each(['cloud', 'build'] as const)('requeues a cloud setup failure once on ano
   } finally { await f.close() }
 })
 
-it('fails the gate on a second setup failure without a third attempt', async () => {
+it('fails the gate on a second setup failure without a third attempt while siblings finish', async () => {
   const f = await fixture()
   try {
     const started = CiRunOutputSchema.parse(await f.value('ci_run', {
@@ -476,12 +476,20 @@ it('fails the gate on a second setup failure without a third attempt', async () 
       message: 'Second setup failure', setupRetry: { reason } })
     expect(finished.group?.state).toBe('failed')
     expect(finished.partitions).toHaveLength(initial.partitions!.length)
-    expect(finished.partitions!.filter(run => run.id !== part!.id).every(run => run.state === 'canceled')).toBe(true)
+    expect(finished.partitions!.filter(run => run.id !== part!.id).every(run => ['queued', 'starting', 'running'].includes(run.state))).toBe(true)
     expect(f.started).toHaveLength(attempts)
+    await f.finishGate(part!.id, 'failed')
+    const completed = CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: part!.id }))
+    expect(completed.run).toEqual(finished.run)
+    expect(completed.group?.state).toBe('failed')
+    expect(completed.partitions).toHaveLength(initial.partitions!.length)
+    expect(completed.partitions!.filter(run => run.id !== part!.id).every(run => run.state === 'passed')).toBe(true)
+    expect(f.started.filter(value => value.request.operation === 'start'
+      && [part!.id, request.runId].includes(value.request.runId))).toHaveLength(2)
   } finally { await f.close() }
 })
 
-it('does not retry a failure after tests start and cancels a sibling setup retry through MCP', async () => {
+it('does not retry a failure after tests start and lets a sibling setup retry finish through MCP', async () => {
   const f = await fixture()
   try {
     const started = CiRunOutputSchema.parse(await f.value('ci_run', {
@@ -514,11 +522,22 @@ it('does not retry a failure after tests start and cancels a sibling setup retry
     expect(finished.run).toMatchObject({ state: 'failed', exitCode: 1, message })
     expect(finished.run).not.toHaveProperty('setupRetry')
     expect(finished.group?.state).toBe('failed')
-    const canceled = CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: part!.id }))
-    expect(canceled.run).toMatchObject({ state: 'canceled', setupRetry: retried.run.setupRetry })
+    const continuing = CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: part!.id }))
+    expect(continuing.run).toMatchObject({ state: 'running', setupRetry: retried.run.setupRetry })
     expect(finished.partitions).toHaveLength(initial.partitions!.length)
-    expect(finished.partitions!.filter(run => run.id !== other!.id).every(run => run.state === 'canceled')).toBe(true)
+    expect(finished.partitions!.filter(run => run.id !== other!.id).every(run => ['queued', 'starting', 'running'].includes(run.state))).toBe(true)
     expect(f.started).toHaveLength(attempts)
+    await f.finishGate(other!.id, 'failed')
+    const completed = CiGetOutputSchema.parse(await f.value('ci_get', { ticketId: other!.id }))
+    expect(completed.run).toEqual(finished.run)
+    expect(completed.group?.state).toBe('failed')
+    expect(completed.partitions).toHaveLength(initial.partitions!.length)
+    expect(completed.partitions!.filter(run => run.id !== other!.id).every(run => run.state === 'passed')).toBe(true)
+    expect(completed.partitions!.find(run => run.id === part!.id)).toMatchObject({
+      state: 'passed', setupRetry: retried.run.setupRetry,
+    })
+    expect(f.started.filter(value => value.request.operation === 'start'
+      && value.request.runId === other!.id)).toHaveLength(1)
   } finally { await f.close() }
 })
 
