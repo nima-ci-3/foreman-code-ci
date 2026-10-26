@@ -1,10 +1,16 @@
-import { AGENT_PRODUCT_ROLE_LABELS, type AgentConfigurationVersion, type AgentProductRole } from '@foreman-code/contracts'
+import { AGENT_PRODUCT_ROLE_LABELS, maySaveToKanban, type AgentConfigurationVersion, type AgentProductRole } from '@foreman-code/contracts'
 import type { WorkflowDefinitionCurrent, WorkflowVersionCurrent } from '@foreman-code/contracts/current'
 
 /** The pinned facts of one connected Agent that its neighbours are told about. */
 export interface WorkflowTeamMember { productRole?: AgentProductRole | undefined; instructions?: string | undefined }
-/** Keyed by workflow node ID: the Agent itself and every Agent connected to it by an execution edge. */
+/** Keyed by workflow node ID: every Agent of the workflow; the team prompt describes only the connected ones. */
 export type WorkflowTeam = Readonly<Record<string, WorkflowTeamMember>>
+
+/** Whether this Agent keeps the workflow's Kanban; without a known role it keeps the full board instructions. */
+export function teamKanbanWriter(team: WorkflowTeam | undefined, nodeId: string): boolean {
+  const role = team?.[nodeId]?.productRole
+  return !role || maySaveToKanban(role, Object.values(team!).flatMap(member => member.productRole ? [member.productRole] : []))
+}
 
 /** An Orchestrator or Master receives the result of the work it hands out and checks it. */
 export const isCoordinatorRole = (role: string | null | undefined) => role === 'orchestrator' || role === 'master'
@@ -15,12 +21,13 @@ function connectedNodeIds(definition: WorkflowDefinitionCurrent, nodeId: string)
   return [...new Set(ids)].filter(id => id !== nodeId && definition.nodes.some(node => node.id === id && node.kind !== 'job'))
 }
 
-/** Reads the exact pinned configurations of the Agent and its connected Agents. */
+/** Reads the exact pinned configurations of every Agent in the workflow. */
 export async function readWorkflowTeam(version: WorkflowVersionCurrent, nodeId: string,
   read: (configurationVersionId: string) => Promise<Pick<AgentConfigurationVersion, 'productRole' | 'prompt'> | undefined>,
 ): Promise<WorkflowTeam> {
   const team: Record<string, WorkflowTeamMember> = {}
-  for (const id of [nodeId, ...connectedNodeIds(version.definition, nodeId)]) {
+  const others = version.definition.nodes.flatMap(node => node.kind !== 'job' && node.id !== nodeId ? [node.id] : [])
+  for (const id of [nodeId, ...others]) {
     const node = version.definition.nodes.find(item => item.id === id)
     const configurationId = node && node.kind !== 'job' ? version.agentConfigurationVersionIds[node.agentId] : undefined
     const configuration = configurationId ? await read(configurationId) : undefined

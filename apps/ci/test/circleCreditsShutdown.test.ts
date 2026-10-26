@@ -98,11 +98,15 @@ it.each(['poll request', 'poll sleep', 'download', 'download body'] as const)(
       closing = usage.close().then(() => { closed = true })
       await new Promise<void>(resolve => { setImmediate(resolve) })
       expect(closed).toBe(false)
-      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(activeSignal?.aborted).toBe(false)
+      expect(closed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
       expect(activeSignal?.aborted).toBe(true)
       vi.useRealTimers()
-      await vi.waitFor(() => { expect(closed).toBe(true) })
+      // Cancellation uses the fake clock; draining the persisted cache uses real filesystem I/O.
       await closing
+      expect(closed).toBe(true)
       const saved = await new CircleCreditCache(testCiContext, path).transaction(states => states[circleCreditKey('acme')])
       expect(saved).toEqual({ orgId: 'org', attempts: [Date.parse(job.windowEnd)],
         lastAttemptAt: Date.parse(job.windowEnd), job, snapshot, nextPollAt: Date.parse(job.windowEnd) + 6_000 })

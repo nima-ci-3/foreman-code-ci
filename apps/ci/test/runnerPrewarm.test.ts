@@ -8,6 +8,16 @@ import { HostCiRunner, systemHostCiPorts, type HostCiPorts } from '../src/runner
 import { testCiContext } from './helpers/ciContext.js'
 
 const fixtures: { root: string; runner: HostCiRunner }[] = []
+
+async function expectStopped(pid: number) {
+  const state = await readFile(`/proc/${pid}/stat`, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT' || error.code === 'ESRCH') return null
+    throw error
+  })
+  // An orphan can remain a zombie until init reaps it, but can no longer hold pipes or repository locks.
+  if (state !== null) expect(state.slice(state.lastIndexOf(') ') + 2).split(' ')[0]).toBe('Z')
+}
+
 afterEach(async () => {
   for (const { root, runner } of fixtures.splice(0)) {
     await runner.beginDrain()
@@ -114,6 +124,7 @@ it.each(['fetch', 'checkout'] as const)('reaps a stalled warmup %s before starti
     real = f.runner.handle({ ...f.request, runId, suite: 'lint', warmup: false })
     await vi.waitFor(() => expect(f.launches).toEqual([`foreman-ci-${runId}`]), { timeout: 1500 })
     expect(() => process.kill(pid!, 0)).toThrow()
+    await vi.waitFor(() => expectStopped(childPid!))
     await warmup
     await expect(f.runner.handle({ operation: 'read', runId: f.request.runId, afterOffset: 0, maxBytes: 100 }))
       .resolves.toMatchObject({ run: { state: 'canceled' } })
@@ -181,6 +192,7 @@ it.each(['fetch', 'checkout'] as const)('cancels a stalled real CI %s and frees 
     next = f.runner.handle({ ...f.request, runId, warmup: false, suite: 'lint' })
     await vi.waitFor(() => expect(f.launches).toEqual([`foreman-ci-${runId}`]), { timeout: 1500 })
     expect(() => process.kill(pid!, 0)).toThrow()
+    await vi.waitFor(() => expectStopped(childPid!))
     // Acknowledgement can precede process closure; the read below checks final cancellation after it closes.
     await expect(cancel).resolves.toMatchObject({ operation: 'cancel', run: { runId: f.request.runId } })
     await first
