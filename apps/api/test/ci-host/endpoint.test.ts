@@ -3,7 +3,7 @@ import type pg from 'pg'
 import { CI_HOST_NAMESPACE, CiHostRequestSchema, CiRunRecordSchema, type CiHostRequest } from '@foreman-code/contracts'
 import { expect, it, vi } from 'vitest'
 import { WorkerExecutionPolicy } from '../../src/modules/settings/workerExecution.js'
-import { deferred } from '../helpers/deferred.js'
+import { deferred, rejectableDeferred } from '../helpers/deferred.js'
 import { DeviceApplicationAdmissionError } from '../../src/modules/devices/deviceApplicationError.js'
 import { ProductionHostCiEndpoint } from '@foreman-code/ci/endpoint'
 import { rejectedCiStart } from '@foreman-code/ci/dispatch'
@@ -183,7 +183,7 @@ it('bounds Worker readiness waits while retaining the execution and cleanup dead
 
 it('returns retryable unavailability while a Worker bundle check is reconnecting', async () => {
   vi.useFakeTimers()
-  const bundle = deferred<never>()
+  const bundle = rejectableDeferred<never>()
   const computer: HostCiComputer = { key: 'fixture:bundle-worker',
     hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-worker' }, label: 'Worker', priority: 50 }
   const endpoint = new ProductionHostCiEndpoint(mainCiContext, {} as pg.Pool, 'fixture-main', () => ({
