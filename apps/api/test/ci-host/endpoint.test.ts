@@ -166,7 +166,7 @@ it('does not report readiness for a Worker that never answered when its status r
 it('bounds Worker readiness waits while retaining the execution and cleanup deadlines', async () => {
   const computer: HostCiComputer = { key: 'fixture:reconnecting-worker',
     hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-worker' }, label: 'Worker', priority: 50 }
-  const requests: { operation: string; timeoutMs?: number }[] = []
+  const requests: { operation: string; timeoutMs: number | undefined }[] = []
   const endpoint = new ProductionHostCiEndpoint(mainCiContext, {} as pg.Pool, 'fixture-main', () => ({
     capabilities: () => [], request: async (_device, _namespace, payload, options) => {
       requests.push({ operation: (payload as CiHostRequest).operation, timeoutMs: options?.timeoutMs })
