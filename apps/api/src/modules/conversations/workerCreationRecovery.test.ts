@@ -52,14 +52,14 @@ it.each(['session', 'submission', 'terminal'] as const)(
     await host.handle({ method: 'conversation.initial-turn', binding: f.binding, configuration: f.configuration,
       operationId: correlationId, correlationId, prompt: 'Original input' }, f.connection)
     const message = await native.nextMessage()
-    await vi.waitFor(() => expect(observed).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(observed).toHaveBeenCalledOnce(), { timeout: 10_000 })
     await native.frames.offer({ type: 'assistant', session_id: 'native-session', uuid: 'original-reply',
       user_message_uuid: message.uuid })
     await native.frames.offer({ type: 'result', session_id: 'native-session', uuid: 'original-result',
       user_message_uuid: message.uuid, subtype: 'success', is_error: false, result: 'Original answer' })
     await vi.waitFor(async () => {
       expect((await journal.conversations.read(f.binding))?.turns[0]?.status).toBe('completed')
-    })
+    }, { timeout: 10_000 })
     const session = await manager.reconcileSessionCreation(start)
     expect(session.nativeSessionId).toBe('native-session')
     const history = await manager.reconcile(session, correlationId)

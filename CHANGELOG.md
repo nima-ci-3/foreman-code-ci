@@ -11,6 +11,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Deploys are about two minutes faster: the API exits as soon as its shutdown finishes instead of waiting 60 s for systemd to kill it (and logs any handle still open), an already installed browser runtime is reused without copying or rehashing 850 MB again, and the web build cache resolves the Vite config's imports.
 - A gate no longer stops when one part fails: every part runs to the end, so one round shows every failure.
+- Workflow edit reads go from ~450 database queries to ≤16; 16 more N+1 query paths (subagent projection, workspace locations, consultations, Job queue, checkpoints, Run list, graph exchanges, sync, activity, artifacts, skills, CI) are batched.
+- The first CI admission after a restart is no longer slow (cold commit and plan warmed before readiness); the CI git cache is fully repacked instead of growing to hundreds of packs.
+- Only a workflow's top role writes its Kanban: the Master if present, else Orchestrators, else Workers.
 
 ## [0.0.129] - 2026-10-26
 
