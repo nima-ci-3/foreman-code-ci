@@ -30,7 +30,6 @@ import { agentFileReader, CiEnrollment, CiRuntimeProvisioner, createCircleCi, cr
 import type { CircleCreditUsage, CircleStandby, CloudCis, CiServiceClient, ReadAgentFiles } from './modules/ci/types.js'
 import { FleetMaintenanceService } from './modules/computers/fleet.js'
 import { computerConnectionsReader } from './modules/computers/connections.js'
-import { repairComputerRequirements } from './routes/runRequirements.js'
 import { startWorkerPublicationSync } from './modules/computers/workerPublicationSync.js'
 import { createProductionWorkerArtifactExtension, readProductionWorkerManifestSha256s,
   readProductionWorkerContentSha256s, readProductionWorkerReleasePublication,
@@ -2261,7 +2260,7 @@ async function initializeComputerServices(services: ProductionServices, machine:
     () => deviceRuntime.endpointForDomains(), commands)
   const computerMaintenance = runtimeServices.computerMaintenance = new FleetMaintenanceService(database.pool, machine.installationId,
     () => deviceRuntime.endpointForDomains(), commands, new ComputerMaintenance({ ...maintenancePorts, browserRuntime: {
-      status: () => browser.runtime.status(), probe: signal => browser.runtime.probe(signal), retry: async () => {
+      status: () => browser.runtime.status(), retry: async () => {
         const status = await browser.runtime.retry(); browser.profiles.wake(); return status
       } } }), {
       workerManifestSha256s: () => readProductionWorkerManifestSha256s({ environment: process.env,
@@ -2274,11 +2273,6 @@ async function initializeComputerServices(services: ProductionServices, machine:
         list: (principal, harness, hostRef) => harnessSettings.mcp.list(principal, harness, hostRef),
         readMainClaudeServers: () => claudeUserMcpServers(maintenancePorts),
       }),
-      runRequirementsRepair: async target => {
-        const localHuman = httpStage.routes.localHuman
-        if (!localHuman) throw new Error('Computer upkeep has no local operator.')
-        await repairComputerRequirements(runtimeServices, await localHuman.current(), target)
-      },
       codexUserMcpServers: () => harnessSettings.mcp.userServers('codex'),
       claudeUserMcpServers: () => claudeUserMcpServers(maintenancePorts),
       claudePlugins: async () => await maintenancePorts.find('claude')

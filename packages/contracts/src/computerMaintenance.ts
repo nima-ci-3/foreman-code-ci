@@ -3,9 +3,7 @@ import { ReadObservationSchema } from './readObservation.js'
 import { OperationalFailureSchema } from './operationalFailures.js'
 import { optionalCommandId } from './management/commands.js'
 import { z } from 'zod'
-import { DeviceProvisioningHostReferenceSchema, DeviceProvisioningTargetSchema } from './deviceResources.js'
-import { SourceRootReferenceSchema } from './worktreeSettings.js'
-import { RecordedHarnessConfigurationSchema } from './index.js'
+import { DeviceProvisioningTargetSchema } from './deviceResources.js'
 import { HarnessMcpArgumentSchema, HarnessMcpEndpointSchema, HarnessMcpPresetStatus } from './management/harnessSettings.js'
 import { ComputerAccountsSchema } from './computerAccounts.js'
 import { PluginMarketplaceSourceSchema } from './management/claudePlugins.js'
@@ -19,30 +17,6 @@ export const COMPUTER_MAINTENANCE_VERSION = 2
 /** Harnesses kept installed and current on every computer: Codex and Claude. */
 const MaintainedHarnessSchema = z.enum(['codex', 'claude'])
 export type MaintainedHarness = z.infer<typeof MaintainedHarnessSchema>
-
-export const RunRequirementsInputSchema = z.object({
-  workspaceId: z.string().min(1).max(200),
-  harness: z.enum(['codex', 'claude', 'job']),
-  hostRef: DeviceProvisioningHostReferenceSchema.optional(),
-  rootBinding: SourceRootReferenceSchema.optional(),
-  rootPolicyId: z.uuid().optional(),
-  agentIds: z.array(z.string().min(1).max(200)).max(100),
-  agentConfigurations: z.array(z.object({ agentId: z.string().min(1).max(200),
-    configuration: RecordedHarnessConfigurationSchema }).strict()).max(100).optional(),
-  browserProfiles: z.array(z.string().min(1).max(200).nullable()).max(100),
-  jobDefinitions: z.array(z.object({ id: z.string().min(1).max(200), revision: z.number().int().positive() }).strict()).max(100),
-  action: z.enum(['check', 'fix']),
-}).strict()
-export type RunRequirementsInput = z.infer<typeof RunRequirementsInputSchema>
-export const RunRequirementSchema = z.object({
-  id: z.string().min(1).max(300), state: z.enum(['ready', 'missing', 'unknown']),
-  message: z.string().min(1).max(4000), fixable: z.boolean(),
-}).strict()
-export type RunRequirement = z.infer<typeof RunRequirementSchema>
-export const RunRequirementsResultSchema = z.object({
-  target: DeviceProvisioningTargetSchema.nullable(), items: z.array(RunRequirementSchema).max(500),
-}).strict()
-export type RunRequirementsResult = z.infer<typeof RunRequirementsResultSchema>
 const HarnessSelectionSchema = z.array(MaintainedHarnessSchema).min(1).max(2)
   .refine(harnesses => new Set(harnesses).size === harnesses.length, 'Choose each harness once.')
 
@@ -104,7 +78,7 @@ export type MaintenanceTaskStart = z.infer<typeof MaintenanceTaskStartSchema>
 
 export const MaintenanceRequestSchema = z.discriminatedUnion('operation', [
   /** scope 'worker' reads only the Worker update state, without the slow harness, registry and OS inspections. */
-  z.object({ operation: z.literal('status'), scope: z.literal('worker').optional(), browserProbe: z.boolean().optional() }).strict(),
+  z.object({ operation: z.literal('status'), scope: z.literal('worker').optional() }).strict(),
   z.object({ operation: z.literal('start'), commandId: z.uuid(), task: MaintenanceTaskStartSchema }).strict(),
 ])
 
@@ -162,7 +136,6 @@ export const MaintenanceStatusSchema = z.object({
   services: z.array(ServiceHealthSchema).max(50).optional(),
   worker: WorkerUpdateStatusSchema.optional(),
   browserRuntime: BrowserRuntimeStatusSchema.optional(),
-  browserProbe: z.object({ ready: z.boolean(), reason: z.string().max(2000).nullable() }).strict().optional(),
   harnesses: z.array(HarnessVersionSchema).max(2),
   system: z.object({
     /** Pending OS upgrades, including APT-held and phased updates; null when the count cannot be verified. */
@@ -214,7 +187,6 @@ export const ComputerMaintenanceListInputSchema = z.object({
 
 export const ComputerMaintenanceReadInputSchema = z.object({
   target: DeviceProvisioningTargetSchema, refresh: z.boolean().optional(),
-  browserProbe: z.boolean().optional(),
   taskLimit: MaintenanceTaskLimitSchema.optional(),
 }).strict()
 

@@ -204,7 +204,7 @@ export async function startConfiguredWorker({ stateDirectory, extensions = [], e
         ciStartupPending: async () => startupCi.pending || (await updater?.status())?.state === 'restarting',
         ...(updater ? { workerUpdate: { status: () => updater.status(), start: options => updater.start(options),
           outcome: (task, deadlineAt) => updater.maintenanceOutcome(task, deadlineAt) } } : {}),
-        browserRuntime: { status: () => browser.status(), retry: () => browser.retry(), probe: signal => browser.runtime.probe(signal) },
+        browserRuntime: { status: () => browser.status(), retry: () => browser.retry() },
         configuration: selection,
         ...(managedSetup?.state !== 'failed' ? { refreshWorkflowConfiguration } : {}),
         jobConfiguration: jobSelection && managedSetup?.state !== 'failed'
