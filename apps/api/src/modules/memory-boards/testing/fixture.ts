@@ -43,7 +43,7 @@ export function memoryFixture(pool: pg.Pool, principal: ManagementPrincipal) {
       const result=await tx.query<{record:ResolvedWork}>("select record from memory_test_owner where record->>'currentExecutionId'=$1",[subject.execution.executionId])
       return result.rows[0]?.record??null
     },
-    async lifecycle(tx,identity,work){const saved=await findWork(tx,work);if(saved.node.agentId!==identity.agentId)throw new DomainError('VALIDATION_ERROR','Wrong saved agent.',400)},
+    async lifecycle(tx,identity,work){const saved=await findWork(tx,work);if(saved.node.agentId!==identity.agentId)throw new DomainError('VALIDATION_ERROR','Wrong saved agent.',400);return true},
   }
   const service=createMemoryBoardService(pool,authority)
   const worker:ManagementPrincipal={id:randomUUID(),name:'Scoped Worker',audience:'worker',agentId:agent.agentId,
