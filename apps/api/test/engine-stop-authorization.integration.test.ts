@@ -29,4 +29,20 @@ describe.skipIf(!postgresEnabled)('Current production engine provider wiring', (
       expect(after.state.interactions).toEqual([])
     } finally { await t.close() }
   }, 60000)
+
+  it('Stop waits out a short-lived owner that is not one of the engine tasks', async () => {
+    const t = await checkpointRuntimeFixture()
+    try {
+      await t.engine.start(t.f.run.id)
+      await t.stop()
+      // A reconciliation or lifecycle step holds the Run's owner briefly without a tracked drive.
+      const holder = await t.runs.acquireOwnership(t.f.run.id, () => undefined)
+      if (!holder) throw new Error('The Run owner is unavailable')
+      const released = new Promise<void>(resolve => setTimeout(() => { void holder.release().then(resolve) }, 300))
+      expect(await t.engine.cancel(t.f.run.id)).toBe(true)
+      await released
+      expect((await t.runs.get(t.f.run.id))?.outcome).toBe('canceled')
+      expect(await t.runs.hasPendingCleanup(t.f.run.id)).toBe(false)
+    } finally { await t.close() }
+  }, 60000)
 })
