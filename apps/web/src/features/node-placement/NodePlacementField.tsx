@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import type { SavedNodePlacement } from '@foreman-code/contracts/node-placement'
 import { sameWorkflowValue } from '@foreman-code/contracts/current'
 import type { NodePlacementChoicesResult } from '@foreman-code/contracts/placement-readback'
@@ -29,31 +29,26 @@ export type NodePlacementFieldProps = {
   inheritedWorktree?: string | undefined
 }
 
+function SetupComputerButton({ workspaceId, computer, disabled, triggerRef, onSelectionRequired, onPrepared }: {
+  workspaceId: string; computer: UnavailableComputer; disabled?: boolean | undefined
+  triggerRef: RefObject<HTMLButtonElement | null>; onSelectionRequired(): void; onPrepared(): void
+}) {
+  const setup = useSetupWorkspaceSourceRoot(workspaceId)
+  return <><Button size="sm" variant="ghost" ref={triggerRef} disabled={disabled || setup.isPending} onClick={() => {
+    setup.mutate({ workspaceId, commandId: crypto.randomUUID(), hostRef: computer.hostRef }, {
+      onSuccess: result => {
+        if ('kind' in result.value && result.value.kind === 'selection-required') onSelectionRequired()
+        else onPrepared()
+      },
+    })
+  }}>Set up on {computer.name}</Button>{setup.error ? <span role="alert">{setup.error.message}</span> : null}</>
+}
+
 export function NodePlacementField({ workspaceId, value, options, unavailableComputers = [], onChange, disabled, optionsState = 'ready', note,
   inheritedWorktree }: NodePlacementFieldProps) {
   const [blocked, setBlocked] = useState<string>()
   const [setupComputer, setSetupComputer] = useState<UnavailableComputer>()
   const setupTrigger = useRef<HTMLButtonElement>(null)
-  const setup = useSetupWorkspaceSourceRoot(workspaceId ?? '')
-  // A computer set up on choice is selected as soon as it appears among the working choices.
-  const [setupHost, setSetupHost] = useState<UnavailableComputer['hostRef']>()
-  useEffect(() => {
-    if (!setupHost) return
-    const ready = options.find(option => !option.unavailableReason && sameWorkflowValue(option.placement.hostRef, setupHost))
-    if (!ready) return
-    setSetupHost(undefined)
-    setBlocked(undefined)
-    onChange(structuredClone(ready.placement))
-  }, [options, setupHost, onChange])
-  const runSetup = (computer: UnavailableComputer) => {
-    if (!workspaceId || setup.isPending) return
-    setup.mutate({ workspaceId, commandId: crypto.randomUUID(), hostRef: computer.hostRef }, {
-      onSuccess: result => {
-        if ('kind' in result.value && result.value.kind === 'selection-required') setSetupComputer(computer)
-        else setSetupHost(computer.hostRef)
-      },
-    })
-  }
   const selected = value ? options.findIndex((option) => sameWorkflowValue(option.placement, value)) : -1
   const current = selected >= 0 ? options[selected] : undefined
   let selection = value ? selected < 0 ? 'retained' : String(selected) : 'inherited'
@@ -67,9 +62,9 @@ export function NodePlacementField({ workspaceId, value, options, unavailableCom
   else if (!message && optionsState === 'loading') message = 'Checking computers…'
   else if (!message && optionsState === 'unavailable') message = note ?? 'Computers can’t be checked right now.'
   const needsSetup = blockedComputer?.reason === `This workspace’s project isn’t set up on ${blockedComputer?.name} yet.`
-  return <><NodeRow label="Computer" note={message ? <>{setup.isPending && needsSetup ? `Setting up ${blockedComputer?.name}…` : message}{workspaceId && blockedComputer && needsSetup && !setup.isPending ? <>{' '}
-    <Button size="sm" variant="ghost" ref={setupTrigger} disabled={disabled} onClick={() => runSetup(blockedComputer)}>Set up on {blockedComputer.name}</Button>
-    {setup.error ? <span role="alert">{setup.error.message}</span> : null}
+  return <><NodeRow label="Computer" note={message ? <>{message}{workspaceId && blockedComputer && needsSetup ? <>{' '}
+    <SetupComputerButton workspaceId={workspaceId} computer={blockedComputer} disabled={disabled} triggerRef={setupTrigger}
+      onSelectionRequired={() => setSetupComputer(blockedComputer)} onPrepared={() => setBlocked(undefined)} />
   </> : null}</> : undefined} tone={blockedReason || current?.unavailableReason ? 'warning' : undefined}>
     <Select label="Computer" aria-label="Computer" className="agent-node-inline" value={selection} disabled={disabled}
       options={[
@@ -87,11 +82,8 @@ export function NodePlacementField({ workspaceId, value, options, unavailableCom
         }
         const option = choice.startsWith('computer:') ? undefined : options[Number(choice)]
         if (!option || option.unavailableReason) {
-          // An unavailable computer is shown with its reason and never replaces the working choice;
-          // one whose project isn't set up yet is set up right away and selected when ready.
+          // An unavailable computer is shown with its reason and never replaces the working choice.
           setBlocked(choice)
-          const computer = choice.startsWith('computer:') ? unavailableComputers[Number(choice.slice(9))] : undefined
-          if (computer && computer.reason === `This workspace’s project isn’t set up on ${computer.name} yet.`) runSetup(computer)
           return
         }
         setBlocked(undefined)
@@ -101,6 +93,6 @@ export function NodePlacementField({ workspaceId, value, options, unavailableCom
     {workspaceId && setupComputer ? <WorkspaceExecutionLocationSettings workspaceId={workspaceId} presentation="dialog"
       open prepareSource initialHostRef={setupComputer.hostRef} triggerRef={setupTrigger}
       onOpenChange={open => { if (!open) setSetupComputer(undefined) }}
-      onSaved={() => { setSetupHost(setupComputer.hostRef); setSetupComputer(undefined) }} /> : null}
+      onSaved={() => { setSetupComputer(undefined); setBlocked(undefined) }} /> : null}
   </>
 }

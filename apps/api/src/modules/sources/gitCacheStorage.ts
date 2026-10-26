@@ -247,13 +247,12 @@ interface CacheTransfer {
 }
 
 /** Keep disabled auto-GC from accumulating one pack per fetch. The repository lock and transfer reservation cover
- * repacking too. A full repack into one pack takes seconds for these caches; the single-threaded geometric repack
- * capped at five seconds never finished, so packs grew past 750 and slowed every fetch. */
+ * repacking too; a large old cache gets at most five seconds of maintenance on a request. */
 async function compactPacks(common: string, options: GitProcessOptions, run: GitRunner): Promise<void> {
   const packs = (await readdir(resolve(common, 'objects', 'pack'))).filter(name => name.endsWith('.pack'))
   if (packs.length < 64) return
-  const result = await run(['-c', 'pack.threads=4', 'repack', '-a', '-d', '-l'], {
-    ...options, timeoutMs: Math.max(options.timeoutMs ?? 60_000, 60_000),
+  const result = await run(['-c', 'pack.threads=1', 'repack', '-d', '-l', '--geometric=2'], {
+    ...options, timeoutMs: Math.min(options.timeoutMs ?? 5000, 5000),
   })
   options.signal.throwIfAborted()
   if (result.code !== 0) {

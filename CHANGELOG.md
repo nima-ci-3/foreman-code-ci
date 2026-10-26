@@ -7,23 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Changed
-
-- Deploys are about two minutes faster: the API exits as soon as its shutdown finishes instead of waiting 60 s for systemd to kill it (and logs any handle still open), an already installed browser runtime is reused without copying or rehashing 850 MB again, and the web build cache resolves the Vite config's imports.
-- A gate no longer stops when one part fails: every part runs to the end, so one round shows every failure.
-
-## [0.0.129] - 2026-10-26
-
-### Added
-
-- Run checks Foreman Code MCP on every computer and harness the workflow uses; when something is missing, one modal sets it all up and then runs. Choosing a paired computer whose project isn't set up yet sets it up and selects it.
-
-## [0.0.128] - 2026-10-26
-
-### CI
-
-- A data: URL import no longer refuses a result key; the acceptance service, integration-coverage and built-web tests name the modules they load, so six more files are proven instead of always rerunning.
-
 ## [0.0.127] - 2026-10-26
 
 ### CI

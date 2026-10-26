@@ -3,7 +3,7 @@ import type pg from 'pg'
 import { CI_HOST_NAMESPACE, CiHostRequestSchema, CiRunRecordSchema, type CiHostRequest } from '@foreman-code/contracts'
 import { expect, it, vi } from 'vitest'
 import { WorkerExecutionPolicy } from '../../src/modules/settings/workerExecution.js'
-import { deferred, rejectableDeferred } from '../helpers/deferred.js'
+import { deferred } from '../helpers/deferred.js'
 import { DeviceApplicationAdmissionError } from '../../src/modules/devices/deviceApplicationError.js'
 import { ProductionHostCiEndpoint } from '@foreman-code/ci/endpoint'
 import { rejectedCiStart } from '@foreman-code/ci/dispatch'
@@ -161,49 +161,6 @@ it('does not report readiness for a Worker that never answered when its status r
     capabilities: () => [], request: async () => { throw new DeviceApplicationAdmissionError('background_yield') },
   }), { handle: async () => { throw new Error('Local runner must not be used.') } })
   await expect(endpoint.request(computer, { operation: 'status' })).rejects.toBeInstanceOf(DeviceApplicationAdmissionError)
-})
-
-it('bounds Worker readiness waits while retaining the execution and cleanup deadlines', async () => {
-  const computer: HostCiComputer = { key: 'fixture:reconnecting-worker',
-    hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-worker' }, label: 'Worker', priority: 50 }
-  const requests: { operation: string; timeoutMs: number | undefined }[] = []
-  const endpoint = new ProductionHostCiEndpoint(mainCiContext, {} as pg.Pool, 'fixture-main', () => ({
-    capabilities: () => [], request: async (_device, _namespace, payload, options) => {
-      requests.push({ operation: (payload as CiHostRequest).operation, timeoutMs: options?.timeoutMs })
-      throw new Error('Worker is reconnecting')
-    },
-  }), { handle: async () => { throw new Error('Unexpected local request') } })
-  for (const request of [{ operation: 'status' }, { operation: 'status', cleanupRunIds: [] },
-    { operation: 'read', runId: 'fixture-run', afterOffset: 0 }] as CiHostRequest[]) {
-    await expect(endpoint.request(computer, request)).rejects.toThrow('Worker is reconnecting')
-  }
-  expect(requests).toEqual([{ operation: 'status', timeoutMs: 1500 }, { operation: 'status', timeoutMs: 120_000 },
-    { operation: 'read', timeoutMs: 120_000 }])
-})
-
-it('returns retryable unavailability while a Worker bundle check is reconnecting', async () => {
-  vi.useFakeTimers()
-  const bundle = rejectableDeferred<never>()
-  const computer: HostCiComputer = { key: 'fixture:bundle-worker',
-    hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-worker' }, label: 'Worker', priority: 50 }
-  const endpoint = new ProductionHostCiEndpoint(mainCiContext, {} as pg.Pool, 'fixture-main', () => ({
-    capabilities: () => [], request: async () => ({ payload: { operation: 'status', ready: true, reasons: [],
-      cpuCount: 8, memoryBytes: 16 * 2 ** 30, runs: [], startProtocolVersion: 3 } }),
-    workerBundleReadiness: () => bundle.promise,
-  }), { handle: async () => { throw new Error('Unexpected local request') } })
-  const planning = new CiPlanningSnapshot(mainCiContext, endpoint)
-  let outcome: unknown
-  const reading = planning.request(computer, { operation: 'status' }).then(
-    reply => { outcome = reply }, error => { outcome = error })
-  try {
-    await vi.advanceTimersByTimeAsync(1500)
-    expect(outcome).toMatchObject({ code: 'CI_HOST_STATUS_UNAVAILABLE', status: 503, details: { retryable: true } })
-    expect(planning.status(computer)).toBeUndefined()
-  } finally {
-    bundle.reject(new Error('Worker disconnected'))
-    await reading
-    vi.useRealTimers()
-  }
 })
 
 it('spends a start retry only after a live status reports the assigned run absent', async () => {

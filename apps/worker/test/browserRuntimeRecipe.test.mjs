@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -114,18 +114,6 @@ test('a Worker installs the pinned recipe, reuses third-party inputs across comm
   assert.equal((await readInstalledBrowserRuntime({ runtimeRoot: f.runtimeRoot, target })).recipeSha256, first.expectedSha256);
   await writeFile(installed.bridgeScript, 'tampered');
   await assert.rejects(readInstalledBrowserRuntime({ runtimeRoot: f.runtimeRoot, target }), /checksum/);
-});
-
-test('staging an already installed recipe reuses it without copying the runtime again', async t => {
-  const f = await fixture(t);
-  const first = await f.recipe('first'), installed = await f.stage(first);
-  // A read-only versions folder makes any new staging copy fail, so only a true reuse succeeds.
-  const versions = join(f.runtimeRoot, 'versions');
-  await chmod(versions, 0o500);
-  let again;
-  try { again = await f.stage(first); } finally { await chmod(versions, 0o700); }
-  assert.equal(again.manifestSha256, installed.manifestSha256);
-  assert.equal(again.rootDirectory, installed.rootDirectory);
 });
 
 test('changing the resolved wheel lock requires a new verified third-party installation', async t => {

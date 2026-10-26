@@ -1,6 +1,6 @@
 export { browserAgentTools, chatToolOverride } from './browserTools.js'
 export type { ConsultationTransaction } from './consultationBrowser.js'
-export { memoryExecution, workflowAgentRoles } from './memoryExecution.js'
+export { memoryExecution } from './memoryExecution.js'
 export { MemoryResultRejected } from './memoryResultError.js'
 export type { BrowserLifecyclePort, ExecutionChatPort, MemoryBoardPort } from './ports.js'
 export { bindCoordinatorConsultationNativeLocked, captureCoordinatorConsultationNativeLocked, readCoordinatorConsultationLocked, settleCoordinatorConsultationLocked } from './workflowConsultations.js'

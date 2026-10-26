@@ -68,50 +68,6 @@ it('resolves a missing non-tip commit without pushing until dispatch pins it', a
   expect(f.run(f.origin, 'rev-parse', `refs/heads/foreman/ci/${f.commit}`)).toBe(f.commit)
 })
 
-it('warms the exact release source and smoke graph before accepting admissions', async () => {
-  const f = await shallowFixture()
-  const resultKeys = vi.fn<NonNullable<GitCiCommits['resultKeys']>>(async (_repository, commit, files) => {
-    // Key computation must see the fetched release, not the clone's newer branch tip.
-    expect(f.run(f.clone, 'cat-file', '-t', commit)).toBe('commit')
-    expect(files).toEqual([{ file: 'apps/api/test/ci-smoke.integration.test.ts', suite: 'integration', part: 'integration' }])
-    return {}
-  })
-  Object.assign(f.commits, { resultKeys })
-  await f.commits.warmup('octo/site', f.commit)
-  expect(resultKeys).toHaveBeenCalledOnce()
-  expect(await f.commits.resolve('octo/site', 'main', f.commit, null)).toBe(f.commit)
-  expect(f.git.mock.calls.filter(([args]) => args[0] === 'fetch')).toHaveLength(1)
-  expect(f.git.mock.calls.filter(([args]) => args[0] === 'push')).toHaveLength(0)
-})
-
-it('does not finish release warming until its smoke graph is ready', async () => {
-  const f = await shallowFixture()
-  let release!: () => void
-  const graph = new Promise<Record<string, never>>(resolve => { release = () => resolve({}) })
-  const resultKeys = vi.fn(() => graph)
-  Object.assign(f.commits, { resultKeys })
-  let ready = false
-  const warming = f.commits.warmup('octo/site', f.commit).then(() => { ready = true })
-  try {
-    await vi.waitFor(() => expect(resultKeys).toHaveBeenCalledOnce())
-    expect(ready).toBe(false)
-  } finally {
-    release()
-    await warming
-  }
-  expect(ready).toBe(true)
-})
-
-it('fails release warming when the source or graph cannot be prepared', async () => {
-  const f = await shallowFixture()
-  const resultKeys = vi.fn(async () => { throw new Error('graph unavailable') })
-  Object.assign(f.commits, { resultKeys })
-  await expect(f.commits.warmup('octo/site', 'f'.repeat(40)))
-    .rejects.toMatchObject({ code: 'SOURCE_GITHUB_UNAVAILABLE' })
-  expect(resultKeys).not.toHaveBeenCalled()
-  await expect(f.commits.warmup('octo/site', f.commit)).rejects.toThrow('graph unavailable')
-})
-
 it('publishes a missing non-tip commit by reading it from origin at depth one', async () => {
   const f = await shallowFixture()
   await expect(publishCommit(f.ports, 'octo/site', f.commit, AbortSignal.timeout(30_000)))
