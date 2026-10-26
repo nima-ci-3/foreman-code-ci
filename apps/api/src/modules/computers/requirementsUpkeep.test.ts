@@ -20,3 +20,19 @@ it('repairs requirements on Main and paired computers and retries a failed compu
   await fleet.syncChangedSources()
   expect(repaired.has(registrations[0]!.workerInstallationId)).toBe(true)
 })
+
+it('continues computer sync while requirements repair is still running', async () => {
+  const { fleet, sources, requested } = fakeFleet(fakeComputer())
+  let release!: () => void
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  Object.assign(sources, { runRequirementsRepair: async () => waiting })
+  let finished = false
+  const upkeep = fleet.syncChangedSources().finally(() => { finished = true })
+  try {
+    await expect.poll(() => requested.some(task => task.kind === 'sync-mcp'), { timeout: 3000 }).toBe(true)
+    expect(finished).toBe(false)
+  } finally {
+    release()
+    await upkeep
+  }
+})
