@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { expect, it } from 'vitest'
-import { CiResultKeys, type CiTestTree } from '../src/resultCache.js'
+import { CiResultKeys, type CiFileMask, type CiTestTree } from '../src/resultCache.js'
+import { functionMasks } from '../src/functionProofs.js'
 
 function tree(files: Record<string, string>): CiTestTree {
   return { blobs: new Map(Object.entries(files).map(([path, text]) => [path, `100644:${createHash('sha1').update(text).digest('hex')}`])),
@@ -13,6 +14,31 @@ const base = {
   'apps/api/src/lib/label.ts': 'export const label = (value: string) => value\n',
   'apps/api/test/label.test.ts': "import { expect, it } from 'vitest'\nimport { label } from '../src/lib/label.js'\nit('labels', () => expect(label('a')).toBe('a'))\n",
 }
+
+it('keeps an unsplit lockfile in every project and proof key', async () => {
+  const files = { ...base,
+    'packages/kit/package.json': JSON.stringify({ name: 'kit' }),
+    'packages/kit/src/value.test.ts': 'export const value = 1\n',
+    'scripts/value.test.mjs': 'export const value = 1\n' }
+  for (const lockfile of ['lockfileVersion: 9.0\n', 'lockfileVersion: 9.0\nimporters: {}\n']) {
+    const before = await CiResultKeys.create(tree({ ...files, 'pnpm-lock.yaml': lockfile }), AbortSignal.timeout(10_000))
+    const after = await CiResultKeys.create(tree({ ...files, 'pnpm-lock.yaml': `${lockfile}# upgraded\n` }), AbortSignal.timeout(10_000))
+    for (const file of ['apps/api/test/label.test.ts', 'packages/kit/src/value.test.ts', 'scripts/value.test.mjs']) {
+      for (const suite of ['unit', 'integration']) {
+        const first = await before.key(file, suite, suite)
+        const changed = await after.key(file, suite, suite)
+        expect(first.key).toMatch(/^[a-f0-9]{64}$/)
+        expect(changed.key).toMatch(/^[a-f0-9]{64}$/)
+        expect(changed.key).not.toBe(first.key)
+        expect(changed.runnerFreeKey).not.toBe(first.runnerFreeKey)
+        const mask: CiFileMask = async () => 'same function inputs'
+        const masked = await before.key(file, suite, suite, mask)
+        expect(masked.key).toMatch(/^[a-f0-9]{64}$/)
+        expect((await after.key(file, suite, suite, mask)).key).not.toBe(masked.key)
+      }
+    }
+  }
+})
 
 it('keys tests although a runner script documents an import of a file that does not exist', async () => {
   const keys = await CiResultKeys.create(tree({ ...base,
@@ -51,7 +77,7 @@ it('keys files with a fresh deadline after the deadline that built the graph has
     .toMatch(/^[a-f0-9]{64}$/)
 })
 
-it('changes a test key when a child process entrypoint the tested code names by path changes', async () => {
+it('follows child URLs through generic process wrappers', async () => {
   // Production: formats/supervisor.ts forks "./worker.ts" through a computed URL; editing only the worker kept the key.
   const files = { ...base,
     'apps/api/src/process.ts': "import { fork } from 'node:child_process'\nexport const forkProcess = (path: string) => fork(path)\n",
@@ -110,9 +136,9 @@ it('keys tests whose helpers read sibling files and run system tools, and follow
   expect(await keyOf({ 'apps/api/test/fixtures/server.cjs': 'module.exports = 2\n' })).not.toBe(first)
 })
 
-it('still refuses a key when a test helper starts a process it names by a computed path', async () => {
+it('still refuses a key when a test helper starts an executable supplied by the host environment', async () => {
   const keys = await CiResultKeys.create(tree({ ...base,
-    'apps/api/test/fixtures/run.ts': "import { spawn } from 'node:child_process'\nexport const run = (binary: string) => spawn(binary, [])\n",
+    'apps/api/test/fixtures/run.ts': "import { spawn } from 'node:child_process'\nexport const run = spawn(process.env.BINARY!, [])\n",
     'apps/api/test/run.test.ts': "import { run } from './fixtures/run.js'\nexport const value = run\n" }), AbortSignal.timeout(10_000))
   expect(await keys.key('apps/api/test/run.test.ts', 'unit', 'unit-api')).toMatchObject({ key: null })
 })
@@ -234,11 +260,11 @@ it('treats the repository root a test setup resolves as a base, not as files the
   expect(await keyOf({ 'apps/api/test/other.test.ts': 'export const other = 2\n' })).toBe(first)
 })
 
-it('keys a named test directory on the names of its tests, not their source', async () => {
-  // Production: a fixture string "apps/api/test" in cloud.testSupport.ts put the source of ~2,200 tests in the keys
-  // of 74 tests; editing any test reran them all. Adding or removing a test there still changes the key.
+it('keys an enumerated test directory on names, and explicitly read assets on contents', async () => {
+  // Reading a directory observes test names; reading an asset observes its contents.
   const files = { ...base,
-    'apps/api/test/ci-host/support.ts': "export const repository = { 'apps/api/test': 'fixture' }\n",
+    'apps/api/test/ci-host/support.ts': "import { readdirSync, readFileSync } from 'node:fs'\n"
+      + "export const repository = { names: readdirSync(new URL('../', import.meta.url)), data: readFileSync(new URL('../data.json', import.meta.url)) }\n",
     'apps/api/test/ci-host/one.test.ts': "import { repository } from './support.js'\nexport const value = repository\n",
     'apps/api/test/two.test.ts': 'export const two = 1\n',
     'apps/api/test/data.json': '{"a":1}\n' }
@@ -249,4 +275,94 @@ it('keys a named test directory on the names of its tests, not their source', as
   expect(await keyOf({ 'apps/api/test/two.test.ts': 'export const two = 2\n' })).toBe(first)
   expect(await keyOf({ 'apps/api/test/three.test.ts': 'export const three = 3\n' })).not.toBe(first)
   expect(await keyOf({ 'apps/api/test/data.json': '{"a":2}\n' })).not.toBe(first)
+})
+
+it('keys runner regression files only when the test imports them', async () => {
+  const regressions = ['scripts/test-integration.test.mjs', 'scripts/integration-process.test.mjs',
+    'scripts/integration-capacity.test.mjs', 'scripts/integration-phase.test.mjs']
+  const files = { ...base, ...Object.fromEntries(regressions.map(path => [path, 'export const fixture = 1\n'])),
+    'scripts/integration-process.mjs': 'export const run = 1\n',
+    'apps/api/test/runner.test.ts': "import { fixture } from '../../../scripts/integration-process.test.mjs'\nexport const value = fixture\n" }
+  const keyOf = async (changes: Record<string, string>, file = 'apps/api/test/label.test.ts') =>
+    (await (await CiResultKeys.create(tree({ ...files, ...changes }), AbortSignal.timeout(10_000))).key(file, 'integration', 'integration')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  for (const path of regressions) expect(await keyOf({ [path]: 'export const fixture = 2\n' })).toBe(first)
+  const imported = await keyOf({}, 'apps/api/test/runner.test.ts')
+  expect(imported).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'scripts/integration-process.test.mjs': 'export const fixture = 2\n' }, 'apps/api/test/runner.test.ts')).not.toBe(imported)
+  expect(await keyOf({ 'scripts/integration-process.mjs': 'export const run = 2\n' })).not.toBe(first)
+})
+
+it('keeps protocol declarations out of runtime keys unless a test reads them', async () => {
+  const declaration = 'packages/ci-protocol/src/testResults.d.mts'
+  const files = { ...base,
+    [declaration]: 'export interface Result { passed: number }\n',
+    'packages/ci-protocol/src/testResults.mjs': 'export const passed = 1\n',
+    'apps/api/test/declarations.test.ts': "import { readFileSync } from 'node:fs'\n"
+      + "export const declarations = readFileSync(new URL('../../../packages/ci-protocol/src/testResults.d.mts', import.meta.url), 'utf8')\n" }
+  const keyOf = async (changes: Record<string, string>, file = 'apps/api/test/label.test.ts') =>
+    (await (await CiResultKeys.create(tree({ ...files, ...changes }), AbortSignal.timeout(10_000))).key(file, 'integration', 'integration')).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  const edit = { [declaration]: 'export interface Result { passed: number; failed: number }\n' }
+  expect(await keyOf(edit)).toBe(first)
+  const reader = await keyOf({}, 'apps/api/test/declarations.test.ts')
+  expect(reader).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf(edit, 'apps/api/test/declarations.test.ts')).not.toBe(reader)
+  expect(await keyOf({ 'packages/ci-protocol/src/testResults.mjs': 'export const passed = 2\n' })).not.toBe(first)
+})
+
+it('does not load a Vitest alias replacement until a test imports the target', async () => {
+  const files = { ...base,
+    'apps/api/package.json': JSON.stringify({ name: '@example/kit', exports: { './tool': './dist/tool.js' }, devDependencies: { vitest: '4.0.0' } }),
+    'apps/api/vitest.config.mjs': "import { fileURLToPath, URL } from 'node:url'\nexport default {\n"
+      + " resolve: { alias: [{ find: '@example/kit/tool', replacement: fileURLToPath(new URL('./src/tool.ts', import.meta.url)) }] },\n"
+      + " test: { setupFiles: ['./test/setup.ts'] }\n}\n",
+    'apps/api/test/setup.ts': 'export const setup = 1\n',
+    'apps/api/src/tool.ts': "import { helper } from './helper.js'\nexport const tool = () => helper()\n",
+    'apps/api/src/helper.ts': 'export const helper = () => 1\n',
+    'apps/api/test/tool.test.ts': "import { tool } from '@example/kit/tool'\nexport const value = tool()\n",
+  }
+  const keyOf = async (changes: Record<string, string>, file = 'apps/api/test/label.test.ts', mask?: CiFileMask) =>
+    (await (await CiResultKeys.create(tree({ ...files, ...changes }), AbortSignal.timeout(10_000))).key(file, 'integration', 'integration', mask)).key
+  const first = await keyOf({})
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'apps/api/src/helper.ts': 'export const helper = () => 2\n' })).toBe(first)
+  const imported = await keyOf({}, 'apps/api/test/tool.test.ts')
+  expect(imported).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'apps/api/src/helper.ts': 'export const helper = () => 2\n' }, 'apps/api/test/tool.test.ts')).not.toBe(imported)
+  expect(await keyOf({ 'apps/api/test/setup.ts': 'export const setup = 2\n' })).not.toBe(first)
+  expect(await keyOf({ 'apps/api/vitest.config.mjs': files['apps/api/vitest.config.mjs'].replace("'@example/kit/tool'", "'other'") })).not.toBe(first)
+  // defineConfig's literal form is the API's real configuration shape.
+  const configured = "import { defineConfig } from 'vitest/config'\n"
+    + files['apps/api/vitest.config.mjs'].replace('export default {', 'export default defineConfig({').replace(/}\n$/, '})\n')
+  const configuredKey = await keyOf({ 'apps/api/vitest.config.mjs': configured })
+  expect(configuredKey).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ 'apps/api/vitest.config.mjs': configured, 'apps/api/src/helper.ts': 'export const helper = () => 2\n' })).toBe(configuredKey)
+  // The same URL outside the alias is still an input, as is an alias that overrides ordinary package resolution.
+  for (const config of [files['apps/api/vitest.config.mjs'].replace("'./test/setup.ts'", "'./src/tool.ts'"),
+    files['apps/api/vitest.config.mjs'].replace("'@example/kit/tool'", "'custom-alias'"),
+    files['apps/api/vitest.config.mjs'].replace(' test: {', ' plugins: [], test: {'),
+    "import { readFileSync } from 'node:fs'\n" + files['apps/api/vitest.config.mjs'].replace("new URL('./src/tool.ts', import.meta.url)", "new URL('./src/tool.ts', import.meta.url), 'utf8'")
+      .replace('replacement: fileURLToPath(', 'replacement: readFileSync('),
+    "import './src/tool.ts'\n" + files['apps/api/vitest.config.mjs']]) {
+    const key = await keyOf({ 'apps/api/vitest.config.mjs': config })
+    expect(key).toMatch(/^[a-f0-9]{64}$/)
+    expect(await keyOf({ 'apps/api/vitest.config.mjs': config, 'apps/api/src/helper.ts': 'export const helper = () => 2\n' })).not.toBe(key)
+  }
+  const override = { 'apps/api/package.json': JSON.stringify({ name: '@example/kit', exports: { './tool': './dist/helper.js' },
+    devDependencies: { vitest: '4.0.0' } }) }
+  const overridden = await keyOf(override)
+  expect(overridden).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ ...override, 'apps/api/src/helper.ts': 'export const helper = () => 2\n' })).not.toBe(overridden)
+  // Once the alias stops making this a harness file, existing function proofs can distinguish its callers.
+  const test = 'apps/api/test/tool.test.ts'
+  const helper = 'apps/api/src/helper.ts'
+  const mask = functionMasks({ sets: [['/helper#0']], tests: { [test]: { [helper]: 0 } } })(test)
+  const withUnused = 'export const helper = () => 1\nexport const unused = () => 2\n'
+  const masked = await keyOf({ [helper]: withUnused }, test, mask)
+  expect(masked).toMatch(/^[a-f0-9]{64}$/)
+  expect(await keyOf({ [helper]: withUnused.replace('=> 2', '=> 3') }, test, mask)).toBe(masked)
+  expect(await keyOf({ [helper]: withUnused.replace('=> 1', '=> 3') }, test, mask)).not.toBe(masked)
 })

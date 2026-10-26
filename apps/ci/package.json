@@ -127,6 +127,7 @@
     "@foreman-code/contracts": "workspace:*",
     "@foreman-code/contracts-node": "workspace:*",
     "fastify": "5.12.7",
+    "typescript": "5.9.3",
     "yaml": "2.9.0",
     "zod": "4.6.3"
   },
@@ -137,7 +138,6 @@
     "eslint": "10.10.0",
     "globals": "17.12.0",
     "pg": "8.23.0",
-    "typescript": "5.9.3",
     "typescript-eslint": "8.70.0",
     "vitest": "5.0.5"
   }

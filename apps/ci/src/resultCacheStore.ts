@@ -5,8 +5,9 @@ import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
 import type { CiContext } from './environment.js'
 import { CiResultKeys, type CiResultKey, type CiTestTree } from './resultCache.js'
 
-/** Keys are computed while ci_run waits; past this the request runs every file instead. */
-const KEY_BUDGET_MS = 20_000
+/** Keys are computed while ci_run waits; past this the request runs every file instead. Keying every test of the
+ * repository takes about 20 s, and a run of every file costs minutes, so the budget only stops a hung computation. */
+const KEY_BUDGET_MS = 120_000
 const CacheKeysSchema = z.record(z.string(), z.string())
 /** Of the files proven only under another test runner, this share (at least one per part) reruns as a canary. */
 const RUNNER_CANARY_SHARE = 0.05
@@ -32,7 +33,9 @@ export async function planCachedSelection(context: CiContext, pool: pg.Pool, inp
   suite: string; files: readonly string[]; partOf(file: string): string
   /** Keys for the files (preferred, computed off the event loop), or the commit's tree to key them in process. */
   keys?(files: { file: string; suite: string; part: string }[], signal: AbortSignal): Promise<Record<string, CiResultKey>>
-  tree?(signal: AbortSignal): Promise<CiTestTree> }): Promise<CachedSelection> {
+  tree?(signal: AbortSignal): Promise<CiTestTree>
+  /** Of files without an exact proof, those a function proof still covers (functionProofs). */
+  functionProofs?: ((files: string[]) => Promise<CiCachedFile[]>) | undefined }): Promise<CachedSelection> {
   const files = [...new Set(input.files)].sort()
   const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
@@ -90,6 +93,16 @@ export async function planCachedSelection(context: CiContext, pool: pg.Pool, inp
         else cached.push({ file, ticketId: proof.ticket_id, commit: proof.commit })
       }
     }
+    if (input.functionProofs && remaining.length) {
+      try {
+        const proven = await input.functionProofs(remaining)
+        const files = new Set(proven.map(item => item.file))
+        cached.push(...proven)
+        remaining.splice(0, remaining.length, ...remaining.filter(file => !files.has(file)))
+      } catch (error) {
+        context.log.warn({ err: error, workspaceId: input.workspaceId, commit: input.commit }, 'CI function proofs unavailable')
+      }
+    }
     remaining.sort()
     const unkeyed = [...keys].flatMap(([file, value]) => value.key === null ? [{ file, reason: value.reason }] : [])
     context.log.info({ workspaceId: input.workspaceId, commit: input.commit, suite: input.suite, cached: cached.map(item => item.file),
@@ -122,16 +135,16 @@ export function ciCachedNotice(cached: readonly CiCachedFile[]): string {
   return lines.join('\n')
 }
 
-/** Records every file a finished part proved: reported passed with no skipped test, under its input key. Only that
+/** Records every file a finished part proved, and returns them: reported passed with no skipped test, under its input key. Only that
  * file's own result matters, so files that passed in a failed part are recorded too; failed, skipped, unreported and
  * unkeyed files never are. Keys come from admission or, for runs whose files the runner chose, from the commit. */
 export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state: string,
-  keysFor?: (files: readonly string[]) => Promise<Record<string, string>>) {
-  if (!['passed', 'failed'].includes(state)) return
+  keysFor?: (files: readonly string[]) => Promise<Record<string, string>>): Promise<string[]> {
+  if (!['passed', 'failed'].includes(state)) return []
   const row = (await pool.query<{ result_cache_keys: unknown; test_results: unknown }>(
     'select result_cache_keys,test_results from ci_runs where id=$1', [run.id])).rows[0]
   const results = CiTestResultsSchema.safeParse(row?.test_results)
-  if (!results.success) return
+  if (!results.success) return []
   // Results keep failed, then skipped, then passed tests: within this bound every skipped test is listed.
   const skippedListed = results.data.summary.failed + results.data.summary.skipped <= CI_TEST_RESULT_LIMITS.tests
   const passedFiles = results.data.proven ?? results.data.files.filter(reported => reported.status === 'passed'
@@ -149,7 +162,7 @@ export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state
         failed_at=excluded.failed_at where ci_test_failures.failed_at <= excluded.failed_at`,
     [run.workspaceId, run.repository, run.suite, run.id, run.commit, failedFiles, resultAt])
   }
-  if (!passedFiles.length) return
+  if (!passedFiles.length) return []
   await pool.query(`delete from ci_test_failures where workspace_id=$1 and repository=$2 and suite=$3 and file=any($4::text[])
     and failed_at < $5`, [run.workspaceId, run.repository, run.suite, passedFiles, resultAt])
   const admitted = CacheKeysSchema.safeParse(row?.result_cache_keys)
@@ -159,7 +172,7 @@ export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state
   // A stored value carries the full key and, after a space, the runner-free key; the pass proves the file under both.
   const proven = [...new Map(passedFiles.flatMap(file => (keys[file]?.split(' ') ?? []).map(key => [key, file] as const)))]
     .map(([key, file]) => [file, key] as const)
-  if (!proven.length) return
+  if (!proven.length) return passedFiles
   await pool.query(`insert into ci_test_result_cache(workspace_id,repository,cache_key,file,ticket_id,commit,passed_at)
     select $1,$2,proven.cache_key,proven.file,$3,$4,$7 from unnest($5::text[],$6::text[]) as proven(file,cache_key)
     on conflict (workspace_id,repository,cache_key) do update set file=excluded.file, ticket_id=excluded.ticket_id,
@@ -167,6 +180,7 @@ export async function recordCiResultCache(pool: pg.Pool, run: CiRunRecord, state
   [run.workspaceId, run.repository, run.id, run.commit, proven.map(([file]) => file), proven.map(([, key]) => key), resultAt])
   await pool.query(`delete from ci_test_result_cache where workspace_id=$1 and passed_at < now() - interval '30 days'`,
     [run.workspaceId])
+  return passedFiles
 }
 
 /** Test files of the suite whose latest result was a failure. */

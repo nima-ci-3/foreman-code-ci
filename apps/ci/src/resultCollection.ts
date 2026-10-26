@@ -9,27 +9,32 @@ import { gunzipSync } from 'node:zlib'
 import { CiIntegrationCoverageSchema } from '@foreman-code/contracts'
 import type { IntegrationCoverageStore } from './coverageStore.js'
 import { expandIntegrationCoverage } from '@foreman-code/contracts/ci-coverage'
+import { reportFunctions, type ExecutedFunctions } from './functionProofs.js'
 
 
 export async function collectCiResults(context: CiContext, pool: pg.Pool, endpoint: HostCiEndpoint, computer: HostCiComputer,
   run: CiRunRecord, reply: Extract<CiHostReply, { operation: 'read' }>, coverage?: IntegrationCoverageStore) {
   if (!['unit', 'integration'].includes(run.suite)) {
-    return { run: reply.run, durations: reply.durations, error: undefined }
+    return { run: reply.run, durations: reply.durations, error: undefined, functions: undefined }
   }
   let results: Extract<CiHostReply, { operation: 'read' }> | undefined
   let collection: CiHostRun['collection'] = 'pending'
   let collectionError: unknown
+  let functions: ExecutedFunctions | undefined
   try {
+    // Every integration part reports coverage: the functions its tests ran prove them later (functionProofs); a full
+    // run's file map also serves file selection.
     const fetched = await endpoint.request(computer, { operation: 'read', runId: ciExecutionRunId(run),
       afterOffset: 0, maxBytes: 1, testResults: true, durations: true,
-      ...(coverage && run.suite === 'integration' && run.scope === 'full' ? { integrationCoverage: true } : {}) },
+      ...(coverage && run.suite === 'integration' ? { integrationCoverage: true } : {}) },
     { priority: 'background' })
     if (fetched.operation === 'read') {
       results = fetched
-      if (coverage && fetched.integrationCoverage && run.suite === 'integration' && run.scope === 'full') {
+      if (coverage && fetched.integrationCoverage && run.suite === 'integration') {
         const report = CiIntegrationCoverageSchema.parse(expandIntegrationCoverage(JSON.parse(
           gunzipSync(Buffer.from(fetched.integrationCoverage, 'base64'), { maxOutputLength: 64 * 1024 * 1024 }).toString())))
-        await coverage.record(run.repository, run.commit, report)
+        functions = reportFunctions(report)
+        if (run.scope === 'full') await coverage.record(run.repository, run.commit, report)
       }
       if (fetched.testResults) {
         await pool.query(`update ci_runs set test_results=$2::jsonb where id=$1
@@ -50,5 +55,5 @@ export async function collectCiResults(context: CiContext, pool: pg.Pool, endpoi
     }
   }
   return { run: { ...reply.run, collection }, durations: results?.durations ?? reply.durations,
-    error: collectionError }
+    error: collectionError, functions }
 }

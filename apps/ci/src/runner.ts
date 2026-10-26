@@ -6,9 +6,10 @@ import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile
 import { sanitizeCiText, serializeCiJson } from './text.js'
 import { availableParallelism, freemem, homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { gzipSync, gunzipSync } from 'node:zlib'
+import { gunzipSync } from 'node:zlib'
 import { ciWorkspacePackages } from '@foreman-code/contracts/ci-import-graph'
-import { compactIntegrationCoverage, expandIntegrationCoverage } from '@foreman-code/contracts/ci-coverage'
+import { expandIntegrationCoverage } from '@foreman-code/contracts/ci-coverage'
+import { deviceCoverageReport } from './functionProofs.js'
 import { CiIntegrationCoverageSchema, CiWatchdogFailureSchema, CiDurationsSchema, CiHostReplySchema, CiHostRequestSchema, CiTestResultsSchema, integrationPartition,
   CiSelectionSchema, validCiSelection,
   CI_HOST_START_PROTOCOL_VERSION,
@@ -292,7 +293,7 @@ export class HostCiRunner {
     const coverage = request.integrationCoverage && finished
       ? await readCiReport(this.context, reportPath('integration-coverage.json'), CiIntegrationCoverageSchema) : null
     const compressed = coverage?.state === 'complete'
-      ? gzipSync(JSON.stringify(compactIntegrationCoverage(coverage.data))).toString('base64') : undefined
+      ? deviceCoverageReport(coverage.data) : undefined
     if (tests) {
       const meta = await this.readMeta(request.runId).catch(error => {
         if (error instanceof DomainError && error.code === 'CI_RUN_UNKNOWN' && run.state === 'canceled') return null
@@ -311,7 +312,7 @@ export class HostCiRunner {
     }
     return CiHostReplySchema.parse({ operation: 'read', run, text, nextOffset,
       ...(measured?.state === 'complete' ? { durations: measured.data } : {}),
-      ...(compressed && compressed.length <= 700_000 ? { integrationCoverage: compressed } : {}),
+      ...(compressed ? { integrationCoverage: compressed } : {}),
       ...(tests?.state === 'complete' ? { testResults: tests.data } : {}) })
   }
 
@@ -1063,7 +1064,7 @@ export class HostCiRunner {
       integrationEnvironment = ` FOREMAN_CODE_INTEGRATION_DURATIONS=${quote(join(run, 'expected-durations.json'))}`
         + ` FOREMAN_CODE_INTEGRATION_DURATIONS_OUTPUT=${quote(join(run, 'measured-durations.json'))}`
         + ` FOREMAN_CODE_INTEGRATION_TEST_RESULTS_OUTPUT=${quote(join(run, 'test-results.json'))}`
-        + ` FOREMAN_CODE_INTEGRATION_COVERAGE=${meta.scope === 'full' ? 1 : 0}`
+        + ' FOREMAN_CODE_INTEGRATION_COVERAGE=1'
         + ` FOREMAN_CODE_INTEGRATION_COVERAGE_OUTPUT=${quote(join(run, 'integration-coverage.json'))}`
       if (meta.partition || affected || meta.gate) {
         const tests = join(source, 'apps/api/test')

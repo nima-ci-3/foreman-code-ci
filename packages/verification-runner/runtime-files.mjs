@@ -27,5 +27,14 @@ export const verificationRuntimeFiles = [
   'packages/ci-protocol/src/testResults.mjs',
 ]
 
+/** Repository assets copied into the deployable API and covered by build freshness. */
+const controls = ['Containerfile', 'corepack', 'context.mjs', 'seed-policy.mjs',
+  'verification-policy.mjs', 'verification-observation.mjs']
+export const apiRuntimeFiles = [
+  'apps/worker/artifacts/node-24.22.1-linux-x64.json',
+  ...controls.map(name => `apps/worker/artifacts/ci-runtime/${name}`),
+  ...verificationRuntimeFiles,
+]
+
 /** Installed Workers retain their existing flattened scripts directory. */
 export const verificationArtifactPath = path => path.replace(/^scripts\//, 'verification/')

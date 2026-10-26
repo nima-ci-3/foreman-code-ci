@@ -4,6 +4,7 @@ import type { CiRepositoryCapabilities } from './repository.js'
 import type { CiIntegrationInventory } from './integrationParts.js'
 import type { CiUnitInventory } from './parts.js'
 import type { CiResultKey, CiTestTree } from './resultCache.js'
+import type { FunctionCoverageInput } from './functionProofs.js'
 
 export type HostRef = CiRunRecord['computer'] extends infer C ? C extends { hostRef: infer H } ? H : never : never
 /** Local dispatch failures can settle before a host records a start. */
@@ -43,7 +44,7 @@ export interface CiCommits {
   testTree?(repository: string, commit: string, signal?: AbortSignal): Promise<CiTestTree>
   /** Result cache keys for files of a commit, computed off the API's event loop; without it keys come from testTree. */
   resultKeys?: ((repository: string, commit: string, files: { file: string; suite: string; part: string }[],
-    signal: AbortSignal) => Promise<Record<string, CiResultKey>>) | undefined
+    signal: AbortSignal, functions?: FunctionCoverageInput) => Promise<Record<string, CiResultKey>>) | undefined
   resolve(repository: string, defaultBranch: string, commit: string | undefined,
     snapshot: { baseCommit: string; commit: string; bundle: Buffer | null } | null): Promise<string>
 }

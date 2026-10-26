@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,16 +12,20 @@ function fixture(t) {
   const root = mkdtempSync(join(parent, 'build-cache-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   mkdirSync(join(root, 'scripts'))
-  for (const name of ['heavy-job.mjs', 'heavy-job-slots.mjs', 'sleep.mjs']) {
+  for (const name of ['heavy-job.mjs', 'heavy-job-slots.mjs', 'sleep.mjs', 'build-cache-inputs.mjs']) {
     copyFileSync(new URL(name, import.meta.url), join(root, 'scripts', name))
   }
   mkdirSync(join(root, 'packages/contracts/src'), { recursive: true })
   copyFileSync(new URL('../packages/contracts/src/productEnvironment.mjs', import.meta.url),
     join(root, 'packages/contracts/src/productEnvironment.mjs'))
+  copyFileSync(new URL('../packages/contracts/src/runtimeBuildIdentityNode.mjs', import.meta.url), join(root, 'packages/contracts/src/runtimeBuildIdentityNode.mjs'))
   copyFileSync(new URL('../packages/contracts/src/installationNames.mjs', import.meta.url),
     join(root, 'packages/contracts/src/installationNames.mjs'))
   mkdirSync(join(root, 'packages/contracts/node_modules/typescript'), { recursive: true })
-  writeFileSync(join(root, 'packages/contracts/node_modules/typescript/index.js'), 'module.exports = {}')
+  writeFileSync(join(root, 'packages/contracts/node_modules/typescript/index.js'), `module.exports = require(${JSON.stringify(createRequire(new URL('../apps/ci/package.json', import.meta.url)).resolve('typescript'))})`)
+  writeFileSync(join(root, 'packages/contracts/node_modules/typescript/package.json'), '{"name":"typescript","main":"index.js"}')
+  writeFileSync(join(root, 'packages/contracts/tsconfig.build.json'), '{"compilerOptions":{"allowJs":true,"types":[]},"include":["src"]}')
+  writeFileSync(join(root, 'scripts/tsc.cjs'), 'require("node:fs").mkdirSync("packages/contracts/dist",{recursive:true});require("node:fs").writeFileSync("packages/contracts/dist/index.js","built")')
   writeFileSync(join(root, 'package.json'), '{"type":"module"}')
   writeFileSync(join(root, '.gitignore'), 'node_modules/\n.logs/\ndist/\n')
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
@@ -32,7 +37,7 @@ function fixture(t) {
   assert.equal(spawnSync('git', ['init', '-q'], { cwd: root, env }).status, 0)
   assert.equal(spawnSync('git', ['add', '.'], { cwd: root, env }).status, 0)
   const build = () => spawnSync(process.execPath, ['scripts/heavy-job.mjs', '--build', 'contracts', '--',
-    process.execPath, '-e', 'require("node:fs").mkdirSync("packages/contracts/dist",{recursive:true});require("node:fs").writeFileSync("packages/contracts/dist/index.js","built")'],
+    process.execPath, 'scripts/tsc.cjs', '-p', 'packages/contracts/tsconfig.build.json'],
   { cwd: root, env, encoding: 'utf8', timeout: 15000 })
   return { root, build }
 }

@@ -31,7 +31,7 @@ import { CiPrewarm } from './prewarm.js'
 import { collectCiResults } from './resultCollection.js'
 import { IntegrationCoverageStore } from './coverageStore.js'
 import { sanitizeCiText, serializeCiJson } from './text.js'
-import { ciComputerPreference, isGitHubComputer, needsSystemdExecutor, supportsUserSystemd } from './computerCapabilities.js'
+import { ciComputerPreference, isGitHubComputer, needsSystemdExecutor, smallCiRun, supportsUserSystemd } from './computerCapabilities.js'
 import { weighCiPartitions } from './partitionPlanning.js'
 import { invalidateExecutorSpeeds, readExecutorSpeeds } from './executorSpeed.js'
 import { readCiGateReservation, readQueuedCiRuns } from './queuedRuns.js'
@@ -44,6 +44,7 @@ import { CI_RETAINED_EXECUTORS, CiExecutorObservationError, CiRetainedExecutors,
   ciExecutorOutageLimit, ciTransportUnavailable, recordCiExecutorStatus } from './executorRecovery.js'
 import { CI_BUSY_TICKET, expireOverdueCiRuns } from './deadlines.js'
 import { ciCachedNotice, failedTestFiles, planCachedSelection, recordCiResultCache, storedKeys, type CachedSelection } from './resultCacheStore.js'
+import { functionMasks, functionProven, maskedKey, recordFunctionProofs, type FunctionCoverageInput } from './functionProofs.js'
 import { CiResultKeys } from './resultCache.js'
 import { ciRequestKey, joinCiRequest, registerCiRequest, releaseCiRequester, releaseStoppedRun,
   spareSharedSupersession } from './requestSharing.js'
@@ -413,8 +414,9 @@ export class HostCiService {
 
   /** Result cache keys for files of a commit: on the commits' worker thread when it has one, else in process from the
    * commit's tree (one graph per recent commit, shared by its parts, each call under its own deadline). */
-  private async keysOf(repository: string, commit: string, files: { file: string; suite: string; part: string }[], signal: AbortSignal) {
-    if (this.commits.resultKeys) return this.commits.resultKeys(repository, commit, files, signal)
+  private async keysOf(repository: string, commit: string, files: { file: string; suite: string; part: string }[], signal: AbortSignal,
+    functions?: FunctionCoverageInput) {
+    if (this.commits.resultKeys) return this.commits.resultKeys(repository, commit, files, signal, functions)
     if (!this.commits.testTree) throw new Error('This repository has no source trees for result cache keys.')
     const testTree = this.commits.testTree.bind(this.commits)
     const id = `${repository}@${commit}`
@@ -427,7 +429,23 @@ export class HostCiService {
       if (this.keyGraphs.size > 8) this.keyGraphs.delete(this.keyGraphs.keys().next().value!)
     }
     const keys = (await graph).bounded(AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
-    return Object.fromEntries(await Promise.all(files.map(async ({ file, suite, part }) => [file, await keys.key(file, suite, part)] as const)))
+    const masks = functions && functionMasks(functions)
+    return Object.fromEntries(await Promise.all(files.map(async ({ file, suite, part }) =>
+      [file, await maskedKey(keys, file, suite, part, masks)] as const)))
+  }
+
+  /** Keys of a commit's files under function masks (functionProofs). */
+  private async maskedKeys(repository: string, commit: string, files: { file: string; suite: string; part: string }[],
+    functions: FunctionCoverageInput) {
+    const keys = await this.keysOf(repository, commit, files, AbortSignal.timeout(120_000), functions)
+    return Object.fromEntries(Object.entries(keys).map(([file, value]) => [file, value.key]))
+  }
+
+  /** Function proofs for a suite's files at a commit; only integration runs record the functions their tests ran. */
+  private functionProofs(workspaceId: string, repository: string, commit: string, suite: string, partOf: (file: string) => string) {
+    if (suite !== 'integration') return undefined
+    return (files: string[]) => functionProven(this.pool, { workspaceId, repository, suite, files },
+      (keyed, functions) => this.maskedKeys(repository, commit, keyed.map(file => ({ file, suite, part: partOf(file) })), functions))
   }
 
   /** Result cache keys for a finished part's files. */
@@ -602,7 +620,8 @@ export class HostCiService {
           const affected = new Set(picked.scope === 'full' ? everyFile : picked.files)
           const failed = await failedTestFiles(this.pool, { workspaceId: scope.workspaceId, repository, suite: input.suite })
           const proof = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
-            suite: input.suite, files: everyFile, keys: (files, signal) => this.keysOf(repository, commit, files, signal), partOf })
+            suite: input.suite, files: everyFile, keys: (files, signal) => this.keysOf(repository, commit, files, signal), partOf,
+            functionProofs: this.functionProofs(scope.workspaceId, repository, commit, input.suite, partOf) })
           // Without keys nothing is proven: every file runs.
           const run = proof.unavailable ? proof.files
             : proof.files.filter(file => proof.keys[file] !== undefined || affected.has(file) || failed.has(file))
@@ -626,13 +645,14 @@ export class HostCiService {
       && (input.suite === 'unit' || input.suite === 'integration')) {
       cache = await planCachedSelection(this.context, this.pool, { workspaceId: scope.workspaceId, repository, commit,
         suite: input.suite, files: explicitFiles, keys: (files, signal) => this.keysOf(repository, commit, files, signal),
-        partOf: smokeTarget ? () => `smoke:${smokeTarget.key}` : partOf })
+        partOf: smokeTarget ? () => `smoke:${smokeTarget.key}` : partOf,
+        ...smokeTarget ? {} : { functionProofs: this.functionProofs(scope.workspaceId, repository, commit, input.suite, partOf) } })
     }
     if (cache) selection.files = cache.files
     const empty = selectionScope === 'affected' && selection.files?.length === 0
     const split = input.suite === 'integration' ? capabilities.integrationPartitions : capabilities.parts
     let parts: { part: CiRunRecord['part']; partition: CiRunRecord['partition']; files: string[];
-      expectedDurationMs?: number; suite?: CiRunRecord['suite']; plannedHostKey?: string;
+      expectedDurationMs?: number; selectionDurationMs?: number; suite?: CiRunRecord['suite']; plannedHostKey?: string;
       integrationShards?: number; requiresBuildComputer?: boolean; scope?: CiRunRecord['scope'] }[] = split ? planCiParts(selection, unitDurations, inventory)
       : [{ part: null, partition: null, files: selection.files ?? [] }]
     let smokeShards: number | undefined
@@ -672,7 +692,8 @@ export class HostCiService {
         const prove = (suite: 'unit' | 'integration', files: readonly string[]) => planCachedSelection(this.context, this.pool,
           { workspaceId: scope.workspaceId, repository, commit, suite, files,
             keys: (keyed, signal) => this.keysOf(repository, commit, keyed, signal),
-            partOf: file => suite === 'unit' ? unitPartOf(file) : 'integration' })
+            partOf: file => suite === 'unit' ? unitPartOf(file) : 'integration',
+            functionProofs: this.functionProofs(scope.workspaceId, repository, commit, suite, () => 'integration') })
         const [unitProof, integrationProof] = await Promise.all([prove('unit', inventory!.files), prove('integration', integration!.files)])
         gateUnit = { ...inventory!, files: unitProof.files }
         gateIntegration = { ...integration!, files: integrationProof.files }
@@ -1111,7 +1132,8 @@ export class HostCiService {
 
   private planningForMirror(mirrorName?: string): HostCiEndpoint & Pick<CiPlanningSnapshot, 'lastStatus'> {
     return {
-      computers: async () => this.schedulingFleet(await this.planningEndpoint.computers(), { mirrorName }),
+      computers: async () => this.schedulingFleet((await this.planningEndpoint.computers())
+        .filter(computer => mirrorName || computer.hostRef.kind !== 'cloud'), { mirrorName }),
       request: (computer, request) => this.planningEndpoint.request(computer, request),
       lastStatus: computer => this.planningEndpoint.lastStatus(computer),
     }
@@ -1437,15 +1459,21 @@ export class HostCiService {
     const collected = terminal && !canceled
       ? await collectCiResults(this.context, this.pool, this.endpoint, computer, run, reply, this.coverage)
       : { run: canceled ? { ...reply.run, collection: 'unsupported' as const } : reply.run,
-        durations: canceled ? undefined : reply.durations, error: undefined }
+        durations: canceled ? undefined : reply.durations, error: undefined, functions: undefined }
     let observationError = logError ?? collected.error
     if (!['queued', 'starting', 'running'].includes(run.state)) {
       collected.run = { ...collected.run, state: run.state, exitCode: run.exitCode, finishedAt: run.finishedAt }
     }
     if (terminal && collected.run.collection === 'complete') {
       try {
-        await recordCiResultCache(this.pool, { ...run, finishedAt: collected.run.finishedAt ?? run.finishedAt }, collected.run.state,
-          this.resultKeys(run))
+        const finished = { ...run, finishedAt: collected.run.finishedAt ?? run.finishedAt }
+        const passed = await recordCiResultCache(this.pool, finished, collected.run.state, this.resultKeys(run))
+        if (collected.functions && run.suite === 'integration' && !(await this.smokeTargets([run])).has(run.groupId)) {
+          // An optimization: without it these files are proven only by their exact keys.
+          await recordFunctionProofs(this.pool, finished, passed, collected.functions, (files, functions) => this.maskedKeys(
+            run.repository, run.commit, files.map(file => ({ file, suite: run.suite, part: run.part ?? run.suite })), functions))
+            .catch(error => this.context.log.warn({ err: error, runId: run.id }, 'CI function proofs were not recorded'))
+        }
       } catch (error) {
         collected.run = { ...collected.run, collection: 'pending' }
         observationError ??= error
@@ -1851,6 +1879,7 @@ export class HostCiService {
         && !queued.some(check => dispatchableCheck(check) && compareCiQueue(check, run) < 0)
         ? github.length : githubIntegrationLimit
       const reasons = (run.unstartedProviders ?? []).map(provider => `${provider}: dispatch retries exhausted`)
+      const small = smallCiRun(run)
       const preferred = (computer: HostCiComputer) => {
         if (run.gate && run.suite !== 'integration') return Number(computer.hostRef.kind === 'cloud')
         return ciComputerPreference(computer)
@@ -1878,10 +1907,21 @@ export class HostCiService {
         .filter(computer => run.gate || computer.hostRef.kind === 'cloud' || !reservedHosts.has(computer.key) && (run.scope === 'affected' || !queued.some(item => item.gate && item.plannedHostKey === computer.key)))
         .filter(computer => computer.hostRef.kind !== 'cloud' || !computer.hostRef.provider
           || !run.unstartedProviders?.includes(computer.hostRef.provider))
+      // Build computers take small selections (smallCiRun); larger work goes to the cloud whenever it can take it.
+      if (!small && !smokeTarget && !run.dispatchHostKey && run.ciMirror && order.some(computer => {
+        const status = this.planningEndpoint.dispatchStatus(computer)
+        return computer.hostRef.kind === 'cloud' && status?.ready
+          && !this.dispatchRejections.reason(run.id, computer, status)
+          && (!run.gate || !reservedCloud.has(computer.key)
+            && expectedCloudGateDurationMs(run, computer, speeds) <= CLOUD_GATE_JOB_BUDGET_MS)
+      })) {
+        order.splice(0, order.length, ...order.filter(computer => computer.hostRef.kind === 'cloud'))
+      }
       while (order.length) {
         const siblingComputers = new Set([...assignments.values()]
           .filter(assignment => assignment.groupId === run.groupId).map(assignment => assignment.computerKey))
-        order.sort((left, right) => Number(siblingComputers.has(left.key)) - Number(siblingComputers.has(right.key))
+        order.sort((left, right) => Number(small && right.hostRef.kind !== 'cloud') - Number(small && left.hostRef.kind !== 'cloud')
+          || Number(siblingComputers.has(left.key)) - Number(siblingComputers.has(right.key))
           || Number(right.key === run.plannedHostKey) - Number(left.key === run.plannedHostKey)
           || Number(plannedProvider !== undefined && right.hostRef.provider === plannedProvider)
             - Number(plannedProvider !== undefined && left.hostRef.provider === plannedProvider)
@@ -1951,6 +1991,10 @@ export class HostCiService {
           releaseSlot(computer)
           if (usesGitHubIntegration) integrationOnGitHub.delete(computer.key)
           return
+        }
+        if (!small && !run.gate && !smokeTarget && !run.dispatchHostKey && computer.hostRef.kind !== 'cloud') {
+          this.context.log.warn({ operation: 'dispatch CI', runId: run.id, computer: computer.key,
+            reasons, ciMirror: run.ciMirror }, 'Cloud CI unavailable; falling back to a build computer')
         }
         const outcome = await this.sendDispatch(assigned, computer)
         if (outcome === 'pending') return

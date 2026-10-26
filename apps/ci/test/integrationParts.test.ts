@@ -80,7 +80,8 @@ it('bounds caller-requested partitions to free slots and selected files', () => 
   expect(planIntegrationParts({ ...input, partitions: 2 }, { files, durations }, { host: 0, ordinary: 44 })).toHaveLength(2)
   const affected = { ...input, scope: 'affected' as const, files: [files[0]!, files[0]!, files[1]!] }
   expect(planIntegrationParts(affected, { files, durations }, { host: 0, ordinary: 44 }))
-    .toEqual([{ part: null, partition: null, files: [files[0], files[1]].sort(), expectedDurationMs: 330_000, requiresBuildComputer: false }])
+    .toEqual([{ part: null, partition: null, files: [files[0], files[1]].sort(), expectedDurationMs: 330_000,
+      selectionDurationMs: 240_000, requiresBuildComputer: false }])
   expect(planIntegrationParts({ ...affected, files: [] }, { files, durations }, { host: 0, ordinary: 44 }))
     .toEqual([{ part: null, partition: null, files: [], expectedDurationMs: 0, requiresBuildComputer: false }])
 })

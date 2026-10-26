@@ -5,13 +5,11 @@ import { retainedHeavyJobTokens, writeHeavyJobRecord } from './heavy-job-slots.m
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, readlinkSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const require = createRequire(import.meta.url)
 const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' })
 const queueDirectoryArgument = process.env.CI_HOST_RUNNER === '1' ? '--git-dir' : '--git-common-dir'
 const commonResult = git('rev-parse', '--path-format=absolute', queueDirectoryArgument)
@@ -328,27 +326,11 @@ if (process.argv[2] === '__hold') {
     process.exit(0)
   })
 } else {
-function inputHash(kind) {
-  const list = git('ls-files', '-z', '--cached', '--others', '--exclude-standard')
-  if (list.status !== 0) throw new Error('Build cache source inventory could not be read.')
-  const hash = createHash('sha256').update(process.version).update(process.platform).update(process.arch).update(common).update(root)
-  const scope = ['contracts', 'contracts-node'].includes(kind) ? `packages/${kind}` : `apps/${kind}`
-  const tools = kind === 'web' ? ['typescript', 'vite', '@vitejs/plugin-react'] : ['typescript']
-  try {
-    for (const name of tools) {
-      const path = require.resolve(name, { paths: [join(root, scope)] })
-      hash.update(name).update(path).update(readFileSync(path))
-    }
-  } catch { throw new Error('Build cache hashing tools are unavailable.') }
-  for (const relative of list.stdout.split('\0').filter(Boolean).sort()) {
-    const path = join(root, relative)
-    try {
-      if (!statSync(path).isFile()) continue
-      hash.update(relative).update(readFileSync(path))
-    } catch { throw new Error('Build cache source files could not be read.') }
-  }
-  return hash.digest('hex')
+let buildInputHash
+function inputHash(kind, command) {
+  return buildInputHash(root, kind, command, process.cwd())
 }
+
 const outputs = { contracts: 'packages/contracts/dist/index.js', 'contracts-node': 'packages/contracts-node/dist/serverKit.js', ci: 'apps/ci/dist/environment.js',
   api: 'apps/api/dist/server.js', web: 'apps/web/dist/index.html' }
 function outputHash(kind) {
@@ -402,17 +384,15 @@ function readBuildStamp(path) {
       { cause: error })
   }
 }
-function freshBuild(kind) {
-  // The API build also probes installed harness binaries and environment.
-  // Those can change without any source or output change, so always run it.
-  if (kind === 'api' || process.env.FOREMAN_CODE_VERIFICATION_ROOT === root) return { fresh: false, stamp: null }
+function freshBuild(kind, command) {
+  if (process.env.FOREMAN_CODE_VERIFICATION_ROOT === root) return { fresh: false, stamp: null }
   if (!outputs[kind]) return { fresh: false, stamp: null }
   const stamp = join(root, '.logs', `heavy-build-${kind}.json`)
   let signature = null
   let fresh = false
   let lastError = null
   try {
-    signature = inputHash(kind)
+    signature = inputHash(kind, command)
     const recorded = readBuildStamp(stamp)
     if (recorded?.signature === signature) {
       const output = outputHash(kind)
@@ -423,11 +403,19 @@ function freshBuild(kind) {
   recordBuildCache(kind, fresh, lastError)
   return { fresh, stamp, signature }
 }
-function stampBuild(kind, freshness) {
-  if (kind === 'api') return
+function prepareBuild(kind) {
+  if (!kind) return
+  rmSync(join(root, '.logs', `heavy-build-${kind}.json`), { force: true })
+  if (['contracts', 'contracts-node', 'ci', 'api'].includes(kind)) {
+    // Incremental emit trusts .tsbuildinfo, even if outputs were overwritten or
+    // removed, and never deletes outputs of removed sources. Only stamp clean emit.
+    rmSync(dirname(join(root, outputs[kind])), { recursive: true, force: true })
+  }
+}
+function stampBuild(kind, freshness, command) {
   if (!freshness?.signature) return
   try {
-    if (freshness.signature !== inputHash(kind)) return
+    if (freshness.signature !== inputHash(kind, command)) return
     const output = outputHash(kind)
     if (!output) throw new Error('Build cache artifacts are missing after the build.')
     mkdirSync(dirname(freshness.stamp), { recursive: true })
@@ -447,11 +435,18 @@ async function main() {
   const graceIndex = options.indexOf('--stop-grace-ms')
   const buildKind = buildIndex >= 0 ? options[buildIndex + 1] : null
   if (buildKind && !outputs[buildKind]) throw new Error('Unknown build kind')
+  if (buildKind) ({ buildInputHash } = await import('./build-cache-inputs.mjs'))
   const timeoutMs = timeoutIndex >= 0 ? Number(options[timeoutIndex + 1]) : 0
   if (timeoutIndex >= 0 && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) throw new Error('Invalid timeout')
   const stopGraceMs = graceIndex >= 0 ? Number(options[graceIndex + 1]) : 30_000
   if (!Number.isSafeInteger(stopGraceMs) || stopGraceMs <= 0) throw new Error('Invalid stop grace')
-  let command = process.argv.slice(divider + 1)
+  const cacheCommand = process.argv.slice(divider + 1)
+  let command = cacheCommand
+  // The API command also checks installed harnesses. Reuse compiled files while
+  // keeping that independently changing observation on the normal launch path.
+  const apiProbe = buildKind === 'api' && ['sh', 'bash'].includes(cacheCommand[0].split('/').at(-1)) && cacheCommand[1] === '-c'
+    && cacheCommand[2] === 'tsc -p tsconfig.build.json && node ../../scripts/copy-api-runtime.mjs && node dist/cli/harnessCompatibility.js'
+    ? ['node', 'dist/cli/harnessCompatibility.js'] : null
   if (buildKind === 'contracts' && process.env.FOREMAN_CODE_CI_CONTRACTS_CACHE) {
     const cache = resolve(root, process.env.FOREMAN_CODE_CI_CONTRACTS_CACHE)
     command = [process.execPath, fileURLToPath(new URL('./ci-contracts.mjs', import.meta.url)),
@@ -465,8 +460,12 @@ async function main() {
   const nested = inherited?.token && readProductEnvironment(process.env, 'HEAVY_JOB_COMMON') === common && readProductEnvironment(process.env, 'HEAVY_JOB_TOKEN') === inherited.token
   mkdirSync(state, { recursive: true })
   if (nested) {
-    const freshness = buildKind ? freshBuild(buildKind) : null
-    if (freshness?.fresh) { console.log(`[heavy-job] ${buildKind} build is current in this worktree`); return }
+    const freshness = buildKind ? freshBuild(buildKind, cacheCommand) : null
+    if (freshness?.fresh) {
+      console.log(`[heavy-job] ${buildKind} build is current in this worktree`)
+      if (!apiProbe) return
+      command = apiProbe
+    } else prepareBuild(buildKind)
     if (reported) {
       const { runVerificationCommand } = await import('./verification-reports.mjs')
       process.exitCode = await runVerificationCommand(command, { root, cwd: process.cwd(), env: process.env,
@@ -475,7 +474,7 @@ async function main() {
     }
     const child = spawn(command[0], command.slice(1), { stdio: 'inherit', env: process.env })
     process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve(code ?? (signal ? 128 + (signal === 'SIGINT' ? 2 : 15) : 1))) })
-    if (buildKind && process.exitCode === 0) stampBuild(buildKind, freshness)
+    if (buildKind && !freshness?.fresh && process.exitCode === 0) stampBuild(buildKind, freshness, cacheCommand)
     return
   }
   cleanTemps()
@@ -515,8 +514,12 @@ async function main() {
     }
     if (interrupted) { exitCode = 130; return }
 
-    const freshness = buildKind ? freshBuild(buildKind) : null
-    if (freshness?.fresh) { console.log(`[heavy-job] running ${ticket}`); console.log(`[heavy-job] ${buildKind} build is current in this worktree`); exitCode = 0; return }
+    const freshness = buildKind ? freshBuild(buildKind, cacheCommand) : null
+    if (freshness?.fresh) {
+      console.log(`[heavy-job] ${buildKind} build is current in this worktree`)
+      if (!apiProbe) { console.log(`[heavy-job] running ${ticket}`); exitCode = 0; return }
+      command = apiProbe
+    } else prepareBuild(buildKind)
     tempPath = join(tempRoot, randomUUID())
     mkdirSync(tempPath, { mode: 0o700 })
     writeRecord(join(tempPath, 'owner.json'), {
@@ -544,7 +547,7 @@ async function main() {
     await waitGroup(pgid, interrupted ? stopGraceMs : 1000)
     if (command.at(-1) === '__hold') while (tokenUsed(token)) await sleep(200)
     if (interrupted && exitCode === 0) exitCode = 124
-    if (buildKind && exitCode === 0) stampBuild(buildKind, freshness)
+    if (buildKind && !freshness?.fresh && exitCode === 0) stampBuild(buildKind, freshness, cacheCommand)
   } catch (error) {
     // Marker publication can fail after spawn. Stop our group before releasing
     // its reservations, just as cancellation does.

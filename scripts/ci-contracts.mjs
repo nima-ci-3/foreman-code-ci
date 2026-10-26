@@ -1,26 +1,52 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { buildInputHash, contractsArchiveKey } from './build-cache-inputs.mjs'
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const script = fileURLToPath(import.meta.url)
 
-export function contractsCacheKey(root) {
-  const tree = spawnSync('git', ['rev-parse', 'HEAD:packages/contracts'], { cwd: root, encoding: 'utf8' })
-  if (tree.status !== 0) throw new Error(tree.stderr || 'Cannot read contracts inputs')
-  const hash = createHash('sha256').update(process.version).update(process.platform).update(process.arch).update(tree.stdout.trim())
-  for (const name of ['pnpm-lock.yaml', 'tsconfig.base.json', 'tsconfig.json']) {
-    if (existsSync(join(root, name))) hash.update(name).update(readFileSync(join(root, name)))
+export const contractsCacheKey = contractsArchiveKey
+
+function outputHash(output) {
+  const hash = createHash('sha256')
+  const visit = directory => {
+    for (const entry of readdirSync(join(output, directory), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const relative = join(directory, entry.name)
+      if (relative === '.ci-cache-key') continue
+      if (entry.isDirectory()) visit(relative)
+      else if (entry.isFile()) hash.update(relative).update('\0').update(readFileSync(join(output, relative))).update('\0')
+      else throw new Error(`Unexpected contracts output: ${relative}`)
+    }
   }
+  visit('')
   return hash.digest('hex')
+}
+
+function ready(output, key) {
+  try {
+    const stamp = JSON.parse(readFileSync(join(output, '.ci-cache-key'), 'utf8'))
+    if (stamp.key !== key) return false
+    if (existsSync(join(output, 'index.js')) && stamp.output === outputHash(output)) return true
+    console.warn('[ci-cache] contracts artifacts changed or missing; rebuilding')
+    return false
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn(`[ci-cache] invalid contracts artifacts; rebuilding: ${error.message}`)
+    return false
+  }
 }
 
 export function contractsReady(root) {
   const output = join(root, 'packages/contracts/dist')
-  const stamp = join(output, '.ci-cache-key')
-  return existsSync(stamp) && existsSync(join(output, 'index.js'))
-    && readFileSync(stamp, 'utf8') === contractsCacheKey(root)
+  try {
+    const stamp = JSON.parse(readFileSync(join(output, '.ci-cache-key'), 'utf8'))
+    const command = stamp.command.map(value => value.replaceAll('<checkout>', root))
+    return ready(output, buildInputHash(root, 'contracts', command, join(root, stamp.cwd)))
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn(`[ci-cache] contracts readiness unavailable; rebuilding: ${error.message}`)
+    return false
+  }
 }
 
 function copy(source, destination) {
@@ -30,15 +56,17 @@ function copy(source, destination) {
 }
 
 function build(root, cache, command) {
-  const key = contractsCacheKey(root)
+  let key
+  try { key = buildInputHash(root, 'contracts', command, process.cwd()) }
+  catch (error) { console.warn(`[ci-cache] contracts inputs unavailable; running without reuse: ${error.message}`) }
   const output = join(root, 'packages/contracts/dist')
   const stamp = join(output, '.ci-cache-key')
-  if (contractsReady(root)) {
+  if (key && ready(output, key)) {
     console.log('[ci-cache] contracts build reused')
     return 0
   }
-  const cached = join(cache, key)
-  if (existsSync(join(cached, '.ci-cache-key'))) {
+  const cached = key ? join(cache, key) : null
+  if (cached && ready(cached, key)) {
     rmSync(output, { recursive: true, force: true })
     copy(cached, output)
     console.log('[ci-cache] contracts build restored')
@@ -49,10 +77,13 @@ function build(root, cache, command) {
   if (result.error) throw result.error
   if (result.status !== 0) return result.status ?? 1
   if (!existsSync(join(output, 'index.js'))) throw new Error('Contracts compiler produced no entry point')
-  writeFileSync(stamp, key)
+  // Never publish output against inputs that changed while the compiler ran.
+  if (!key || key !== buildInputHash(root, 'contracts', command, process.cwd())) return 0
+  writeFileSync(stamp, JSON.stringify({ key, command: command.map(value => value.replaceAll(root, '<checkout>')), cwd: relative(root, process.cwd()), output: outputHash(output) }))
   const temporary = join(cache, `${key}.${randomUUID()}`)
   try {
     copy(output, temporary)
+    rmSync(cached, { recursive: true, force: true })
     renameSync(temporary, cached)
   } finally {
     rmSync(temporary, { recursive: true, force: true })

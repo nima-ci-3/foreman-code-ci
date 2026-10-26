@@ -42,7 +42,9 @@ it('bounds status requests and splits a large gate across cloud executors', asyn
   expect(new Set(parts.map(part => part.plannedHostKey)).size).toBe(parts.length)
 })
 
-it.each(['all', 'one'])('refuses to persist a degraded gate when %s CircleCI status reads fail', async failure => {
+it.each(['all', 'one'])('plans on ready executors when %s CircleCI status reads fail', async failure => {
+  const unavailable = new Set(fleet().filter(computer => computer.hostRef.provider === 'circleci'
+    && (failure === 'all' || computer.hostRef.slot === 0)).map(computer => computer.key))
   const endpoint: HostCiEndpoint = {
     computers: async () => fleet(),
     request: async computer => {
@@ -53,6 +55,7 @@ it.each(['all', 'one'])('refuses to persist a degraded gate when %s CircleCI sta
         cpuCount: computer.hostRef.kind === 'cloud' ? 4 : 16, memoryBytes: 16 * 2 ** 30 }
     },
   }
-  await expect(planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true }, inventory, unit, {}, endpoint))
-    .rejects.toMatchObject({ code: 'CI_GATE_CAPACITY_REQUIRED', details: { retryable: true } })
+  const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true }, inventory, unit, {}, endpoint)
+  expect(parts.some(part => unavailable.has(part.plannedHostKey))).toBe(false)
+  expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort()).toEqual([...files].sort())
 })

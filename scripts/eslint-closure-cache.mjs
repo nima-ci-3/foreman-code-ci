@@ -1,15 +1,14 @@
 // Lints only the files whose result could have changed since they last passed, for type-aware ESLint rules.
-// A file's key hashes its own text, every repository file it imports (transitively, through workspace packages' exports
-// to their sources), the locked tree of each installed package those files import, the project's locked development
-// tools and the shared inputs (lint config, tsconfig, manifests, local rules, ambient declarations).
+// Typed files key the declarations/sources TypeScript actually resolves, their imported package trees and active
+// compiler inputs. JavaScript files key only their own text and lint inputs. Exemptions are keyed per file.
 // ESLint's own --cache keys a file by its text alone, so a typed rule could keep passing a file whose import changed.
 // Usage, from a package directory: node ../../scripts/eslint-closure-cache.mjs [eslint args...]
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { createRequire, isBuiltin } from 'node:module'
-import { ciModuleCandidates, resolveImport, workspacePackageExports } from '../packages/contracts/src/ciImportGraph.mjs'
+import { pendingSqlTextTests } from './eslint-plugin-foreman/pendingSqlTextTests.mjs'
 import { lockIdentities } from '../packages/contracts/src/ciLockIdentities.mjs'
 
 const root = resolve(import.meta.dirname, '..')
@@ -76,75 +75,39 @@ const importerOf = file => {
 }
 const installedIdentity = (file, name) => locked.get(`package:${importerOf(file)}\t${name}`) ?? locked.get(`package:*\t${name}`)
   ?? `unlocked:${name}`
-const workspaceExports = workspacePackageExports(path => existsSync(join(root, path)) ? text(join(root, path)) : undefined)
-const repositoryPaths = { has: path => existsSync(join(root, path)) && statSync(join(root, path)).isFile() }
 
-// Workspace packages a file may import by name. One whose exports map names its sources resolves to the exact source
-// file; any other counts as its whole source tree.
-const packages = new Map()
-for (const parent of ['apps', 'packages']) {
-  for (const name of readdirSync(join(root, parent))) {
-    const manifest = join(root, parent, name, 'package.json')
-    if (existsSync(manifest)) packages.set(JSON.parse(readFileSync(manifest, 'utf8')).name, join(root, parent, name))
-  }
-}
-const packageHashes = new Map()
-function packageHash(directory) {
-  let value = packageHashes.get(directory)
-  if (value === undefined) {
-    const pending = walk(directory).filter(file => sourcePattern.test(file) || file.endsWith('package.json'))
-    const files = new Set(), expanded = new Set([directory]), installedTrees = new Set()
-    for (let index = 0; index < pending.length; index++) {
-      const file = pending[index]
-      if (files.has(file)) continue
-      files.add(file)
-      const next = dependencies(file)
-      pending.push(...next.files)
-      for (const identity of next.installed) installedTrees.add(identity)
-      for (const dependency of next.packages) {
-        if (expanded.has(dependency)) continue
-        expanded.add(dependency)
-        pending.push(...walk(dependency).filter(file => sourcePattern.test(file) || file.endsWith('package.json')))
-      }
-    }
-    value = hash([...[...files].sort().map(file => `${relative(root, file)}\0${fileHash(file)}`), ...[...installedTrees].sort()].join('\n'))
-    packageHashes.set(directory, value)
-  }
-  return value
-}
-
-function resolveRelative(from, specifier) {
-  for (const candidate of ciModuleCandidates(resolve(dirname(from), specifier))) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
-  }
-  return undefined
-}
 const edges = new Map()
 function dependencies(file) {
   let value = edges.get(file)
   if (value) return value
-  value = { files: [], packages: [], installed: [] }
-  const info = ts.preProcessFile(text(file), true, true)
-  for (const { fileName: specifier } of info.importedFiles) {
-    const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
-    if (!specifier.startsWith('.') && packages.has(name)) {
-      const source = name in workspaceExports ? resolveImport(relative(root, file), specifier, repositoryPaths, workspaceExports) : null
-      if (source) value.files.push(join(root, source))
-      else value.packages.push(packages.get(name))
-      continue
+  value = { files: [], installed: [] }
+  const source = ts.createSourceFile(file, text(file), ts.ScriptTarget.Latest, true)
+  source.impliedNodeFormat = ts.getImpliedNodeFormatForFile(file, undefined, ts.sys, config.options)
+  value.mode = source.impliedNodeFormat
+  const visit = node => {
+    const parent = node.parent
+    if (ts.isStringLiteralLike(node) && (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)
+      || ts.isExternalModuleReference(parent)
+      || (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent))
+      || (ts.isCallExpression(parent) && parent.arguments[0] === node
+        && (parent.expression.kind === ts.SyntaxKind.ImportKeyword
+          || (ts.isIdentifier(parent.expression) && parent.expression.text === 'require'))))) {
+      const specifier = node.text
+      const mode = ts.getModeForUsageLocation(source, node, config.options)
+      const resolved = ts.resolveModuleName(specifier, file, config.options, ts.sys, resolutionCache, undefined, mode)
+      const target = resolved.resolvedModule?.resolvedFileName
+      const actual = target && realpathSync(target)
+      if (actual && !actual.split(/[\\/]/).includes('node_modules')) {
+        value.files.push(actual)
+      } else if (!specifier.startsWith('.') && !specifier.startsWith('node:') && !isBuiltin(specifier)) {
+        const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
+        value.installed.push(installedIdentity(file, name))
+      }
     }
-    // Static imports and dynamic imports can select different export conditions in the same file.
-    const targets = [ts.ModuleKind.ESNext, ts.ModuleKind.CommonJS].map(mode =>
-      ts.resolveModuleName(specifier, file, config.options, ts.sys, resolutionCache, undefined, mode).resolvedModule?.resolvedFileName)
-    if (specifier.startsWith('.')) targets.push(resolveRelative(file, specifier))
-    let inRepository = false
-    for (const target of new Set(targets)) {
-      if (target && !target.split(/[\\/]/).includes('node_modules')) { value.files.push(target); inRepository = true }
-    }
-    if (!inRepository && !specifier.startsWith('.') && !specifier.startsWith('node:') && !isBuiltin(specifier)) {
-      value.installed.push(installedIdentity(file, name))
-    }
+    ts.forEachChild(node, visit)
   }
+  visit(source)
+  const info = ts.preProcessFile(text(file), false, true)
   for (const { fileName } of info.referencedFiles) {
     const target = resolve(dirname(file), fileName)
     if (existsSync(target)) value.files.push(target)
@@ -153,16 +116,14 @@ function dependencies(file) {
   return value
 }
 function closureKey(file, shared) {
-  const seen = new Set([file]), queue = [file], workspace = new Set(), installed = new Set()
+  const seen = new Set([file]), queue = [file], installed = new Set()
   while (queue.length) {
     const next = dependencies(queue.pop())
     for (const target of next.files) if (!seen.has(target)) { seen.add(target); queue.push(target) }
-    for (const directory of next.packages) workspace.add(directory)
     for (const identity of next.installed) installed.add(identity)
   }
-  const parts = [...seen].sort().map(path => `${relative(root, path)}\0${fileHash(path)}`)
-  const packageParts = [...workspace].sort().map(directory => `${relative(root, directory)}\0${packageHash(directory)}`)
-  return hash([shared, ...parts, ...packageParts, ...[...installed].sort()].join('\n'))
+  const parts = [...seen].sort().map(path => `${relative(root, path)}\0${fileHash(path)}\0${dependencies(path).mode ?? ''}`)
+  return hash([shared, ...parts, ...[...installed].sort()].join('\n'))
 }
 
 const projectFiles = walk(project)
@@ -173,24 +134,36 @@ const ambientFiles = config.fileNames.filter(file => {
     && (node.flags & ts.NodeFlags.GlobalAugmentation || ts.isStringLiteral(node.name)))
 })
 const sharedInputs = [
-  ...configInputs, ...ambientFiles,
-  ...projectFiles.filter(file => /(?:^|\/)(?:eslint\.config\.[cm]?js|tsconfig[^/]*\.json|package\.json)$/.test(file)
-    || /\.d\.[cm]?ts$/.test(file)),
-  join(root, 'package.json'), join(root, 'tsconfig.base.json'),
-  join(root, 'scripts/lint-allowlist.json'), join(root, 'scripts/lint-allowlist.mjs'),
+  ...projectFiles.filter(file => /(?:^|\/)eslint\.config\.[cm]?js$/.test(file)),
+  join(root, 'package.json'), join(project, 'package.json'),
+  join(root, 'scripts/lint-allowlist.mjs'),
   resolve(import.meta.filename),
-  ...walk(join(root, 'scripts/eslint-plugin-foreman')),
+  ...walk(join(root, 'scripts/eslint-plugin-foreman')).filter(file => !file.endsWith('/pendingSqlTextTests.mjs')),
 ].filter(file => existsSync(file)).sort()
-// A manifest's version and scripts cannot change a lint result; a release bump must not relint every file.
-const inputHash = file => file.endsWith('package.json')
-  ? hash(JSON.stringify({ ...JSON.parse(text(file)), version: undefined, scripts: undefined })) : fileHash(file)
+// Resolution fields can affect lint; descriptive metadata, scripts and CI settings cannot. Installed dependency
+// versions are already tracked through the lock identities above, rather than the manifest's version ranges.
+function inputHash(file) {
+  if (!file.endsWith('package.json')) return fileHash(file)
+  const manifest = JSON.parse(text(file))
+  return hash(JSON.stringify(Object.fromEntries(['name', 'type', 'imports', 'exports', 'main', 'types', 'typings', 'typesVersions']
+    .map(key => [key, manifest[key]]))))
+}
 const shared = hash(JSON.stringify([process.version, process.argv.slice(2),
   locked.get('tools:.') ?? null, locked.get(`tools:${importerOf(join(project, 'package.json'))}`) ?? null,
-  process.env.FOREMAN_LINT_BASELINE ?? '',
   sharedInputs.map(file => [relative(root, file), inputHash(file)])]))
-
+const typedShared = hash(JSON.stringify([shared, [...configInputs].sort().map(file => [relative(root, file), fileHash(file)]),
+  ambientFiles.sort().map(file => closureKey(file, ''))]))
+const allowlist = JSON.parse(text(join(root, 'scripts/lint-allowlist.json')))
+function exemptionKey(file) {
+  const id = fileHash(file)
+  const disabled = process.env.FOREMAN_LINT_BASELINE === '1' || !allowlist.files?.[id] ? []
+    : Object.entries(allowlist.eslint ?? {}).filter(([, ids]) => ids.includes(id)).map(([rule]) => rule).sort()
+  return JSON.stringify([disabled, pendingSqlTextTests.has(relative(root, file))])
+}
 const targets = projectFiles.filter(file => sourcePattern.test(file)).sort()
-const keys = Object.fromEntries(targets.map(file => [relative(project, file), closureKey(file, shared)]))
+const keys = Object.fromEntries(targets.map(file => [relative(project, file), /\.[cm]?tsx?$/.test(file)
+  ? closureKey(file, `${typedShared}\n${exemptionKey(file)}`)
+  : hash([shared, fileHash(file), exemptionKey(file)].join('\n'))]))
 let passed = {}
 try { passed = JSON.parse(readFileSync(cacheFile, 'utf8')).files ?? {} }
 catch (error) { if (error.code !== 'ENOENT') console.warn(`Lint pass cache unreadable, linting everything: ${error.message}`) }

@@ -89,12 +89,13 @@ async function gateComputers(context: CiContext, endpoint: HostCiEndpoint, reser
     }))
     available.push(...batch)
   }
-  if (unreadableClouds.length) {
+  const ready = available.filter((value): value is GateComputer => value !== null)
+  if (unreadableClouds.length && !ready.length) {
     throw new DomainError('CI_GATE_CAPACITY_REQUIRED',
       'Cloud CI status is temporarily unavailable. Retry gate planning after the fleet can be read.',
       409, { retryable: true, unavailableComputers: unreadableClouds.sort() })
   }
-  return available.filter((value): value is GateComputer => value !== null)
+  return ready
 }
 
 /** Other executors take work only once every eligible GitHub slot has some. */
@@ -115,11 +116,11 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
   const fleet = await gateComputers(context, endpoint, reservedCloudSlots, usedByComputer)
   const hosts = fleet.filter(item => item.computer.hostRef.kind !== 'cloud')
   const clouds = fleet.filter(item => item.computer.hostRef.kind === 'cloud')
-  // Build computers are optional: a cloud-only fleet runs the whole gate.
-  if (!clouds.length || (!proven && !integration.files.length)) {
-    throw new DomainError('CI_GATE_CAPACITY_REQUIRED', 'A gate needs cloud CI and integration files.', 409)
+  // Either kind of ready executor can run a gate; cloud is preferred only when it can run the work.
+  if (!fleet.length || (!proven && !integration.files.length)) {
+    throw new DomainError('CI_GATE_CAPACITY_REQUIRED', 'A gate needs a ready CI computer and integration files.', 409)
   }
-  const availableSlots = clouds.reduce((sum, item) => sum + item.freeSlots, 0)
+  const availableSlots = (clouds.length ? clouds : hosts).reduce((sum, item) => sum + item.freeSlots, 0)
   const slots = Math.min(unitSlots ?? availableSlots, availableSlots)
   type Check = ReturnType<typeof planCiParts>[number] & { suite: 'typecheck' | 'lint' | 'unit'; scope: CiRunRecord['scope'] }
   const checks: Check[] = []
@@ -136,20 +137,21 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
   const placed = new Map<(typeof checks)[number], GatePart>()
   for (const part of [...checks].sort((left, right) => Number(runsOnCircleCi(left)) - Number(runsOnCircleCi(right)))) {
     const expectedDurationMs = part.expectedDurationMs ?? (part.suite === 'unit' ? 210_000 : 150_000)
-    const candidates = expectedDurationMs > CLOUD_GATE_JOB_BUDGET_MS ? hosts : clouds
-    const eligible = preferGithub(candidates.filter(item => item.computer.hostRef.provider !== 'circleci' || runsOnCircleCi(part)),
-      item => item.checkMs === 0)
+    const cloudCandidates = expectedDurationMs > CLOUD_GATE_JOB_BUDGET_MS ? []
+      : clouds.filter(item => item.computer.hostRef.provider !== 'circleci' || runsOnCircleCi(part))
+    const eligible = preferGithub(cloudCandidates.length ? cloudCandidates : hosts, item => item.checkMs === 0)
     const target = [...eligible].sort((left, right) => left.checkMs - right.checkMs)[0]
     if (!target) throw new DomainError('CI_GATE_CAPACITY_REQUIRED', `No cloud executor can run ${part.part ?? part.suite}.`, 409)
+    if (target.computer.hostRef.kind !== 'cloud') {
+      context.log.warn({ operation: 'plan CI gate', part: part.part, computer: target.computer.key, expectedDurationMs },
+        'No cloud executor fits this check; falling back to a build computer')
+    }
     target.checkMs += expectedDurationMs
     placed.set(part, { ...part, plannedHostKey: target.computer.key, expectedDurationMs })
   }
   const result: GatePart[] = checks.map(part => placed.get(part)!)
-  // GitHub remains eligible after checks even when unused CircleCI slots cannot run a particular file.
-  // Finish estimates include the check backlog and a second integration setup.
-  const secondWave = !clouds.some(item => item.checkMs === 0 && item.freeSlots > 0)
-  const integrationFleet = [...hosts, ...clouds.filter(item => item.checkMs === 0
-    || item.computer.hostRef.provider === 'github')]
+  // Cloud computers remain eligible behind checks; builders take files no cloud computer can execute.
+  const integrationFleet = fleet
   const known = Object.values(integration.durations).sort((left, right) => left - right)
   const median = known[Math.floor(known.length / 2)] ?? 30_000
   const duration = (file: string) => integration.durations[file] ?? median
@@ -185,10 +187,8 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
       && cloudPartCount - load.get(item)!.length + withFile(item, file).length <= maxCloudParts)
   const eligibleForFile = (file: string) => {
     const eligible = integrationFleet.filter(item => canRunFile(item, file))
-    const firstWave = eligible.filter(item => item.computer.hostRef.kind !== 'cloud' || item.checkMs === 0)
-    // Preserve one wave whenever unused cloud capacity can actually run this file.
-    return !secondWave && firstWave.some(item => item.computer.hostRef.kind === 'cloud' && item.freeSlots > 0)
-      ? firstWave : eligible
+    const cloudCandidates = eligible.filter(item => item.computer.hostRef.kind === 'cloud')
+    return cloudCandidates.length ? cloudCandidates : eligible
   }
   const finishLoads = (item: GateComputer, parts: IntegrationLoad[], estimate: 'typical' | 'conservative' = 'typical') =>
     item.checkMs + parts.reduce((sum, state) =>
@@ -217,6 +217,10 @@ export async function planCiGate(context: CiContext, input: CiRunInput, integrat
         || (serial ? exclusiveCount(left.item) - exclusiveCount(right.item) : 0) || left.order - right.order)[0]?.item
     if (!target) {
       throw new DomainError('CI_GATE_CAPACITY_REQUIRED', `No available gate executor can run ${file}.`, 409)
+    }
+    if (target.computer.hostRef.kind !== 'cloud') {
+      context.log.warn({ operation: 'plan CI gate', file, computer: target.computer.key },
+        'No cloud executor fits this integration file; falling back to a build computer')
     }
     addFile(target, file)
   }

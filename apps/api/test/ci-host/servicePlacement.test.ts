@@ -8,6 +8,7 @@ import type { PostgresCommandCoordinator } from '../../src/modules/commands/post
 import type { CiAuthority } from '../../src/modules/jobs/ciAuthority.js'
 import { DomainError } from '../../src/modules/errors.js'
 import { planIntegrationParts } from '@foreman-code/ci/integrationParts'
+import { planCiParts } from '@foreman-code/ci/parts'
 import { readExecutorSpeeds } from '@foreman-code/ci/executorSpeed'
 import { ciExecutionRunId } from '@foreman-code/ci/executionAttempt'
 import { mainCiContext } from '../../src/modules/ci/context.js'
@@ -206,6 +207,117 @@ it.each(['github', 'circleci'] as const)('checks %s login readiness before claim
     await f.service.dispatch()
     expect(request.mock.calls.filter(([, input]) => input.operation === 'start')).toEqual([])
     expect(records[0]).toMatchObject({ state: 'queued', computer: null })
+  } finally {
+    await f.service.close()
+  }
+})
+
+it.each(['not-ready', 'offline', 'no-mirror'])('falls back to a builder for large work when cloud is %s', async reason => {
+  const records = queuedRuns(1).map(run => CiRunRecordSchema.parse({ ...run, suite: 'build', partition: null,
+    ...(reason === 'no-mirror' ? { ciMirror: null } : {}) }))
+  const f = fleet(records, [cloud, host], reason === 'no-mirror' ? new Map() : new Map([[cloud.key, reason]]))
+  try {
+    await f.service.dispatch()
+    expect(f.started.map(start => start.computer.key)).toEqual([host.key])
+    expect(records[0]?.state).toBe('running')
+  } finally {
+    await f.service.close()
+  }
+})
+
+it('keeps large work on cloud when ready cloud slots are busy', async () => {
+  const records = queuedRuns(1).map(run => CiRunRecordSchema.parse({ ...run, suite: 'build', partition: null }))
+  const f = fleet(records, [cloud, host], new Map(), new Set([cloud.key]))
+  try {
+    await f.service.dispatch()
+    expect(f.started).toEqual([])
+    expect(records[0]?.state).toBe('queued')
+  } finally {
+    await f.service.close()
+  }
+})
+
+it('dispatches a gate check on a builder after its ready cloud executor rejects the start', async () => {
+  const records = queuedRuns(1).map(run => CiRunRecordSchema.parse({ ...run, gate: true,
+    suite: 'typecheck', part: 'typecheck-api', partition: null, plannedHostKey: cloud.key }))
+  const f = fleet(records, [cloud, host])
+  const request = f.endpoint.request
+  const calls = vi.spyOn(f.endpoint, 'request').mockImplementation(async (computer, input) => {
+    if (computer.hostRef.kind === 'cloud' && input.operation === 'start') {
+      throw new DomainError('CI_CLOUD_UNAVAILABLE', 'Cloud executor cannot run this ticket', 409)
+    }
+    return request(computer, input)
+  })
+  try {
+    await f.service.dispatch()
+    await f.service.dispatch()
+    expect(f.started.map(start => start.computer.key)).toEqual([host.key])
+    expect(records[0]).toMatchObject({ state: 'running', computer: { hostRef: host.hostRef } })
+    expect(calls.mock.calls.filter(([computer, input]) => computer.hostRef.kind === 'cloud' && input.operation === 'start'))
+      .toHaveLength(1)
+  } finally {
+    await f.service.close()
+  }
+})
+
+it.each(['apps/ci/test/capacity.test.ts', 'apps/worker/src/runtime.test.ts'])(
+  'runs a measured small non-API unit selection on a builder: %s', async file => {
+    const parts = planCiParts({ suite: 'unit', scope: 'affected', files: [file] }, { [file]: 1_000 })
+    const records = queuedRuns(parts.length).map((run, index) => CiRunRecordSchema.parse({ ...run,
+      ...parts[index], suite: 'unit', scope: 'affected', expectedDurationMs: parts[index]?.expectedDurationMs ?? 210_000 }))
+    const github = { ...cloud, hostRef: { ...cloud.hostRef, provider: 'github' as const } }
+    const f = fleet(records, [github, host])
+    try {
+      await f.service.dispatch()
+      expect(f.started.map(start => start.computer.key)).toEqual([host.key])
+      expect(records[0]).toMatchObject({ state: 'running', part: 'unit-other', expectedDurationMs: 91_000 })
+    } finally {
+      await f.service.close()
+    }
+  })
+
+it.each(['unit', 'integration'] as const)('keeps every part of a large affected %s selection on cloud', async suite => {
+  const files = suite === 'unit' ? ['apps/api/src/first.test.ts', 'apps/ci/test/second.test.ts']
+    : Array.from({ length: 6 }, (_, index) => `apps/api/test/selected-${index}.integration.test.ts`)
+  const durations = Object.fromEntries(files.map(file => [file, suite === 'unit' ? 60_000 : 30_000]))
+  const input = { suite, scope: 'affected' as const, files }
+  const parts = suite === 'unit' ? planCiParts(input, durations)
+    : planIntegrationParts(input, { files, durations }, { host: 2, ordinary: 4 }, 4)
+  expect(parts).toHaveLength(2)
+  expect(parts.every(part => part.expectedDurationMs! <= 180_000)).toBe(true)
+  const records = queuedRuns(parts.length).map((run, index) => CiRunRecordSchema.parse({ ...run, ...parts[index],
+    suite, scope: 'affected' }))
+  const clouds = [0, 1].map(slot => ({ ...cloud, key: `github:${slot}`,
+    hostRef: { ...cloud.hostRef, provider: 'github' as const, slot } }))
+  const f = fleet(records, [...clouds, host], new Map(), new Set(), new Map([[host.key, 2]]), { durations })
+  try {
+    await f.service.dispatch()
+    expect(f.started).toHaveLength(2)
+    expect(f.started.every(start => start.computer.hostRef.kind === 'cloud')).toBe(true)
+    expect(records.every(run => run.state === 'running')).toBe(true)
+  } finally {
+    await f.service.close()
+  }
+})
+
+it.each(['unit', 'integration'] as const)('keeps a small %s selection on a builder with spare slots', async suite => {
+  const files = suite === 'unit' ? ['apps/api/src/first.test.ts', 'apps/ci/test/second.test.ts']
+    : ['apps/api/test/slow.integration.test.ts', 'apps/api/test/fast.integration.test.ts']
+  const durations = Object.fromEntries(files.map((file, index) => [file, suite === 'unit' ? 1_000 : index === 0 ? 65_000 : 5_000]))
+  const input = { suite, scope: 'affected' as const, files }
+  const parts = suite === 'unit' ? planCiParts(input, durations)
+    : planIntegrationParts(input, { files, durations }, { host: 2, ordinary: 4 }, 4)
+  expect(parts).toHaveLength(suite === 'unit' ? 2 : 1)
+  const records = queuedRuns(parts.length).map((run, index) => CiRunRecordSchema.parse({ ...run, ...parts[index],
+    suite, scope: 'affected' }))
+  const github = { ...cloud, hostRef: { ...cloud.hostRef, provider: 'github' as const } }
+  const f = fleet(records, [github, host], new Map(), new Set(), new Map([[host.key, 2]]), { durations })
+  try {
+    await f.service.dispatch()
+    expect(f.started.map(start => start.computer.key)).toEqual(parts.map(() => host.key))
+    expect(records.every(run => run.state === 'running')).toBe(true)
+    expect(f.started.flatMap(start => start.request.operation === 'start' ? start.request.files ?? [] : []).sort())
+      .toEqual([...files].sort())
   } finally {
     await f.service.close()
   }
@@ -582,16 +694,17 @@ it.each(gateChecks)('runs a gate $suite part on another free slot of its planned
     expectedDurationMs: 150_000, computer: { hostRef: replacement.hostRef } })
 })
 
-it.each(gateChecks)('runs a gate $suite part on an idle build computer when cloud slots are busy', async check => {
+it.each(gateChecks)('keeps a cloud gate $suite part queued when cloud slots are busy', async check => {
   const records = queuedRuns(1).map(run => CiRunRecordSchema.parse({ ...run, ...check, gate: true,
     plannedHostKey: cloud.key, partition: null }))
   const f = fleet(records, [cloud, host], new Map(), new Set([cloud.key]))
-  await f.service.dispatch()
-  expect(f.started).toHaveLength(1)
-  expect(f.started[0]?.computer.key).toBe(host.key)
-  expect(f.started[0]?.request).toMatchObject({ operation: 'start', runId: records[0]!.id, ...check })
-  expect(records[0]).toMatchObject({ state: 'running', plannedHostKey: cloud.key,
-    computer: { hostRef: host.hostRef } })
+  try {
+    await f.service.dispatch()
+    expect(f.started).toEqual([])
+    expect(records[0]).toMatchObject({ state: 'queued', plannedHostKey: cloud.key, computer: null })
+  } finally {
+    await f.service.close()
+  }
 })
 
 it.each(['github', 'circleci'] as const)(
@@ -634,7 +747,7 @@ it('keeps Worker unit tests off CircleCI when their planned GitHub provider is b
   expect(records[0]?.state).toBe('queued')
 })
 
-it.each(['read', 'status'] as const)('dispatches on idle computers while another executor %s is stalled', async operation => {
+it.each(['read', 'status'] as const)('dispatches queued cloud work while another executor %s is stalled', async operation => {
   const records = queuedRuns(1).map(run => CiRunRecordSchema.parse({ ...run, suite: 'lint', partition: null,
     state: 'running', computer: { hostRef: host.hostRef, label: host.label } }))
   const pending = () => CiRunRecordSchema.parse({ ...queuedRuns(1)[0], suite: 'lint', partition: null })
@@ -648,7 +761,7 @@ it.each(['read', 'status'] as const)('dispatches on idle computers while another
       entered.resolve()
       await stalled.promise
     }
-    if (input.operation === 'read') {
+    if (computer.key === host.key && input.operation === 'read') {
       return { operation: 'read', run: { runId: input.runId, state: 'running', step: 'lint',
         startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, logBytes: 0, message: null },
       text: '', nextOffset: 0 }
@@ -660,12 +773,16 @@ it.each(['read', 'status'] as const)('dispatches on idle computers while another
     await entered.promise
     await vi.waitFor(() => expect(f.started).toHaveLength(1), { timeout: 1000 })
     records.push(pending())
-    const next = f.service.dispatch()
+    await f.service.dispatch()
+    // Full lint stays on the ready cloud fleet, even while its only slot is occupied.
+    expect(f.started.map(item => item.computer.key)).toEqual([cloud.key])
+    expect(records[2]?.state).toBe('queued')
+    records[1] = CiRunRecordSchema.parse({ ...records[1], state: 'passed', exitCode: 0,
+      finishedAt: new Date().toISOString() })
+    await f.service.dispatch()
     await vi.waitFor(() => expect(f.started).toHaveLength(2), { timeout: 1000 })
-    await next
-    // Which idle computer answers its status first decides who gets the first ticket.
-    expect(f.started.map(item => item.computer.key).sort()).toEqual([secondHost.key, cloud.key].sort())
-    expect(records.slice(1).map(run => run.state)).toEqual(['running', 'running'])
+    expect(f.started.map(item => item.computer.key)).toEqual([cloud.key, cloud.key])
+    expect(records.slice(1).map(run => run.state)).toEqual(['passed', 'running'])
   } finally {
     stalled.resolve()
     await dispatch
@@ -923,14 +1040,24 @@ it('runs an unpartitioned systemd selection on a capable cloud slot', async () =
   expect(records[0]?.state).toBe('running')
 })
 
-it('plans systemd files on capable cloud capacity and keeps a build computer available for other slices', async () => {
+it('queues the ordinary full slice behind a systemd slice on capable cloud capacity', async () => {
   const records = queuedRuns(2)
   const f = fleet(records, [host, { ...cloud, userSystemd: { supported: true, reason: null } }])
-  await f.service.dispatch()
-  expect(f.started.find(item => item.computer.key === cloud.key)?.request)
-    .toMatchObject({ partition: { index: 0, hostIndexes: [0] } })
-  expect(f.started.find(item => item.computer.key === host.key)?.request)
-    .toMatchObject({ partition: { index: 1, hostIndexes: [0] } })
+  try {
+    await f.service.dispatch()
+    expect(f.started.map(item => item.computer.key)).toEqual([cloud.key])
+    expect(f.started[0]?.request).toMatchObject({ partition: { index: 0, hostIndexes: [0] } })
+    expect(records[1]).toMatchObject({ state: 'queued', computer: null })
+    // Full work waits for cloud rather than spilling onto the idle build computer.
+    records[0] = CiRunRecordSchema.parse({ ...records[0], state: 'passed', exitCode: 0,
+      finishedAt: new Date().toISOString() })
+    await f.service.dispatch()
+    expect(f.started.map(item => item.computer.key)).toEqual([cloud.key, cloud.key])
+    expect(f.started[1]?.request).toMatchObject({ partition: { index: 1, hostIndexes: [0] } })
+    expect(records.map(run => run.state)).toEqual(['passed', 'running'])
+  } finally {
+    await f.service.close()
+  }
 })
 
 it.each([host, cloud])('dispatches high priority then oldest tickets on $label', async computer => {

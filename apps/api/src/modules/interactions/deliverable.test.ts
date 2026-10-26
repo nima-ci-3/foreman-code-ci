@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ExecutionResult } from '@foreman-code/contracts'
+import { COORDINATION_RESULT_PROTOCOL, type ExecutionResult } from '@foreman-code/contracts'
+import { WorkflowDefinitionCurrentSchema } from '@foreman-code/contracts/current'
 import { deliverableFailure, deliverableRepairPrompt, deliverableVerdict, nativeOutputSchema, type DeliverableContract } from './deliverable.js'
 
 const known = new Set(['ticket-created-here'])
@@ -60,6 +61,23 @@ describe('deliverable verdict', () => {
     expect(await deliverableVerdict(choice(null), contract({ source: 'data' }))).toBeUndefined()
     expect(await deliverableVerdict(choice(null), contract({ source: 'data', outputSchema: schema }))).toMatchObject({ code: 'OUTPUT_SCHEMA_MISMATCH' })
     expect(await deliverableVerdict(choice({ status: 'done', summary: 'ok' }), contract({ source: 'data', outputSchema: schema }))).toBeUndefined()
+  })
+
+  it('accepts null choice data under the coordination protocol when the node declares no schema', async () => {
+    const coordination = { resultProtocol: COORDINATION_RESULT_PROTOCOL, workflowNodeId: 'chooser',
+      definition: WorkflowDefinitionCurrentSchema.parse({ id: 'workflow', workspaceId: 'workspace', name: 'Saved workflow',
+        executionSemanticsVersion: 3, entryNodeId: 'chooser', executionCondition: { kind: 'manual' }, edges: [],
+        nodes: [{ id: 'chooser', agentId: 'agent', name: 'Chooser',
+          choice: { outcomes: [{ outcome: 'done', target: { kind: 'branch_end' } }] } }] }) }
+    const result = (data: unknown) => finalText(JSON.stringify({ data, summary: 'Chose done.',
+      board: { kind: 'none', reason: 'no_changes' }, routing: { outcome: 'done' } }))
+    expect(await deliverableVerdict(result(null), contract({ source: 'data', coordination }))).toBeUndefined()
+    expect(await deliverableVerdict(result({ status: 'done', summary: 'ok' }), contract({ source: 'data', coordination }))).toBeUndefined()
+    // A plain coordinated node still needs a deliverable that is not empty.
+    const plain = { ...coordination, definition: { ...coordination.definition,
+      nodes: [{ ...coordination.definition.nodes[0]!, choice: undefined }] } }
+    const plainResult = finalText(JSON.stringify({ data: null, summary: 'Nothing.', board: { kind: 'none', reason: 'no_changes' } }))
+    expect(await deliverableVerdict(plainResult, contract({ source: 'data', coordination: plain }))).toMatchObject({ code: 'OUTPUT_SCHEMA_MISMATCH' })
   })
 })
 

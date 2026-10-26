@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { CiGetOutputSchema, CiRunOutputSchema, type CiHostRequest, type CiHostRun, type CiTestResults } from '@foreman-code/contracts'
+import { CiGetOutputSchema, CiRunOutputSchema, type CiHostRequest, type CiHostRun, type CiTestResults, type IntegrationCoverage } from '@foreman-code/contracts'
+import { compactIntegrationCoverage } from '@foreman-code/contracts/ci-coverage'
 import { decodeMcpToolResult } from '@foreman-code/contracts/operator-mcp'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { buildApp } from '../src/app.js'
@@ -23,6 +25,7 @@ beforeEach(async () => {
 const LABEL = 'apps/api/test/label.integration.test.ts'
 const PLAIN = 'apps/api/test/plain.integration.test.ts'
 const DYNAMIC = 'apps/api/test/dynamic.integration.test.ts'
+const ALL_TESTS = [DYNAMIC, LABEL, PLAIN]
 
 /** The repository at the first commit: LABEL imports label.ts, which imports format.ts. */
 const BASE: Record<string, string> = {
@@ -50,14 +53,23 @@ const TREES: Record<string, Record<string, string>> = {
   [commit('4')]: { ...BASE, 'pnpm-lock.yaml': 'lockfileVersion: 9.0\n# upgraded\n' },
   [commit('5')]: { ...BASE, 'scripts/ci-suite.sh': '#!/bin/bash\nexec node scripts/ci-files.mjs --changed\n' },
 }
+/** format.ts with a function LABEL never calls, then commits that change only its body, the called body, or module code. */
+const FORMAT = 'apps/api/src/lib/format.ts'
+const withFormat = (text: string) => ({ ...BASE, [FORMAT]: text })
+TREES[commit('6')] = withFormat('export const format = (value: string) => value.trim()\nexport function pad(value: string) {\n  return value\n}\n')
+TREES[commit('7')] = withFormat('export const format = (value: string) => value.trim()\nexport function pad(value: string) {\n  return ` ${value} `\n}\n')
+TREES[commit('8')] = withFormat('export const format = (value: string) => value.trimEnd()\nexport function pad(value: string) {\n  return value\n}\n')
+TREES[commit('9')] = withFormat('export const format = (value: string) => value.trim()\nexport function pad(value: string) {\n  return value\n}\nexport const width = 2\n')
+TREES[commit('a')] = withFormat('export const format = (value: string) => value.trim()\nexport function pad(value: string) {\n  const broken = ;\n}\n')
 
 type Outcome = 'passed' | 'failed' | 'skipped' | 'missing'
 
-async function fixture() {
+async function fixture({ mirror = false, cloudReady = true, cloudStatusError = false } = {}) {
   const pool = database.pool
   const workspaceId = randomUUID()
   await pool.query('insert into workspaces(id,record) values($1,$2::jsonb)', [workspaceId, JSON.stringify({
     id: workspaceId, name: 'CI result cache', repository: { provider: 'github', owner: 'octo', name: 'site', defaultBranch: 'main' },
+    ...(mirror ? { ciMirror: { provider: 'github', owner: 'octo', name: 'site-ci' } } : {}),
   })])
   const access = new PostgresAccessService(pool)
   const commands = new PostgresCommandCoordinator(pool)
@@ -88,6 +100,8 @@ async function fixture() {
       [path, `100644:${createHash('sha1').update(text).digest('hex')}`])),
     read: async (path: string) => files[path]! }
   }
+  /** The coverage the build computer reports for a finished run's files, when set. */
+  let coverage: ((files: string[]) => IntegrationCoverage) | undefined
   const integrationFiles = [DYNAMIC, LABEL, PLAIN]
   /** What the repository selector picks at each commit; a missing commit makes it fail. */
   const selections = new Map<string, string[]>()
@@ -110,8 +124,12 @@ async function fixture() {
   }
   const ci = new HostCiService(mainCiContext, pool, commands, new RunCiAuthority(pool), commits, {
     computers: async () => computers,
-    request: async (_computer, request) => {
-      if (request.operation === 'status') return { operation: 'status', ready: true, reasons: [],
+    request: async (computer, request) => {
+      if (request.operation === 'status' && computer.hostRef.kind === 'cloud' && cloudStatusError) {
+        throw new Error('Cloud status unavailable')
+      }
+      if (request.operation === 'status') return { operation: 'status', ready: computer.hostRef.kind !== 'cloud' || cloudReady,
+        reasons: computer.hostRef.kind === 'cloud' && !cloudReady ? ['Cloud CI unavailable'] : [],
         cpuCount: 16, memoryBytes: 32 * 2 ** 30, slotsTotal: 8, slotsUsed: 0, runs: [] }
       if (request.operation === 'start') {
         starts.push(request)
@@ -126,7 +144,9 @@ async function fixture() {
       const started = starts.find(start => start.runId === request.runId)!
       const finished = !['starting', 'running'].includes(run.state)
       return { operation: 'read', run, text: '', nextOffset: 0,
-        ...(request.testResults && finished ? { testResults: results(started.files ?? []) } : {}) }
+        ...(request.testResults && finished ? { testResults: results(started.files ?? []) } : {}),
+        ...(request.integrationCoverage && finished && coverage ? { integrationCoverage: gzipSync(JSON.stringify(
+          compactIntegrationCoverage(coverage(started.files ?? [])))).toString('base64') } : {}) }
     },
   })
   const app = buildApp({ logger: false,
@@ -177,7 +197,8 @@ async function fixture() {
   const cachedRows = async () => (await pool.query<{ file: string; ticket_id: string }>(
     // A pass is stored under its full key and its runner-free key; each file and proving ticket counts once.
     'select distinct file,ticket_id from ci_test_result_cache where workspace_id=$1 order by file', [workspaceId])).rows
-  return { workspaceId, connect, call, request, requestSelected, selections, fullSelection, read, complete, sent, starts, outcomes, cachedRows, close: async () => {
+  return { workspaceId, connect, call, request, requestSelected, selections, fullSelection, read, complete, sent, starts, outcomes, cachedRows,
+    reportCoverage: (report: typeof coverage) => { coverage = report }, close: async () => {
     await Promise.all(clients.map(client => client.close()))
     await ci.close()
     await app.close()
@@ -302,6 +323,27 @@ it('never skips cached files in full-scope runs or gates', async () => {
   } finally { await f.close() }
 })
 
+it.each([
+  { reason: 'no CI mirror', mirror: false, cloudReady: true, cloudStatusError: false },
+  { reason: 'cloud not ready', mirror: true, cloudReady: false, cloudStatusError: false },
+  { reason: 'cloud status unavailable', mirror: true, cloudReady: true, cloudStatusError: true },
+])('plans and starts a gate on the builder when cloud cannot run it: $reason', async ({ mirror, cloudReady, cloudStatusError }) => {
+  const f = await fixture({ mirror, cloudReady, cloudStatusError })
+  try {
+    const gate = CiRunOutputSchema.parse(await f.call('ci_run', { suite: 'integration', commit: commit('1'),
+      scope: 'full', gate: true, commandId: randomUUID() }))
+    await f.sent(gate.ticketId)
+    const parts = (await f.read(gate.ticketId)).partitions ?? []
+    expect(parts.length).toBeGreaterThan(0)
+    expect(parts.every(part => part.plannedHostKey === 'cache-builder')).toBe(true)
+    expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
+      .toEqual([DYNAMIC, LABEL, PLAIN])
+    const running = parts.filter(part => part.state === 'running')
+    expect(running).toHaveLength(1)
+    expect(running[0]?.computer?.hostRef).toEqual({ kind: 'main', mainId: 'cache-main' })
+  } finally { await f.close() }
+})
+
 it('skips files that already passed in a run whose files the selector chose, and records the files it proves', async () => {
   const f = await fixture()
   try {
@@ -373,5 +415,63 @@ it('skips proven files even when the selector picks every file', async () => {
     const started = await f.requestSelected('2')
     expect(started.cachedFiles?.map(item => item.file)).toEqual([LABEL, PLAIN])
     expect(await f.sent(started.ticketId)).toEqual([DYNAMIC])
+  } finally { await f.close() }
+})
+
+it('proves a file again when only bodies of functions it never ran changed, and runs it when it could behave differently', async () => {
+  const f = await fixture()
+  try {
+    // LABEL ran label() and format(), never pad().
+    f.reportCoverage(files => ({ version: 1, commit: commit('6'), testFiles: ALL_TESTS, coverage: {}, staticTests: [],
+      functionSets: [['apps/api/src/lib/label.ts', ['/label#0']], [FORMAT, ['/format#0']]],
+      functions: Object.fromEntries(files.filter(file => file === LABEL).map(file => [file, [0, 1]])) }))
+    const first = await f.request('6', [LABEL, PLAIN])
+    await f.complete(first.ticketId)
+
+    const unrun = await f.request('7', [LABEL])
+    expect(unrun.cachedFiles).toEqual([{ file: LABEL, ticketId: first.ticketId, commit: commit('6') }])
+    expect(await f.sent(unrun.ticketId)).toBeNull()
+
+    for (const sha of ['8', '9']) {
+      const changed = await f.request(sha, [LABEL])
+      expect(changed.cachedFiles, `commit ${sha}`).toBeUndefined()
+      expect(await f.sent(changed.ticketId)).toEqual([LABEL])
+    }
+  } finally { await f.close() }
+})
+
+it('keeps a smoke pass scoped to its computer instead of proving an ordinary integration run', async () => {
+  const f = await fixture()
+  try {
+    f.reportCoverage(files => ({ version: 1, commit: commit('6'), testFiles: ALL_TESTS, coverage: {}, staticTests: [],
+      functionSets: [[FORMAT, ['/format#0']]],
+      functions: Object.fromEntries(files.filter(file => file === LABEL).map(file => [file, [0]])) }))
+    const smokeInput = { suite: 'integration', commit: commit('6'), scope: 'affected', files: [LABEL],
+      smokeComputer: { kind: 'main', mainId: 'cache-main' } }
+    const smoke = CiRunOutputSchema.parse(await f.call('ci_run', { ...smokeInput, commandId: randomUUID() }))
+    await f.complete(smoke.ticketId)
+
+    const repeated = CiRunOutputSchema.parse(await f.call('ci_run', { ...smokeInput, commandId: randomUUID() }))
+    expect(repeated.cachedFiles).toEqual([{ file: LABEL, ticketId: smoke.ticketId, commit: commit('6') }])
+    expect(await f.sent(repeated.ticketId)).toBeNull()
+
+    const ordinary = await f.request('7', [LABEL])
+    expect(ordinary.cachedFiles).toBeUndefined()
+    expect(await f.sent(ordinary.ticketId)).toEqual([LABEL])
+  } finally { await f.close() }
+})
+
+it('runs a proven file again when an unused function body develops a syntax error', async () => {
+  const f = await fixture()
+  try {
+    f.reportCoverage(files => ({ version: 1, commit: commit('6'), testFiles: ALL_TESTS, coverage: {}, staticTests: [],
+      functionSets: [[FORMAT, ['/format#0']]],
+      functions: Object.fromEntries(files.filter(file => file === LABEL).map(file => [file, [0]])) }))
+    const first = await f.request('6', [LABEL])
+    await f.complete(first.ticketId)
+
+    const invalid = await f.request('a', [LABEL])
+    expect(invalid.cachedFiles).toBeUndefined()
+    expect(await f.sent(invalid.ticketId)).toEqual([LABEL])
   } finally { await f.close() }
 })

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -15,7 +16,7 @@ function project(realLint = false) {
   mkdirSync(join(root, 'scripts/eslint-plugin-foreman'), { recursive: true })
   copyFileSync(script, join(root, 'scripts/eslint-closure-cache.mjs'))
   mkdirSync(join(root, 'packages/contracts/src'), { recursive: true })
-  copyFileSync(resolve(import.meta.dirname, '../packages/contracts/src/ciImportGraph.mjs'), join(root, 'packages/contracts/src/ciImportGraph.mjs'))
+  copyFileSync(resolve(import.meta.dirname, 'eslint-plugin-foreman/pendingSqlTextTests.mjs'), join(root, 'scripts/eslint-plugin-foreman/pendingSqlTextTests.mjs'))
   copyFileSync(resolve(import.meta.dirname, '../packages/contracts/src/ciLockIdentities.mjs'), join(root, 'packages/contracts/src/ciLockIdentities.mjs'))
   writeFileSync(join(root, 'scripts/eslint-plugin-foreman/index.mjs'), 'export const rules = {}')
   writeFileSync(join(root, 'scripts/lint-allowlist.json'), '{}')
@@ -87,7 +88,7 @@ test('lints every file once, then only files whose own text or imported files ch
   } finally { fixture.close() }
 })
 
-test('a version bump or new script in a manifest keeps earlier passes, a dependency change does not', () => {
+test('manifest metadata and dependency ranges keep passes, module resolution settings invalidate them', () => {
   const fixture = project()
   try {
     assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts', 'types.ts', 'user.ts'] })
@@ -95,6 +96,8 @@ test('a version bump or new script in a manifest keeps earlier passes, a depende
     writeFileSync(join(fixture.directory, 'package.json'), '{"name":"closure-fixture","version":"2.0.0"}')
     assert.deepEqual(fixture.lint(), { status: 0, linted: [] })
     writeFileSync(join(fixture.directory, 'package.json'), '{"name":"closure-fixture","version":"2.0.0","dependencies":{"a":"1"}}')
+    assert.deepEqual(fixture.lint(), { status: 0, linted: [] })
+    writeFileSync(join(fixture.directory, 'package.json'), '{"name":"closure-fixture","type":"module"}')
     assert.deepEqual(fixture.lint(), { status: 0, linted: ['alone.ts', 'types.ts', 'user.ts'] })
   } finally { fixture.close() }
 })
@@ -160,7 +163,7 @@ test('global scripts invalidate unchanged consumers', () => {
   } finally { fixture.close() }
 })
 
-test('lint exemptions and inherited compiler options invalidate earlier passes', () => {
+test('lint exemptions, implementation and inherited compiler options invalidate earlier passes', () => {
   for (const input of ['scripts/lint-allowlist.json', 'scripts/lint-allowlist.mjs', 'tsconfig.shared.json']) {
     const fixture = project()
     try {
@@ -168,8 +171,11 @@ test('lint exemptions and inherited compiler options invalidate earlier passes',
       writeFileSync(join(fixture.directory, 'tsconfig.json'), '{"extends":"../../tsconfig.shared.json","include":["src"]}')
       assert.equal(fixture.lint().status, 0)
       assert.deepEqual(fixture.lint().linted, [])
+      const userId = createHash('sha256').update(readFileSync(join(fixture.directory, 'src/user.ts'))).digest('hex')
       writeFileSync(join(fixture.root, input), input.endsWith('.mjs') ? 'export const allowlist = { changed: true }'
-        : '{"compilerOptions":{"strict":false}}')
+        : input.endsWith('lint-allowlist.json') ? JSON.stringify({
+          files: { [userId]: 'apps/api/src/user.ts' }, eslint: { 'foreman/no-silent-catch': [userId] },
+        }) : '{"compilerOptions":{"strict":false}}')
       assert.ok(fixture.lint().linted.includes('user.ts'), input)
     } finally { fixture.close() }
   }
@@ -178,9 +184,11 @@ test('lint exemptions and inherited compiler options invalidate earlier passes',
 test('workspace packages invalidate consumers of their own workspace dependencies', () => {
   const fixture = project()
   try {
+    mkdirSync(join(fixture.root, 'node_modules/@fixture'), { recursive: true })
     for (const name of ['top', 'base']) {
       mkdirSync(join(fixture.root, 'packages', name, 'src'), { recursive: true })
-      writeFileSync(join(fixture.root, 'packages', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }))
+      writeFileSync(join(fixture.root, 'packages', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, types: './src/index.ts' }))
+      symlinkSync(join(fixture.root, 'packages', name), join(fixture.root, 'node_modules/@fixture', name))
     }
     const base = join(fixture.root, 'packages/base/src/index.ts')
     writeFileSync(base, 'export type Shape = { a: string }')
@@ -220,7 +228,9 @@ test('a workspace package import keys only the exported source it resolves to', 
   try {
     const contracts = join(fixture.root, 'packages/contracts')
     writeFileSync(join(contracts, 'package.json'), JSON.stringify({ name: '@foreman-code/contracts',
-      exports: { './a': { types: './dist/a.d.ts', import: './dist/a.js' }, './b': { import: './dist/b.js' } } }))
+      exports: { './a': { types: './src/a.ts', import: './dist/a.js' }, './b': { types: './src/b.ts', import: './dist/b.js' } } }))
+    mkdirSync(join(fixture.directory, 'node_modules/@foreman-code'), { recursive: true })
+    symlinkSync(contracts, join(fixture.directory, 'node_modules/@foreman-code/contracts'))
     writeFileSync(join(contracts, 'src/a.ts'), 'export type A = { a: string }\n')
     writeFileSync(join(contracts, 'src/b.ts'), 'export const b = 1\n')
     fixture.write('user.ts', "import type { A } from '@foreman-code/contracts/a'\nexport const value: A = { a: '' }\n")
@@ -255,11 +265,15 @@ test('real typed lint catches a newly floating promise through a path alias in a
   } finally { fixture.close() }
 })
 
-test('lint baseline mode cannot reuse results produced with exemptions enabled', () => {
+test('lint baseline mode invalidates results for files with exemptions enabled', () => {
   const fixture = project()
   try {
+    const id = createHash('sha256').update('export const alone = 1\n').digest('hex')
+    writeFileSync(join(fixture.root, 'scripts/lint-allowlist.json'), JSON.stringify({
+      files: { [id]: 'apps/api/src/alone.ts' }, eslint: { 'foreman/no-silent-catch': [id] },
+    }))
     assert.equal(fixture.lint({ FOREMAN_LINT_BASELINE: '' }).status, 0)
     assert.deepEqual(fixture.lint({ FOREMAN_LINT_BASELINE: '' }).linted, [])
-    assert.deepEqual(fixture.lint({ FOREMAN_LINT_BASELINE: '1' }).linted, ['alone.ts', 'types.ts', 'user.ts'])
+    assert.deepEqual(fixture.lint({ FOREMAN_LINT_BASELINE: '1' }).linted, ['alone.ts'])
   } finally { fixture.close() }
 })

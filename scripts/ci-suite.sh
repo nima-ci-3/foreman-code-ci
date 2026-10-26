@@ -276,11 +276,9 @@ case "$SUITE" in
   typecheck) pnpm typecheck && api_build_check ;;
   lint|build) pnpm "$SUITE" ;;
   integration)
-    export FOREMAN_CODE_INTEGRATION_COVERAGE=0
-    if [ "$scope" = full ]; then
-      export FOREMAN_CODE_INTEGRATION_COVERAGE=1
-      export FOREMAN_CODE_INTEGRATION_COVERAGE_OUTPUT="$(dirname "$DURATIONS_OUTPUT")/integration-coverage.json"
-    fi
+    # Every run reports the functions its tests ran (result proofs); a full run's file map also serves selection.
+    export FOREMAN_CODE_INTEGRATION_COVERAGE=1
+    export FOREMAN_CODE_INTEGRATION_COVERAGE_OUTPUT="$(dirname "$DURATIONS_OUTPUT")/integration-coverage.json"
     if [ "${CI_USER_SYSTEMD:-0}" = 1 ] && [ "${CI_HOST_RUNNER:-0}" != 1 ]; then
       source scripts/ci-user-systemd.sh
     fi

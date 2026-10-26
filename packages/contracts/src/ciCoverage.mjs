@@ -1,4 +1,7 @@
-/** @typedef {{ version: 1, commit: string, testFiles: string[], coverage: Record<string, string[]>, staticTests?: string[] }} IntegrationCoverage */
+/** `functionSets` and `functions` (ciFunctionCoverage): each distinct `[source file, functions it ran]` once, and per test
+ * file the indexes of its sets.
+ * @typedef {{ version: 1, commit: string, testFiles: string[], coverage: Record<string, string[]>, staticTests?: string[],
+ *   functionSets?: [string, string[]][], functions?: Record<string, number[]> }} IntegrationCoverage */
 const integrationFile = /^apps\/api\/test\/[^/]+\.integration\.test\.ts$/
 const relativeFile = /^(?!\/|[A-Za-z]:)[^\\\0]+$/
 const repositoryFile = file => typeof file === 'string' && relativeFile.test(file)
@@ -17,6 +20,12 @@ export function isIntegrationCoverage(value) {
       && Array.isArray(paths) && paths.every(repositoryFile))
     && (value.staticTests === undefined || Array.isArray(value.staticTests)
       && value.staticTests.every(file => value.testFiles.includes(file)))
+    && (value.functionSets === undefined && value.functions === undefined || Array.isArray(value.functionSets)
+      && value.functionSets.every(set => Array.isArray(set) && set.length === 2 && repositoryFile(set[0])
+        && Array.isArray(set[1]) && set[1].every(path => typeof path === 'string'))
+      && value.functions !== null && typeof value.functions === 'object' && !Array.isArray(value.functions)
+      && Object.entries(value.functions).every(([file, indexes]) => value.testFiles.includes(file) && Array.isArray(indexes)
+        && indexes.every(index => Number.isSafeInteger(index) && index >= 0 && index < value.functionSets.length)))
 }
 
 /** @param {unknown} value @returns {value is IntegrationCoverage} */

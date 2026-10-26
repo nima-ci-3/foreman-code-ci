@@ -4,6 +4,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import { promisify } from 'node:util'
 import { parentPort } from 'node:worker_threads'
 import { CiResultKeys, type CiResultKey, type CiTestTree } from './resultCache.js'
+import { functionMasks, maskedKey, type FunctionCoverageInput } from './functionProofs.js'
 
 export interface ResultKeysRequest {
   id: number
@@ -11,6 +12,8 @@ export interface ResultKeysRequest {
   commit: string
   files: { file: string; suite: string; part: string }[]
   timeoutMs: number
+  /** Keys under these function masks (functionProofs) instead of exact keys. */
+  functions?: FunctionCoverageInput
 }
 export type ResultKeysReply = { id: number; keys: Record<string, CiResultKey> }
   | { id: number; error: string }
@@ -114,7 +117,8 @@ async function graphFor(clone: string, commit: string) {
 async function answer(request: ResultKeysRequest): Promise<ResultKeysReply> {
   try {
     const keys = (await graphFor(request.clone, request.commit)).keys.bounded(AbortSignal.timeout(request.timeoutMs))
-    const entries = await Promise.all(request.files.map(async ({ file, suite, part }) => [file, await keys.key(file, suite, part)] as const))
+    const masks = request.functions && functionMasks(request.functions)
+    const entries = await Promise.all(request.files.map(async ({ file, suite, part }) => [file, await maskedKey(keys, file, suite, part, masks)] as const))
     return { id: request.id, keys: Object.fromEntries(entries) }
   } catch (error) {
     return { id: request.id, error: error instanceof Error ? error.message : String(error) }

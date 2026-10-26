@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
@@ -18,8 +19,11 @@ function fixture(t) {
   mkdirSync(join(root, 'packages/contracts/src'), { recursive: true })
   mkdirSync(join(root, 'apps/api'), { recursive: true })
   writeFileSync(join(root, 'packages/contracts/src/index.ts'), 'export const value = 1')
-  writeFileSync(join(root, 'pnpm-lock.yaml'), 'dependencies-one')
-  writeFileSync(join(root, '.gitignore'), 'packages/contracts/dist/\n')
+  const lock = integrity => `lockfileVersion: '9.0'\nimporters:\n  packages/contracts:\n    devDependencies:\n      typescript:\n        version: 5.9.3\npackages:\n  typescript@5.9.3:\n    resolution: {integrity: ${integrity}}\nsnapshots:\n  typescript@5.9.3: {}\n`
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lock('compiler-one'))
+  writeFileSync(join(root, 'packages/contracts/package.json'), '{"type":"module"}')
+  writeFileSync(join(root, 'packages/contracts/tsconfig.build.json'), '{"compilerOptions":{"types":[]},"include":["src"]}')
+  writeFileSync(join(root, '.gitignore'), 'packages/contracts/dist/\nnode_modules/\n')
   const env = { ...process.env, GIT_AUTHOR_NAME: 'Test Author', GIT_COMMITTER_NAME: 'Test Author',
     GIT_AUTHOR_EMAIL: 'author@example.test', GIT_COMMITTER_EMAIL: 'author@example.test' }
   const git = (...args) => {
@@ -29,7 +33,7 @@ function fixture(t) {
   git('init', '-q', '-b', 'main')
   const commit = () => { git('add', '.'); git('commit', '-qm', 'fixture inputs') }
   commit()
-  const compiler = join(directory, 'compiler.cjs')
+  const compiler = join(directory, 'tsc')
   const count = join(directory, 'compilations')
   writeFileSync(compiler, `const fs = require('node:fs');
 fs.appendFileSync(${JSON.stringify(count)}, 'build\\n');
@@ -43,6 +47,10 @@ process.exit(Number(process.env.COMPILER_EXIT || 0));
   const builds = () => readFileSync(count, 'utf8').trim().split('\n').length
   const other = join(directory, 'other')
   git('worktree', 'add', '-q', '--detach', other)
+  for (const source of [root, other]) {
+    mkdirSync(join(source, 'packages/contracts/node_modules'), { recursive: true })
+    symlinkSync(dirname(createRequire(new URL('../apps/ci/package.json', import.meta.url)).resolve('typescript/package.json')), join(source, 'packages/contracts/node_modules/typescript'), 'dir')
+  }
   const buildAsync = source => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, 'build', source, cache, '--', process.execPath, compiler],
       { cwd: source, env: { ...env, COMPILER_EXIT: '0' } })
@@ -70,7 +78,7 @@ test('restores contracts for unchanged inputs and rebuilds for contracts or depe
   f.commit()
   assert.equal(f.build().status, 0)
   assert.equal(f.builds(), 2)
-  writeFileSync(join(f.root, 'pnpm-lock.yaml'), 'dependencies-two')
+  writeFileSync(join(f.root, 'pnpm-lock.yaml'), readFileSync(join(f.root, 'pnpm-lock.yaml'), 'utf8').replace('compiler-one', 'compiler-two'))
   f.commit()
   assert.equal(f.build().status, 0)
   assert.equal(f.builds(), 3)

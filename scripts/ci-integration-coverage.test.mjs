@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import { affectedSnapshot, selectAffectedFiles } from './ci-affected.mjs'
 
 const source = 'apps/api/src/feature.ts'
@@ -273,4 +276,91 @@ test('missing worker reports retain static fallback while absent partitions rema
   assert.deepEqual(report.coverage, { [first]: [source], [second]: [] })
   assert.deepEqual(report.staticTests, [second])
   assert.equal(completeIntegrationCoverage(report), false)
+})
+
+test('function coverage names the functions a module ran, through nested and class code', async t => {
+  const { functionCoverage, startFileCoverage } = await import('./integration-coverage.mjs')
+  const f = repository(t)
+  writeFileSync(join(f.root, 'lib.mjs'), [
+    'export function used(value) { return inner(value) }',
+    'function inner(value) { return [value].map(item => item + 1)[0] }',
+    'export function unused(value) { return value - 1 }',
+    'export class Box { constructor(value) { this.value = value } get doubled() { return this.value * 2 } }',
+  ].join('\n'))
+  const stop = await startFileCoverage()
+  const lib = await import(join(f.root, 'lib.mjs'))
+  assert.equal(lib.used(1), 2)
+  assert.equal(new lib.Box(3).value, 3)
+  await stop(f.root, new Set(['lib.mjs']))
+  const { functionSets, functions } = functionCoverage(f.root, { [first]: stop.functions })
+  assert.deepEqual(functions[first].map(index => functionSets[index]),
+    [['lib.mjs', ['/Box.constructor#0', '/inner#0', '/inner#0/#0', '/used#0']]])
+})
+
+test('a masked text changes with module code, heads and bodies that ran, never with bodies that did not', async () => {
+  const { functionSpans, maskedText } = await import('../packages/contracts/src/ciFunctionCoverage.mjs')
+  const ts = createRequire(new URL('../apps/api/package.json', import.meta.url))('typescript')
+  const ran = new Set(['/format#0'])
+  const masked = text => maskedText(text, functionSpans(text, 'format.ts', ts), ran)
+  const base = 'export const format = (value: string) => value.trim()\nexport function pad(value: string) { return value }\n'
+  assert.equal(masked(base.replace('return value }', 'return ` ${value} ` }')), masked(base))
+  for (const changed of [base.replace('value.trim()', 'value.trimEnd()'), base.replace('pad(value: string)', 'pad(value: number)'),
+    `${base}export const width = 2\n`, base.replace('export function pad', 'function pad')]) {
+    assert.notEqual(masked(changed), masked(base), changed)
+  }
+})
+
+test('function coverage merges calls from separate script instances of the same file', async t => {
+  const { functionCoverage, startFileCoverage } = await import('./integration-coverage.mjs')
+  const f = repository(t)
+  const text = [
+    'const marker = 0',
+    'function firstUsed() { return marker + 1 }',
+    'function secondUsed() { return marker + 2 }',
+    '({ firstUsed, secondUsed })',
+  ].join('\n')
+  const file = join(f.root, 'instances.mjs')
+  writeFileSync(file, text)
+  const stop = await startFileCoverage()
+  const options = { filename: pathToFileURL(file).href }
+  const firstInstance = runInNewContext(text, {}, options)
+  firstInstance.firstUsed()
+  const secondInstance = runInNewContext(text, {}, options)
+  secondInstance.secondUsed()
+  await stop(f.root, new Set(['instances.mjs']))
+  const { functionSets, functions } = functionCoverage(f.root, { [first]: stop.functions })
+  assert.deepEqual(functions[first].map(index => functionSets[index]),
+    [['instances.mjs', ['/firstUsed#0', '/secondUsed#0']]])
+})
+
+test('runner coverage includes returned beforeAll cleanups and file fixture teardown', async t => {
+  const { functionCoverage } = await import('./integration-coverage.mjs')
+  const f = repository(t)
+  f.put('cleanup.mjs', [
+    'export function hookCleanup() { return 1 }',
+    'export function fixtureCleanup() { return 2 }',
+  ].join('\n'))
+  f.put(first, `import { beforeAll, expect, test } from 'vitest'
+import { hookCleanup, fixtureCleanup } from '../../../cleanup.mjs'
+beforeAll(() => hookCleanup)
+const scoped = test.extend({ resource: [async ({}, use) => {
+  await use('ready')
+  fixtureCleanup()
+}, { scope: 'file' }] })
+scoped('uses the file fixture', ({ resource }) => expect(resource).toBe('ready'))
+`)
+  const runner = fileURLToPath(new URL('../packages/contracts/ci-test-runner.mjs', import.meta.url))
+  f.put('vitest.config.mjs', `export default { test: {
+    include: [${JSON.stringify(first)}], maxWorkers: 1, runner: ${JSON.stringify(runner)}
+  } }`)
+  f.commit('cleanup fixtures')
+  symlinkSync(fileURLToPath(new URL('../packages/contracts/node_modules', import.meta.url)), join(f.root, 'node_modules'))
+  const cli = fileURLToPath(new URL('../packages/contracts/node_modules/vitest/vitest.mjs', import.meta.url))
+  execFileSync(process.execPath, [cli, 'run', '--config', 'vitest.config.mjs'], {
+    cwd: f.root, encoding: 'utf8', env: { ...process.env, CI_PROGRESS_FILE: '', CI_REPOSITORY_ROOT: f.root,
+      FOREMAN_CODE_INTEGRATION_COVERAGE_DIRECTORY: f.root, FOREMAN_CODE_TEST_FILE: first },
+  })
+  const report = JSON.parse(readFileSync(join(f.root, 'feature.integration.test.ts.json'), 'utf8'))
+  const { functionSets } = functionCoverage(f.root, { [first]: report.functions })
+  assert.deepEqual(functionSets.find(([file]) => file === 'cleanup.mjs')?.[1], ['/fixtureCleanup#0', '/hookCleanup#0'])
 })

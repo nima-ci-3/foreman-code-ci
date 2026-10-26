@@ -54,9 +54,12 @@ function fixture(checkoutName = 'one') {
   copyFileSync(source, join(first, 'scripts/heavy-job.mjs'))
   copyFileSync(new URL('./sleep.mjs', import.meta.url), join(first, 'scripts/sleep.mjs'))
   copyFileSync(new URL('./heavy-job-slots.mjs', import.meta.url), join(first, 'scripts/heavy-job-slots.mjs'))
+  copyFileSync(new URL('./build-cache-inputs.mjs', import.meta.url), join(first, 'scripts/build-cache-inputs.mjs'))
   mkdirSync(join(first, 'packages/contracts/src'), { recursive: true })
   copyFileSync(new URL('../packages/contracts/src/productEnvironment.mjs', import.meta.url), join(first, 'packages/contracts/src/productEnvironment.mjs'))
   copyFileSync(new URL('../packages/contracts/src/installationNames.mjs', import.meta.url), join(first, 'packages/contracts/src/installationNames.mjs'))
+  copyFileSync(new URL('../packages/contracts/src/runtimeBuildIdentityNode.mjs', import.meta.url), join(first, 'packages/contracts/src/runtimeBuildIdentityNode.mjs'))
+  writeFileSync(join(first, 'packages/contracts/tsconfig.build.json'), '{"compilerOptions":{"allowJs":true,"types":[]},"include":["src"]}')
   writeFileSync(join(first, 'package.json'), '{"type":"module"}')
   writeFileSync(join(first, 'source.txt'), 'first')
   writeFileSync(join(first, '.gitignore'), 'count\ndist/\n.logs/\n')
@@ -584,13 +587,17 @@ test('build freshness stays local and invalidates on source change; legacy temp 
   const f = fixture()
   try {
     const script = `const fs=require('fs');fs.mkdirSync('packages/contracts/dist',{recursive:true});fs.writeFileSync('packages/contracts/dist/index.js','built');fs.appendFileSync('count','x')`
-    const args = ['--build', 'contracts', '--', process.execPath, '-e', script]
+    for (const worktree of [f.first, f.second]) {
+      writeFileSync(join(worktree, 'scripts/tsc.cjs'), script)
+      writeFileSync(join(worktree, 'packages/contracts/src/index.ts'), 'export const value = "first"')
+    }
+    const args = ['--build', 'contracts', '--', process.execPath, 'scripts/tsc.cjs', '-p', 'packages/contracts/tsconfig.build.json']
     assert.equal((await run(f.first, args)).code, 0)
     assert.equal((await run(f.first, args)).code, 0)
     assert.equal(readFileSync(join(f.first, 'count'), 'utf8'), 'x')
     assert.equal((await run(f.second, args)).code, 0)
     assert.equal(readFileSync(join(f.second, 'count'), 'utf8'), 'x')
-    writeFileSync(join(f.first, 'source.txt'), 'changed')
+    writeFileSync(join(f.first, 'packages/contracts/src/index.ts'), 'export const value = "changed"')
     assert.equal((await run(f.first, args)).code, 0)
     assert.equal(readFileSync(join(f.first, 'count'), 'utf8'), 'xx')
     const stale = join(f.tempRoot, 'legacy-owned')
@@ -1010,7 +1017,8 @@ test('verification builds execute each time and return machine-readable command 
       FOREMAN_CODE_VERIFICATION_REPORT_DIR: reports, FOREMAN_CODE_VERIFICATION_LOG_BYTES: '8192',
       FOREMAN_CODE_VERIFICATION_REPORT_BYTES: '65536', npm_lifecycle_event: 'build' }
     const script = "const fs = require('fs'); const n = fs.existsSync('count') ? +fs.readFileSync('count') : 0; fs.writeFileSync('count', String(n+1)); fs.mkdirSync('packages/contracts/dist', {recursive:true}); fs.writeFileSync('packages/contracts/dist/index.js', 'export {}');"
-    const argumentsList = ['--build', 'contracts', '--', process.execPath, '-e', script]
+    writeFileSync(join(f.first, 'scripts/tsc.cjs'), script)
+    const argumentsList = ['--build', 'contracts', '--', process.execPath, 'scripts/tsc.cjs', '-p', 'packages/contracts/tsconfig.build.json']
     assert.equal((await run(f.first, argumentsList)).code, 0)
     const cached = await run(f.first, argumentsList)
     assert.equal(cached.code, 0, cached.output)
@@ -1018,7 +1026,7 @@ test('verification builds execute each time and return machine-readable command 
     for (let attempt = 0; attempt < 2; attempt++) {
       const result = await new Promise((done) => {
         const child = spawn(process.execPath, ['scripts/heavy-job.mjs', '--build', 'contracts', '--',
-          process.execPath, '-e', script], { cwd: f.first, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
+          process.execPath, 'scripts/tsc.cjs', '-p', 'packages/contracts/tsconfig.build.json'], { cwd: f.first, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
         let output = ''
         child.stdout.on('data', (chunk) => { output += chunk })
         child.stderr.on('data', (chunk) => { output += chunk })

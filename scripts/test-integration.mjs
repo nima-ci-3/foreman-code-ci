@@ -1083,7 +1083,7 @@ export async function runIntegration(argv = [], {
         const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' })
         if (commit.status !== 0) throw new Error('Could not identify the integration coverage commit')
         const coverage = integrationCoverageReport(join(failedLogs, 'coverage'), commit.stdout.trim(), discoverFiles(),
-          firstPass.map(file => file.file))
+          firstPass.map(file => file.file), root)
         writeDurations(join(failedLogs, 'integration-coverage.json'), coverage)
         console.log(`[integration] coverage: ${Object.keys(coverage.coverage).length}/${coverage.testFiles.length} test files;`
           + ` ${coverage.staticTests.length} retain static selection; commit ${coverage.commit}`)

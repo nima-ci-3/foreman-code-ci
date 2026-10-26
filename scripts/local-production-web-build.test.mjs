@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -16,7 +17,7 @@ test('production snapshots reuse unchanged web output and rebuild changed or mis
   t.after(() => rm(directory, { recursive: true, force: true }))
   const repository = join(directory, 'repository')
   await mkdir(join(repository, 'scripts'), { recursive: true })
-  for (const name of ['heavy-job.mjs', 'heavy-job-slots.mjs', 'sleep.mjs']) {
+  for (const name of ['heavy-job.mjs', 'heavy-job-slots.mjs', 'sleep.mjs', 'build-cache-inputs.mjs']) {
     await copyFile(new URL(name, import.meta.url), join(repository, 'scripts', name))
   }
   await mkdir(join(repository, 'packages/contracts/src'), { recursive: true })
@@ -25,6 +26,12 @@ test('production snapshots reuse unchanged web output and rebuild changed or mis
   await copyFile(new URL('../packages/contracts/src/installationNames.mjs', import.meta.url),
     join(repository, 'packages/contracts/src/installationNames.mjs'))
   await mkdir(join(repository, 'apps/web/src'), { recursive: true })
+  await mkdir(join(repository, 'apps/api/src'), { recursive: true })
+  await mkdir(join(repository, 'apps/web/public'), { recursive: true })
+  await writeFile(join(repository, 'apps/api/src/server.ts'), 'export const server = true')
+  await writeFile(join(repository, 'apps/web/public/favicon.svg'), '<svg/>')
+  await copyFile(new URL('../packages/contracts/src/runtimeBuildIdentityNode.mjs', import.meta.url), join(repository, 'packages/contracts/src/runtimeBuildIdentityNode.mjs'))
+  await writeFile(join(repository, 'apps/web/tsconfig.json'), '{"compilerOptions":{"allowJs":true,"types":[]},"include":["src"]}')
   await writeFile(join(repository, 'apps/web/src/app.js'), 'browser input')
   await writeFile(join(repository, 'package.json'), '{"type":"module"}')
   await writeFile(join(repository, '.gitignore'), 'node_modules/\ndist/\n.logs/\n')
@@ -56,7 +63,8 @@ fs.appendFileSync(${JSON.stringify(join(directory, 'builds'))}, 'built\\n');
     for (const tool of ['typescript', 'vite', '@vitejs/plugin-react']) {
       const module = join(source, 'apps/web/node_modules', tool)
       await mkdir(module, { recursive: true })
-      await writeFile(join(module, 'index.js'), 'module.exports = {}')
+      await writeFile(join(module, 'package.json'), JSON.stringify({ name: tool, main: 'index.js' }))
+      await writeFile(join(module, 'index.js'), tool === 'typescript' ? `module.exports = require(${JSON.stringify(createRequire(new URL('../apps/ci/package.json', import.meta.url)).resolve('typescript'))})` : 'module.exports = {}')
     }
     await buildProductionSource(async (command, args) => {
       if (args.includes('vite') || args.includes('--build')) {

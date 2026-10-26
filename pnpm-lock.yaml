@@ -137,6 +137,9 @@ importers:
       fastify:
         specifier: 5.12.7
         version: 5.12.7
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -162,9 +165,6 @@ importers:
       pg:
         specifier: 8.23.0
         version: 8.23.0
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
       typescript-eslint:
         specifier: 8.70.0
         version: 8.70.0(eslint@10.10.0)(typescript@5.9.3)

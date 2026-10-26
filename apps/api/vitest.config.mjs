@@ -14,9 +14,11 @@ export default defineConfig({
     { find: /^@foreman-code\/api\/worker\/(.+)$/, replacement: `${fileURLToPath(new URL('./src/worker/', import.meta.url))}$1.ts` },
   ] },
   test: {
-    ...(env.CI_PROGRESS_FILE ? { runner: '../../packages/contracts/ci-test-runner.mjs', reporters: ['default', '../../scripts/ci-progress-reporter.mjs'] } : {}),
+    ...(env.CI_PROGRESS_FILE || env.FOREMAN_CODE_INTEGRATION_COVERAGE_DIRECTORY
+      ? { runner: '../../packages/contracts/ci-test-runner.mjs' } : {}),
+    ...(env.CI_PROGRESS_FILE ? { reporters: ['default', '../../scripts/ci-progress-reporter.mjs'] } : {}),
     globalSetup: ['../../scripts/vitest-heavy-setup.mjs', '../../scripts/vitest-test-resources.mjs'],
-    setupFiles: ['./test/setupCoverage.ts', './test/setupResources.ts'],
+    setupFiles: ['./test/setupResources.ts'],
     sequence: { setupFiles: 'list' },
     // Leave CPU headroom for the Vitest coordinator and application processes.
     maxWorkers,

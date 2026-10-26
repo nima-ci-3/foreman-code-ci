@@ -78,6 +78,10 @@ export async function deliverableVerdict(result: ExecutionResult, contract: Deli
     try {
       const parsed = parseCoordinationResult(result.output, contract.coordination)
       if (contract.coordination.interval) return undefined
+      // As without the protocol: choice and artifact data may be null by their own contract, so only a schema judges it.
+      const node = contract.coordination.definition.nodes.find(item => item.id === contract.coordination!.workflowNodeId)
+      if (contract.source === 'data' && !contract.outputSchema && node?.kind !== 'job'
+        && (node?.choice || node?.artifactOutputs)) return undefined
       deliverable = contract.source === 'latestDeliverable' && isObject(parsed.data)
         ? { value: parsed.data.latestDeliverable } : { value: parsed.data }
     } catch (error) {

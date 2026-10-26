@@ -23,9 +23,9 @@ export class GitCiCommits implements CiCommits {
   constructor(private readonly context: CiContext, private readonly git: GitWorktreePorts = context.platform.systemGitWorktreePorts()) {
     if (ResultKeyThread.available()) {
       const thread = new ResultKeyThread()
-      this.resultKeys = async (repository, commit, files, signal) => {
+      this.resultKeys = async (repository, commit, files, signal, functions) => {
         const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
-        return thread.keys(clone, commit, files, 60_000)
+        return thread.keys(clone, commit, files, 60_000, functions)
       }
     }
   }

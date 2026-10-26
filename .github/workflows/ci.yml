@@ -140,13 +140,35 @@ jobs:
         with:
           path: packages/contracts/dist
           key: contracts-build-${{ runner.os }}-${{ steps.cache-inputs.outputs.contracts }}
+      - id: compiler-inputs
+        if: startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'build')
+        run: |
+          if [ "$SUITE" = build ] || [ "$SUITE" = build-api ]; then
+            api=$(node scripts/ci-compiler-key.mjs api "$PWD")
+            echo "api=$api" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$SUITE" != typecheck-api ] && [ "$SUITE" != build-api ]; then
+            web=$(node scripts/ci-compiler-key.mjs web "$PWD")
+            echo "web=$web" >> "$GITHUB_OUTPUT"
+          fi
       - name: API build cache
         id: api-build
         if: inputs.suite == 'build' || inputs.suite == 'build-api'
         uses: actions/cache/restore@v4
         with:
           path: apps/api/dist
-          key: api-build-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/api/src/**', '!apps/api/src/**/*.test.ts', '!apps/api/src/**/__tests__/**', 'apps/api/tsconfig*.json', 'apps/api/package.json', 'apps/ci/src/**', 'apps/ci/tsconfig*.json', 'apps/ci/package.json', 'packages/contracts/src/**', '!packages/contracts/src/**/*.test.ts', '!packages/contracts/src/**/*.spec.ts', 'packages/contracts/tsconfig*.json', 'packages/contracts/package.json', 'scripts/copy-api-runtime.mjs') }}
+          key: api-build-${{ runner.os }}-node24.22.1-${{ steps.compiler-inputs.outputs.api }}
+      # Build checks share web semantic state. Typecheck already restores it with the suite/run state below;
+      # restoring this archive there would overwrite a newer per-file state.
+      - name: Web TypeScript cache
+        id: web-typecheck
+        if: startsWith(inputs.suite, 'build') && inputs.suite != 'build-api'
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/web/node_modules/.cache/tsc
+          key: web-typecheck-${{ runner.os }}-node24.22.1-${{ steps.compiler-inputs.outputs.web }}
+          restore-keys: |
+            web-typecheck-${{ runner.os }}-node24.22.1-
       # Main's TypeScript and ESLint state (saved by the default-branch cache warmer): checks re-run only what changed.
       - name: Typecheck and lint state from main
         if: startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint')
@@ -157,12 +179,11 @@ jobs:
             apps/*/node_modules/.cache/eslint
             packages/*/node_modules/.cache/tsc
             packages/*/node_modules/.cache/eslint
-          key: suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-${{ inputs.ref }}
+          key: suite-state-v3-${{ runner.os }}-node24.22.1-${{ inputs.ref }}
           # Another package set's state is safe to start from: TypeScript compares every input file's content and
           # lint keys carry each imported package's locked tree, so only what a dependency change reaches re-checks.
           restore-keys: |
-            suite-state-v2-${{ runner.os }}-node24.22.1-${{ steps.cache-inputs.outputs.packages }}-
-            suite-state-v2-${{ runner.os }}-node24.22.1-
+            suite-state-v3-${{ runner.os }}-node24.22.1-
       # Snapshot refs can read only main's cache, so a branch's runs never saw each other's state and re-checked
       # everything that differs from main. Each part's newest state is a release asset (any ref, any provider); its
       # contents are keyed by file content, so a newer state from another commit is safe to start from; each state file
@@ -171,7 +192,7 @@ jobs:
         if: startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint')
         env:
           GH_TOKEN: ${{ github.token }}
-          ASSET: run-state-${{ inputs.suite }}-${{ steps.cache-inputs.outputs.packages }}.tar.gz
+          ASSET: run-state-${{ inputs.suite }}-node24.22.1.tar.gz
         run: |
           if gh release download ci-state -R "$GITHUB_REPOSITORY" -p "$ASSET" -D "$RUNNER_TEMP" 2>/dev/null; then
             mkdir -p "$RUNNER_TEMP/run-state" && tar -xzf "$RUNNER_TEMP/$ASSET" -C "$RUNNER_TEMP/run-state" \
@@ -180,17 +201,6 @@ jobs:
             echo "No newer run state for $ASSET; starting from main's state."
           fi
           node -e 'import("./scripts/ci-suite-state.mjs").then(state => state.recordSuiteState(process.cwd()))'
-      # Both suites check the same no-emit web projects; share semantic results instead of checking them twice.
-      - name: Web TypeScript cache
-        id: web-typecheck
-        if: (startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'build')) && inputs.suite != 'typecheck-api' && inputs.suite != 'build-api'
-        uses: actions/cache/restore@v4
-        with:
-          path: apps/web/node_modules/.cache/tsc
-          key: web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**', 'apps/web/*.ts', 'apps/web/tsconfig*.json', 'apps/web/package.json', 'packages/contracts/src/**', 'packages/contracts/tsconfig*.json') }}
-          restore-keys: |
-            web-typecheck-${{ runner.os }}-node24.22.1-${{ hashFiles('pnpm-lock.yaml') }}-
-            web-typecheck-${{ runner.os }}-node24.22.1-
       # Suite state is private to each immutable ci-snapshot ref. Do not upload rolling
       # archives here: later snapshots cannot restore them, and they evict shared package caches.
       - name: Suite
@@ -206,7 +216,7 @@ jobs:
         if: always() && (startsWith(inputs.suite, 'typecheck') || startsWith(inputs.suite, 'lint'))
         env:
           GH_TOKEN: ${{ github.token }}
-          ASSET: run-state-${{ inputs.suite }}-${{ steps.cache-inputs.outputs.packages }}.tar.gz
+          ASSET: run-state-${{ inputs.suite }}-node24.22.1.tar.gz
         run: |
           set -euo pipefail
           changed=$(node -e 'import("./scripts/ci-suite-state.mjs").then(state => console.log(state.suiteStateChanged(process.cwd())))')

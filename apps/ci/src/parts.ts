@@ -10,6 +10,7 @@ interface PlannedPart {
   partition: CiPartition | null
   files: string[]
   expectedDurationMs?: number
+  selectionDurationMs?: number
 }
 
 const UNIT_SETUP_MS = 90_000
@@ -50,6 +51,9 @@ export function planCiParts(input: CiRunInput, durations: CiDurations, inventory
   const affected = (input.scope ?? 'affected') === 'affected' && input.files !== undefined
   const selected = affected ? [...new Set(input.files)].sort() : []
   if (affected && !selected.length) return [{ part: null, partition: null, files: [] }]
+  const selectionDurations = input.suite === 'unit' && affected ? unitFileDurations(selected, unitDurations) : undefined
+  const selectionDurationMs = selectionDurations
+    ? Object.values(selectionDurations).reduce((sum, duration) => sum + duration, 0) : undefined
   if (input.suite === 'install' || input.suite === 'integration') {
     const mixed = input.suite === 'integration' && selected.some(requiresUserSystemd)
       && selected.some(file => !requiresUserSystemd(file))
@@ -69,13 +73,14 @@ export function planCiParts(input: CiRunInput, durations: CiDurations, inventory
     const sharded = part === 'unit-api'
     if (!affected && inventory && sharded && !candidates.length) return []
     const count = sharded ? unitShardCount(candidates, unitDurations, slots) : 1
-    const measured = sharded ? unitFileDurations(candidates, unitDurations) : undefined
+    const measured = input.suite === 'unit' ? unitFileDurations(candidates, unitDurations) : undefined
     return Array.from({ length: count }, (_, index) => {
       const partition = count > 1 ? { index, count } : null
       const slice = partition ? integrationPartition(candidates, measured ?? unitDurations, partition) : candidates
       const expectedDurationMs = measured
         ? UNIT_SETUP_MS + slice.reduce((sum, file) => sum + measured[file]!, 0) : undefined
       return { part, partition, files: affected ? slice : files,
+        ...(selectionDurationMs !== undefined ? { selectionDurationMs } : {}),
         ...(expectedDurationMs !== undefined ? { expectedDurationMs } : {}) }
     })
   })

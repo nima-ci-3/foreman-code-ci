@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 const sha256 = (/** @type {string} */ value) => createHash('sha256').update(value).digest('hex')
 
 /**
- * @typedef {{ lockfileVersion?: unknown; settings?: unknown; overrides?: unknown; patchedDependencies?: unknown;
+ * @typedef {{ lockfileVersion?: unknown; settings?: unknown; overrides?: unknown; patchedDependencies?: Record<string, unknown>;
  *   importers?: Record<string, Partial<Record<'dependencies' | 'devDependencies' | 'optionalDependencies', Record<string, { version?: string }>>>>;
  *   packages?: Record<string, { resolution?: unknown }>;
  *   snapshots?: Record<string, Partial<Record<'dependencies' | 'optionalDependencies', Record<string, string>>>> }} CiLockfile
@@ -19,7 +19,7 @@ const sha256 = (/** @type {string} */ value) => createHash('sha256').update(valu
  * @param {{ packageMarker: string; toolsMarker: string }} markers
  * @returns {Map<string, string>} */
 export function lockIdentities(lock, { packageMarker, toolsMarker }) {
-  const base = JSON.stringify([lock.lockfileVersion, lock.settings, lock.overrides, lock.patchedDependencies])
+  const base = JSON.stringify([lock.lockfileVersion, lock.settings])
   const snapshotKey = (/** @type {string} */ name, /** @type {string} */ version) => version.startsWith('link:') ? null
     // An aliased dependency's version is the real package's `<name>@<version>`.
     : /^@?[^@]+@/.test(version) && !/^\d/.test(version) ? version : `${name}@${version}`
@@ -43,7 +43,9 @@ export function lockIdentities(lock, { packageMarker, toolsMarker }) {
       }
     }
     identity = sha256(JSON.stringify([base, [...reached].sort().map(key =>
-      [key, lock.packages?.[key.replace(/\(.*$/, '')]?.resolution ?? null, lock.snapshots?.[key] ?? null])]))
+      [key, lock.packages?.[key.replace(/\(.*$/, '')]?.resolution ?? null, lock.snapshots?.[key] ?? null,
+        // Overrides already select the resolved snapshot; patches affect only the package they modify.
+        lock.patchedDependencies?.[key.replace(/\(.*$/, '')] ?? null])]))
     trees.set(root, identity)
     return identity
   }

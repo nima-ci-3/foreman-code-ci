@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import type pg from 'pg'
-import { CiRunRecordSchema } from '@foreman-code/contracts'
+import { CiRunRecordSchema, userSystemdIntegrationFiles } from '@foreman-code/contracts'
 import { planCiGate } from '../src/gate.js'
 import { splitUnavailableGateParts } from '../src/gateFallback.js'
 import type { HostCiComputer, HostCiEndpoint } from '../src/serviceTypes.js'
@@ -64,6 +64,32 @@ it('keeps an indivisible check exceeding the cloud job budget on a builder', asy
     expect(part.expectedDurationMs).toBeLessThanOrEqual(budgetMs)
   }
 })
+
+it.each(['systemd', 'integration-budget', 'unit-budget'] as const)(
+  'retains a builder for %s work while planning eligible gate files on cloud', async constraint => {
+    const ordinary = 'apps/api/test/ordinary.integration.test.ts'
+    const restricted = constraint === 'systemd' ? [...userSystemdIntegrationFiles][0]!
+      : 'apps/api/test/restricted.integration.test.ts'
+    const unitFile = 'apps/api/src/restricted.test.ts'
+    const base = fleet('github')
+    const computers = await base.computers()
+    if (constraint === 'systemd') {
+      for (const computer of computers.filter(item => item.hostRef.kind === 'cloud')) {
+        computer.userSystemd = { supported: false, reason: 'No user manager' }
+      }
+    }
+    const parts = await planCiGate(testCiContext, { suite: 'integration', scope: 'full', gate: true },
+      { files: [ordinary, restricted], durations: { [ordinary]: 10_000,
+        [restricted]: constraint === 'integration-budget' ? 3_600_000 : 10_000 } },
+      { files: [unitFile], durations: { [unitFile]: constraint === 'unit-budget' ? 3_000_000 : 1_000 } }, {},
+      { ...base, computers: async () => computers })
+    const integration = parts.filter(part => part.suite === 'integration')
+    expect(integration.find(part => part.files.includes(ordinary))?.plannedHostKey).toMatch(/^github:/)
+    const fallback = constraint === 'unit-budget' ? parts.find(part => part.part === 'unit-api')
+      : integration.find(part => part.files.includes(restricted))
+    expect(fallback?.plannedHostKey).toBe('builder')
+    expect(integration.flatMap(part => part.files).sort()).toEqual([ordinary, restricted].sort())
+  })
 
 it('preserves the ticket-count cap while splitting long cloud jobs', async () => {
   const files = Array.from({ length: 901 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)

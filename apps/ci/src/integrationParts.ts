@@ -25,6 +25,11 @@ export function planIntegrationParts(input: CiRunInput, inventory: CiIntegration
     .sort((left, right) => left - right)
   const median = measured[Math.floor(measured.length / 2)] ?? 30_000
   const duration = (file: string) => inventory.durations[file] ?? median
+  const selectionDurationMs = files.reduce((sum, file) => sum + duration(file), 0)
+  if (affected && selectionDurationMs <= SETUP_MS) {
+    return [{ part: null, partition: null, files, selectionDurationMs,
+      requiresBuildComputer: files.some(requiresUserSystemd), expectedDurationMs: SETUP_MS + selectionDurationMs }]
+  }
   const slowFiles = files.filter(file => (inventory.durations[file] ?? 0) >= SLOW_TEST_MS)
   const fastFiles = files.filter(file => !slowFiles.includes(file))
   const tiers: { files: string[]; tier?: 'fast' | 'slow' }[] = slowFiles.length && fastFiles.length
@@ -77,6 +82,7 @@ export function planIntegrationParts(input: CiRunInput, inventory: CiIntegration
         ...(tier ? { tier, slowFiles } : {}) } : null
       const slice = partition ? integrationPartition(files, inventory.durations, partition) : tierFiles
       return { part: null, partition, files: affected ? files : [],
+        ...(affected ? { selectionDurationMs } : {}),
         requiresBuildComputer: slice.some(requiresUserSystemd),
         expectedDurationMs: slice.length ? SETUP_MS + slice.reduce((sum, file) => sum + duration(file), 0) : 0 }
     })

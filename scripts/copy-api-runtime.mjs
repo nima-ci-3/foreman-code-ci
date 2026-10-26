@@ -1,4 +1,4 @@
-import { verificationRuntimeFiles } from '../packages/verification-runner/runtime-files.mjs'
+import { apiRuntimeFiles } from '../packages/verification-runner/runtime-files.mjs'
 import { createRuntimeBuildIdentity } from '../packages/contracts/src/runtimeBuildIdentityNode.mjs'
 import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -7,14 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 export async function copyApiRuntime(repository, output) {
   // Preserve the builder's relative asset paths inside the deployed API package.
   const runtime = join(output, 'ci-runtime')
-  const controls = ['Containerfile', 'corepack', 'context.mjs', 'seed-policy.mjs',
-    'verification-policy.mjs', 'verification-observation.mjs']
-  const paths = [
-    'apps/worker/artifacts/node-24.22.1-linux-x64.json',
-    ...controls.map(name => `apps/worker/artifacts/ci-runtime/${name}`),
-    ...verificationRuntimeFiles,
-  ]
-  for (const path of paths) {
+  for (const path of apiRuntimeFiles) {
     const destination = join(runtime, path)
     await mkdir(dirname(destination), { recursive: true })
     await copyFile(join(repository, path), destination)

@@ -1,3 +1,4 @@
+// ci-key-inputs: packages/contracts/src packages/contracts/package.json packages/contracts/tsconfig.build.json packages/contracts/tsconfig.json typescript @types/node
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'

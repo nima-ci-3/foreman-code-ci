@@ -16,11 +16,11 @@ export class ResultKeyThread {
     return existsSync(fileURLToPath(workerUrl))
   }
 
-  async keys(clone: string, commit: string, files: ResultKeysRequest['files'], timeoutMs: number) {
+  async keys(clone: string, commit: string, files: ResultKeysRequest['files'], timeoutMs: number, functions?: ResultKeysRequest['functions']) {
     const id = this.next++
     const reply = await new Promise<ResultKeysReply>((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      this.thread().postMessage({ id, clone, commit, files, timeoutMs } satisfies ResultKeysRequest)
+      this.thread().postMessage({ id, clone, commit, files, timeoutMs, ...functions ? { functions } : {} } satisfies ResultKeysRequest)
     })
     if ('error' in reply) throw new Error(reply.error)
     return reply.keys

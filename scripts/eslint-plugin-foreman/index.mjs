@@ -299,7 +299,6 @@ const rules = {
 // ESLint serializes plugin metadata, not rule bodies, when validating its content cache.
 const version = createHash('sha256')
   .update(readFileSync(new URL('./index.mjs', import.meta.url)))
-  .update(readFileSync(new URL('./pendingSqlTextTests.mjs', import.meta.url)))
   .update(readFileSync(new URL('../lint-allowlist.mjs', import.meta.url))).digest('hex')
 export const plugin = { meta: { name: 'eslint-plugin-foreman', version }, rules }
 

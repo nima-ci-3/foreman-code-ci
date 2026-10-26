@@ -14,7 +14,7 @@ function copyState(from, to) {
   if (!existsSync(from)) return
   mkdirSync(dirname(to), { recursive: true })
   rmSync(to, { recursive: true, force: true })
-  cpSync(from, to, { recursive: true })
+  cpSync(from, to, { recursive: true, preserveTimestamps: true })
 }
 
 // Only no-emit compiler state is retained. Emitting builds need their outputs and build info kept together.

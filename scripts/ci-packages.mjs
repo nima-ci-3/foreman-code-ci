@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { repairRequiredNativePayloads } from './ci-store-prefetch.mjs'
 import { assertRequiredNativePayloads } from './ci-native-payloads.mjs'
 import { writeCiPackagePaths } from './ci-package-paths.mjs'
+import { canonicalJson } from '../packages/contracts/src/canonicalJson.ts'
 
 function nativePayloadsReady(root, options) {
   try {
@@ -33,7 +34,17 @@ export function packagesCacheKey(root) {
     ...workspaceDirectories(root).map(directory => `${directory}/package.json`)]
   const hash = createHash('sha256').update(process.version).update(process.platform).update(process.arch)
   for (const input of inputs) {
-    if (existsSync(join(root, input))) hash.update(input).update('\0').update(readFileSync(join(root, input))).update('\0')
+    if (!existsSync(join(root, input))) continue
+    let contents = readFileSync(join(root, input))
+    if (input.endsWith('package.json')) {
+      const { scripts, ...manifest } = JSON.parse(contents)
+      delete manifest.version
+      // Releases and task scripts do not change installation. Lifecycle scripts still do.
+      const lifecycle = ['pnpm:devPreinstall', 'preinstall', 'install', 'postinstall', 'prepublish', 'prepare']
+      contents = canonicalJson({ ...manifest, scripts: Object.fromEntries(lifecycle
+        .filter(name => scripts?.[name] !== undefined).map(name => [name, scripts[name]])) })
+    }
+    hash.update(input).update('\0').update(contents).update('\0')
   }
   return hash.digest('hex')
 }

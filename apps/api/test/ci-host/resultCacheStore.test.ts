@@ -66,12 +66,23 @@ it('cancels active Git reads and leaves queued blobs unread when the key budget 
   const pending = planCachedSelection(mainCiContext, pool, { ...selection, files: f.files,
     tree: (signal?: AbortSignal) => commits.testTree(selection.repository, selection.commit, signal) })
   await reading
-  await vi.advanceTimersByTimeAsync(20_000)
+  await vi.advanceTimersByTimeAsync(120_000)
   expect(await pending).toEqual({ files: f.files.sort(), keys: {}, cached: [], unavailable: true })
   expect(active).toBe(0)
   const stoppedAt = started
   await vi.advanceTimersByTimeAsync(30_000)
   expect(started).toBe(stoppedAt)
+})
+
+it('still serves proofs when keying every test takes longer than 20 seconds', async () => {
+  // Keying the whole repository takes about 20 s; a 20 s budget turned such rounds into runs of every file.
+  const files = ['apps/api/test/slow-keys.test.ts']
+  const proofs = vi.fn(async () => ({ rows: [{ cache_key: `key:${files[0]}`, file: files[0], ticket_id: 'earlier', commit: 'b'.repeat(40) }] }))
+  vi.useFakeTimers()
+  const pending = planCachedSelection(mainCiContext, { query: proofs } as unknown as pg.Pool, { ...selection, files,
+    keys: keyed => new Promise(resolve => setTimeout(() => resolve(Object.fromEntries(keyed.map(({ file }) => [file, { key: `key:${file}` }]))), 30_000)) })
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(await pending).toMatchObject({ files: [], cached: [{ file: files[0], ticketId: 'earlier' }] })
 })
 
 it('serves files proven under another test runner from the cache except a canary sample of each part', async () => {
