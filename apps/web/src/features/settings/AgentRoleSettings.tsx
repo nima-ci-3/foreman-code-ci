@@ -70,7 +70,7 @@ export function AgentRoleSettings({ role, onEditPrompt }: { role: SettingsAgentR
     <SettingsFormFeedback form={form} />
     <SettingsSection title="Model" description="Harness, model, effort, access and speed.">
       <SettingRow title="Harness">
-        <Select label="Harness" className="settings-inline-field" value={template.harness.harness} disabled={busy}
+        <Select label="Harness" labelHidden className="settings-inline-field" value={template.harness.harness} disabled={busy}
           options={harnessOptions.map(option => ({ ...option,
             disabled: option.value === 'claude' && option.value !== saved?.harness.harness && !presets.data?.defaults.claude }))}
           onChange={event => changeHarness(event.target.value as 'codex' | 'claude')} />
@@ -80,7 +80,7 @@ export function AgentRoleSettings({ role, onEditPrompt }: { role: SettingsAgentR
     </SettingsSection>
     <SettingsSection title="Tools" description={`Native tools: ${nativeToolsSummary(template.nativeTools)}.`}>
       {role === 'operator' ? null : <SettingRow title="Memory board" description="What this role can do with workspace memory.">
-        <Select label="Memory board" className="settings-inline-field" value={memoryOf(tools)} options={memoryOptions} disabled={busy}
+        <Select label="Memory board" labelHidden className="settings-inline-field" value={memoryOf(tools)} options={memoryOptions} disabled={busy}
           onChange={event => changeMemory(event.target.value as Memory)} />
       </SettingRow>}
       {operator ? <SettingRow title="Operator chat" description="Show the Operator chat button.">

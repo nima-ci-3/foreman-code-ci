@@ -1,5 +1,6 @@
 import { Button } from '../../shared/ui/nocturne'
 import type { BrowserComputerLabel, BrowserProfile, BrowserProfileReplica, BrowserProfileCatalog } from './types'
+import { formatDateTime } from '../../shared/ui/timeFormatters'
 
 function replicaTransferLabel(replica: BrowserProfileReplica | undefined): string {
   if (!replica) return 'Not added here'
@@ -63,7 +64,7 @@ function LoginEvidence({ replica }: { replica: BrowserProfileReplica | undefined
   const labels = { not_checked: 'Not checked', signed_in: 'Signed in when checked', sign_in_required: 'Sign-in required', unknown: 'Could not verify sign-in' }
   return <ul className="browser-login-evidence" aria-label="Website sign-in checks">{replica.loginEvidence.map(evidence =>
     <li key={evidence.origin}>{evidence.origin} · {labels[evidence.state]}
-      {evidence.checkedAt ? <> · <time dateTime={evidence.checkedAt}>{new Date(evidence.checkedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></> : null}
+      {evidence.checkedAt ? <> · <time dateTime={evidence.checkedAt}>{formatDateTime(evidence.checkedAt)}</time></> : null}
       {evidence.evidence === 'user_confirmed' ? ' · Confirmed by you' : null}
       {evidence.reason ? <small>{evidence.reason}</small> : null}
     </li>)}</ul>

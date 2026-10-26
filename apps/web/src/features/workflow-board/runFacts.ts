@@ -8,6 +8,7 @@ import { currentRunKey } from './currentRunQuery'
 import { runStatusLabels } from '../runs-selector'
 import { useBoardSelection } from '../board-core'
 import { checkingView, pinnedNodeStates, runningIntervalChecks, type PinnedNodeDisplayCut } from './inspect/pinnedTopology'
+import { formatDateTime } from '../../shared/ui/timeFormatters'
 
 /** Cache-only subscriber: no Query observer with a competing queryFn. Only
  * CurrentRunObserver owns current-state fetching and invalidation/refetch work. */
@@ -61,7 +62,7 @@ export function runTone(state: string, outcome: string): Tone {
   if (state === 'waiting' || state === 'interrupted') return 'warning'
   return outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'danger' : 'neutral'
 }
-export const when = (value?: string) => value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Not started'
+export const when = (value?: string) => value ? formatDateTime(value) : 'Not started'
 
 /** The same short Run name the Runs table shows (server rule: the id's first 8 characters after "run-"). */
 export const shortRunId = (runId: string) => runId.replace(/^run-/, '').slice(0, 8) || runId.slice(0, 8)

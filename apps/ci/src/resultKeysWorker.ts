@@ -3,7 +3,7 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { parentPort } from 'node:worker_threads'
-import { CiResultKeys, type CiTestTree } from './resultCache.js'
+import { CiResultKeys, type CiResultKey, type CiTestTree } from './resultCache.js'
 
 export interface ResultKeysRequest {
   id: number
@@ -12,7 +12,7 @@ export interface ResultKeysRequest {
   files: { file: string; suite: string; part: string }[]
   timeoutMs: number
 }
-export type ResultKeysReply = { id: number; keys: Record<string, { key: string | null; reason?: string }> }
+export type ResultKeysReply = { id: number; keys: Record<string, CiResultKey> }
   | { id: number; error: string }
 
 const run = promisify(execFile)

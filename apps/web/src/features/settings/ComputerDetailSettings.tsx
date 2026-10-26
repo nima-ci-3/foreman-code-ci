@@ -89,7 +89,7 @@ function NameRow({ name, target }: { name: string; target: DeviceProvisioningTar
     saveDisabled: !next, save: saveName, discard: () => setDraft(name), error: rename.error?.message })
   return <SettingRow title="Computer name">
     <div className="computer-detail-inline">
-      <TextField label="Computer name" className="settings-inline-field" value={draft} maxLength={COMPUTER_NAME_MAX_LENGTH} disabled={rename.isPending}
+      <TextField label="Computer name" labelHidden className="settings-inline-field" value={draft} maxLength={COMPUTER_NAME_MAX_LENGTH} disabled={rename.isPending}
         error={rename.isError ? rename.error.message : undefined} onChange={event => setDraft(event.target.value)} />
       <Button size="sm" variant="primary" disabled={!next || next === name || rename.isPending}
         onClick={() => void saveName()}>{rename.isPending ? 'Saving…' : 'Save name'}</Button>
@@ -127,12 +127,12 @@ export function ComputerBuildSettings({ target }: { target: DeviceProvisioningTa
         onChange={event => edit({ buildEnabled: event.target.checked })} />
     </SettingRow>
     <SettingRow title="Priority" description="0 to 100. Higher runs builds first.">
-      <TextField label="Priority" className="settings-inline-field" type="number" min={0} max={100} disabled={save.isPending}
+      <TextField label="Priority" labelHidden className="settings-inline-field" type="number" min={0} max={100} disabled={save.isPending}
         value={Number.isFinite(value.buildPriority) ? value.buildPriority : ''}
         onChange={event => edit({ buildPriority: event.target.valueAsNumber })} />
     </SettingRow>
     <SettingRow title="Allowance" description="Share of CPU and memory builds may use, 10 to 100%.">
-      <TextField label="Allowance (%)" className="settings-inline-field" type="number" min={10} max={100} disabled={save.isPending}
+      <TextField label="Allowance (%)" labelHidden className="settings-inline-field" type="number" min={10} max={100} disabled={save.isPending}
         value={Number.isFinite(value.buildAllowancePercent) ? value.buildAllowancePercent : ''}
         onChange={event => edit({ buildAllowancePercent: event.target.valueAsNumber })} />
     </SettingRow>

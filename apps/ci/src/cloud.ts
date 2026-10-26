@@ -12,6 +12,7 @@ import { CiIntegrationCoverageSchema, CiSelectionSchema, CiWatchdogFailureSchema
   type CiCoverageSelection, type CiDurations, type CiHostReply, type CiHostRequest, type CiHostRun, type CiPartition, type CiMirrorRepair } from '@foreman-code/contracts'
 import { canonicalJson } from '@foreman-code/contracts/canonical-json'
 import { DomainError } from '@foreman-code/contracts-node/server-kit'
+import { isTransientDatabaseOrSocketError } from '@foreman-code/contracts/failure'
 import { systemHostCiPorts, type HostCiPorts } from './runner.js'
 import type { HostCiComputer } from './service.js'
 import type { CiMirrorInput } from './serviceTypes.js'
@@ -536,7 +537,9 @@ export class CloudCi {
       await this.save({ ...latest, message })
       return
     }
-    const unavailable = error instanceof DomainError && error.code === 'CI_CLOUD_UNAVAILABLE'
+    // Nothing was submitted: an unavailable provider or a passing Main database or network failure waits in the
+    // queue for the next dispatch instead of failing the part.
+    const unavailable = error instanceof DomainError && error.code === 'CI_CLOUD_UNAVAILABLE' || isTransientDatabaseOrSocketError(error)
     const message = sanitizeCiText(error instanceof Error ? error.message : String(error)).slice(0, 2000)
     const failed: CloudRun = { ...latest, state: unavailable ? 'queued' : 'failed',
       finishedAt: unavailable ? null : this.ports.now().toISOString(), message,

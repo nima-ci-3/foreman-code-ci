@@ -10,7 +10,8 @@ import type { RepeatGraphScopeCurrent } from '@foreman-code/contracts/current'
 import { Alert, Badge, Button, EmptyState, Icon, IconButton, Spinner, Tabs, type Tone } from '../../../shared/ui/nocturne'
 import { PulseFlight, type EdgePulse } from '../../graph/SignalEdgeShape'
 import { useFloatingCurve } from '../../board-core'
-import { formatClock, formatDuration } from '../../run-subagents'
+import { formatClock } from '../../run-subagents'
+import { formatElapsed } from '../../../shared/ui/timeFormatters'
 import { ciComputerLabel, ciJobLabel } from './runLiveStatus'
 import { runInspectionQueryKey } from './queries'
 import { WorkflowJobs } from './WorkflowJobs'
@@ -216,7 +217,7 @@ export function CiJobsTable({ jobs, agent, selectedId, truncated, onShow, run, o
       <td>{agent(job)}</td>
       <td>{job.ci.startedAt ? <time dateTime={job.ci.startedAt}>{formatClock(job.ci.startedAt)}</time>
         : <>Queued <time dateTime={job.ci.queuedAt}>{formatClock(job.ci.queuedAt)}</time></>}</td>
-      <td>{ciJobDuration(job) === null ? '—' : formatDuration(ciJobDuration(job)!)}</td>
+      <td>{ciJobDuration(job) === null ? '—' : formatElapsed(ciJobDuration(job)!)}</td>
       {onCancel ? <td>{isActiveCiJob(job) ? <Button size="sm" disabled={cancelPending} onClick={() => onCancel(job)}>Cancel CI job</Button> : null}</td> : null}
     </tr>)}</tbody></table>
     {truncated ? <p className="ci-server-note">Showing the newest 500 jobs.</p> : null}
@@ -232,7 +233,7 @@ function CiJobHeader({ job, agent }: { job: CiRunJob; agent?: string }) {
     {agent ? <span>Requested by {agent}</span> : null}
     <span>{ciComputerLabel(job.ci)}</span>
     {job.ci.startedAt ? <span>Started <time dateTime={job.ci.startedAt}>{formatClock(job.ci.startedAt)}</time></span> : null}
-    {duration !== null ? <span>{isActiveCiJob(job) ? `${formatDuration(duration)} so far` : `Ran ${formatDuration(duration)}`}</span> : null}
+    {duration !== null ? <span>{isActiveCiJob(job) ? `${formatElapsed(duration)} so far` : `Ran ${formatElapsed(duration)}`}</span> : null}
   </p>
 }
 
@@ -277,10 +278,10 @@ function CiTestFiles({ files, truncated }: { files: NonNullable<Awaited<ReturnTy
   return <>
     <ul className="ci-test-files" aria-label="Test results">{files.map((file) => <li key={file.file} data-status={file.status}>
       <div className="ci-test-file"><Badge tone={testTone[file.status]} dot>{label(file.status)}</Badge>
-        <code>{file.file}</code>{file.durationMs !== null ? <span>{formatDuration(file.durationMs)}</span> : null}</div>
+        <code>{file.file}</code>{file.durationMs !== null ? <span>{formatElapsed(file.durationMs)}</span> : null}</div>
       {file.tests.length ? <ul>{file.tests.map((test, index) => <li key={`${test.name}:${index}`} data-status={test.status}>
         <Badge tone={testTone[test.status]}>{label(test.status)}</Badge><span className="ci-test-name">{test.name}</span>
-        {test.durationMs !== null ? <span>{formatDuration(test.durationMs)}</span> : null}
+        {test.durationMs !== null ? <span>{formatElapsed(test.durationMs)}</span> : null}
         {test.message ? <pre className="ci-test-message">{test.message}</pre> : null}
       </li>)}</ul> : null}
     </li>)}</ul>
