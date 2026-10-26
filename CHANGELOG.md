@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.122] - 2026-10-26
+
+### Runs
+
+- A workflow Agent's node shows Running during a result-repair (corrective) turn instead of Unavailable; the corrective turn publishes its own native activity.
+- A Claude Agent on a paired Worker settles after its turn: a retried terminal physical acknowledgement no longer fails on the Worker and blocks the execution until Stop.
+
 ## [0.0.121] - 2026-10-26
 
 ### CI
