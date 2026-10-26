@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.121] - 2026-10-26
+
+### CI
+
+- Tests stay proven when only functions they never ran changed: integration runs record the functions each test executed, and Main reuses a pass when the changed files read the same with unexecuted function bodies blanked.
+- Small affected selections (at most one cloud setup of measured tests) run on a build computer; larger work and gates go to the cloud whenever it can run them, with builders as fallback.
+- Editing integration runner tests, protocol declarations or Vitest alias targets no longer invalidates every integration test's proof.
+- Result keys cover reachable fixture/data reads instead of refusing keys, lint and cloud caches key on actual dependencies, and host build artifacts are reused across tickets.
+- Hang deadlines use each file's recent peak duration, so slow, high-variance files are no longer killed as hung.
+- Integration slots use separate Vitest module caches; the acceptance command validates file selection before setup.
+
 ## [0.0.120] - 2026-10-26
 
 - CI proof cache on by default for every check, releases included: a test file reruns only when its own inputs change (its runtime imports, the locked packages it imports, its project's config and tools) or it failed last; `--full` runs everything.
