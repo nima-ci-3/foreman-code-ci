@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.125] - 2026-10-26
+
+### Tests
+
+- The fleet destination sync test waits for maintenance to finish instead of polling a fixed number of times.
+
 ## [0.0.124] - 2026-10-26
 
 ### Runs
