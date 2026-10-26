@@ -39,13 +39,15 @@ describe('exact affected-set and current settlement mapping', () => {
   })
   it.each(['cleanup', 'native', 'interactions', 'reviews'] as const)('waits beyond terminal on %s, including absent evidence', async (field) => {
     for (const value of [true, null, undefined]) {
-      const query = vi.fn(async () => ({ rows: [{ ...row, [field]: value }], rowCount: 1 }))
+      const query = vi.fn(async (_text: string, values: unknown[] = []) => values.length === 2
+        ? { rows: [], rowCount: 0 } : { rows: [{ ...row, [field]: value }], rowCount: 1 })
       const [state] = await readAffectedGraphRuns({ query } as unknown as Pick<pg.PoolClient, 'query'>, scope)
       expect(state?.terminal).toBe(true); expect(state?.settled).toBe(false)
     }
   })
   it('does not promote unknown terminal evidence to settled', async () => {
-    const query = vi.fn(async () => ({ rows: [{ ...row, terminal: undefined }], rowCount: 1 }))
+    const query = vi.fn(async (_text: string, values: unknown[] = []) => values.length === 2
+      ? { rows: [], rowCount: 0 } : { rows: [{ ...row, terminal: undefined }], rowCount: 1 })
     expect((await readAffectedGraphRuns({ query } as unknown as Pick<pg.PoolClient, 'query'>, scope))[0]?.settled).toBe(false)
   })
 })

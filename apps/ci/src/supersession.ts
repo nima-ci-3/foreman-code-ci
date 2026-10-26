@@ -76,13 +76,16 @@ export async function validateCiSupersession(client: pg.PoolClient, replacement:
 /** Admission and cancellation intent share a transaction; dispatch retries unfinished cleanup. */
 export async function supersedeCiRuns(client: pg.PoolClient, replacement: CiRunRecord, rows: CiRunRecord[],
   audit: { source: 'mcp' | 'http'; commandId: string }) {
-  for (const old of rows) {
-    const next = { ...old, supersededBy: replacement.id, message: `superseded by ${replacement.id}` }
-    await client.query('update ci_runs set record=$2::jsonb where id=$1', [old.id, serializeCiJson(next)])
-    await client.query(`insert into management_audit(principal_id,source,action,target_key,outcome,details)
-      values($1,$2,'ci.supersede',$3,'succeeded',$4::jsonb)`,
-    [replacement.initiator.principalId, audit.source, `ci:${old.id}`, JSON.stringify({
-      commandId: audit.commandId, ticketId: old.id, supersededBy: replacement.id,
-    })])
-  }
+  if (!rows.length) return
+  await client.query(`with updated as (
+    update ci_runs c set record=r.record
+    from jsonb_to_recordset($1::jsonb) as r(id uuid,record jsonb,ordinal integer)
+    where c.id=r.id returning c.id,r.ordinal
+  )
+  insert into management_audit(principal_id,source,action,target_key,outcome,details)
+    select $2,$3,'ci.supersede','ci:'||id,'succeeded',
+      jsonb_build_object('commandId',$4::text,'ticketId',id::text,'supersededBy',$5::text)
+    from updated order by ordinal`, [serializeCiJson(rows.map((old, ordinal) => ({ id: old.id, ordinal,
+    record: { ...old, supersededBy: replacement.id, message: `superseded by ${replacement.id}` } }))),
+    replacement.initiator.principalId, audit.source, audit.commandId, replacement.id])
 }

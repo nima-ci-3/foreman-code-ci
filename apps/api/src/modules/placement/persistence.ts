@@ -166,11 +166,58 @@ export async function readNativePlacement(sql: Pick<SqlTransaction, 'query'>, ex
   // Read the actual adopted source fact; never invent adoption from a digest.
   const sourceRow = (await sql.query<{ record: unknown; state: string }>('select record,state from source_execution_materializations where materialization_id=$1', [binding.materialization.receipt.materializationId])).rows[0]
   if (!sourceRow) conflict()
-  const storedSource = SourceMaterializationRecordSchema.parse(sourceRow!.record)
-  const source = SourceMaterializationRecordSchema.parse({ ...storedSource, state: sourceRow!.state })
+  return nativePlacementWithSource(binding, sourceRow!)
+}
+function nativePlacementWithSource(binding: Exclude<NativeExecutionPlacement, { kind: 'plain' }>,
+  sourceRow: { record: unknown; state: string }) {
+  const storedSource = SourceMaterializationRecordSchema.parse(sourceRow.record)
+  const source = SourceMaterializationRecordSchema.parse({ ...storedSource, state: sourceRow.state })
   if (source.finalDispatchBindingHash !== binding.bindingHash || sourceMaterializationDigest(source) !== sourceMaterializationDigest(binding.materialization)) conflict()
   return { ...binding, materialization: source }
 }
+
+interface SavePlacementEvidence {
+  native: { record: unknown } | null
+  dispatch: { operation_id: string; execution_id: string; run_id: string; node_id: string;
+    binding_hash: string; attempt_id: string; record: unknown } | null
+  parent: unknown | null
+  source: { record: unknown; state: string } | null
+}
+export async function readSavePlacementEvidence(sql: Pick<SqlTransaction, 'query'>, executionIds: string[]) {
+  const rows = await sql.query<SavePlacementEvidence & { id: string }>(`select e.id,case when n.execution_id is null then null else json_build_object('record',n.record) end as native,
+    row_to_json(i) as dispatch,p.record as parent,
+    case when m.materialization_id is null then null else json_build_object('record',m.record,'state',m.state) end as source
+    from harness_executions e
+    left join execution_native_placements n on n.execution_id=e.id
+    left join execution_dispatch_intents i on i.execution_id=e.id
+    left join run_node_placements p on p.run_id=i.run_id and p.node_id=i.node_id
+    left join source_execution_materializations m on m.materialization_id=(n.record#>>'{materialization,receipt,materializationId}')::uuid
+    where e.id=any($1::text[])`, [executionIds])
+  return new Map(rows.rows.map(row => [row.id, row]))
+}
+/** Same immutable dispatch, accepted placement and adopted source checks as the
+ * single-execution reader, without database reads during validation. */
+export function saveNativePlacement(evidence: SavePlacementEvidence, executionId: string) {
+  const row = evidence.dispatch
+  if (!row) {
+    if (evidence.native !== null) conflict()
+    return undefined
+  }
+  const intent = DispatchIntentSchema.parse(row.record)
+  const parent = readPlacement(evidence.parent)
+  if (intent.operationId !== row.operation_id || intent.executionId !== executionId
+    || intent.executionId !== row.execution_id || intent.runId !== row.run_id || intent.nodeId !== row.node_id
+    || intent.bindingHash !== row.binding_hash || intent.attemptId !== row.attempt_id
+    || parent.runId !== intent.runId || parent.nodeId !== intent.nodeId
+    || parent.bindingHash !== intent.bindingHash || parent.mainId !== intent.mainId) conflict()
+  // An accepted placement with no native materialization remains unsettled.
+  if (evidence.native === null) conflict()
+  const binding = readNativeExecutionBinding(parent, intent, evidence.native!.record)
+  if ('kind' in binding) return binding
+  if (!evidence.source) conflict()
+  return nativePlacementWithSource(binding, evidence.source!)
+}
+
 export async function insertNativePlacement(sql: SqlTransaction, owner: RunOwnership, binding: NativeExecutionPlacement): Promise<void> {
   assertGraphTransaction(sql); owner.assertOwned()
   const intent = await readDispatchIntent(sql, binding.executionId)

@@ -149,14 +149,12 @@ export class PostgresAppInteractionService implements AppInteractionService {
     workerScope(principal)
     // The Run pins the exact configuration version and workflow version; both are immutable for this credential.
     const result = await this.pool.query<{ role: string | null; defaults: unknown; override: unknown;
-      harness: unknown; artifact_outputs: unknown; purpose: string; local_outputs: boolean; interval: unknown; browser: { enabled?: boolean } | null; workflow_roles: (string | null)[] }>(
+      harness: unknown; artifact_outputs: unknown; purpose: string; local_outputs: boolean; interval: unknown; browser: { enabled?: boolean } | null }>(
       `select c.record->>'productRole' as role, c.record->'${INSTALLATION_NAMES.fields.agentTools}' as defaults,
          c.record->'harness' as harness,b.purpose,
          ((p.run_id is null and r.record#>>'{executionLocation,runnerId}'='runner-local')
            or p.record#>>'{hostRef,kind}'='main') as local_outputs,
-         n->'${INSTALLATION_NAMES.fields.agentTools}' as override,n->'artifactOutputs' as artifact_outputs,n->'interval' as interval,n->'browser' as browser,
-         array(select cv.record->>'productRole' from jsonb_each_text(r.record->'agentConfigurationVersionIds') ids
-           join agent_configuration_versions cv on cv.id=ids.value) as workflow_roles
+         n->'${INSTALLATION_NAMES.fields.agentTools}' as override,n->'artifactOutputs' as artifact_outputs,n->'interval' as interval,n->'browser' as browser
        from worker_credential_bindings b
        join runs r on r.id=b.run_id
        join agent_configuration_versions c on c.id=(r.record->'agentConfigurationVersionIds'->>b.agent_id)
@@ -194,7 +192,12 @@ export class PostgresAppInteractionService implements AppInteractionService {
       if (!operation) return true
       return false
     })
-    const writer = maySaveToKanban(role, row.workflow_roles.flatMap(value => value ? [value] : []))
+    const roles = await this.pool.query<{ role: string | null }>(
+      `select c.record->>'productRole' as role from worker_credential_bindings b join runs r on r.id=b.run_id
+         join lateral jsonb_each_text(r.record->'agentConfigurationVersionIds') ids on true
+         join agent_configuration_versions c on c.id=ids.value
+       where b.principal_id=$1 and b.agent_id=$2 and b.revoked_at is null`, [principal.id, principal.agentId])
+    const writer = maySaveToKanban(role, roles.rows.flatMap(value => value.role ? [value.role] : []))
     return { role, tools: writer ? tools : withoutKanbanWrites(tools), ...(subject ? { subject } : {}) }
   }
 

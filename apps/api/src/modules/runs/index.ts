@@ -29,3 +29,4 @@ export type { RepeatStartOptions, RepeatStartPublication } from './repeatStartAd
 export type { WorkflowNativeLease } from './workflowNativeGraph.js'
 export type { WorkflowNativeProofRecord } from './workflowNativeProof.js'
 export { bindApprovalCheckpointEngine, type ApprovalCheckpointConsumers } from './approvalCheckpointRegistration.js'
+export { appendRawNativeEventsInTransaction } from './nativeEventBatch.js'

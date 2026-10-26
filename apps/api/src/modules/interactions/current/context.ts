@@ -54,10 +54,18 @@ export interface ApprovalContext {
   relationshipId?: string
   stopped: boolean
 }
+export interface ApprovalContextRows {
+  run: { run: unknown; version: unknown; stopped: boolean } | undefined
+  requesters: Map<string, { record: unknown; closed: boolean }>
+  bindings: Map<string, { approval_relationship_id: string | null; approval_reviewer_execution_id: string | null }>
+  directionWait: boolean
+  reviewerSql?: SqlQuery
+}
 
 /** All records come from immutable Run pins, never a draft, mutable role or cached owner. */
-export async function readContext(sql: SqlQuery, interaction: DurableInteraction, requireOpen = false, completedReplay = false): Promise<ApprovalContext> {
-  const row = (await sql.query<{ run: unknown; version: unknown; stopped: boolean }>(
+export async function readContext(sql: SqlQuery, interaction: DurableInteraction, requireOpen = false, completedReplay = false,
+  prefetched?: ApprovalContextRows): Promise<ApprovalContext> {
+  const row = prefetched ? prefetched.run : (await sql.query<{ run: unknown; version: unknown; stopped: boolean }>(
     `select r.record as run,v.record as version,
        ${RUN_CLEANUP_BOUNDARY_SQL} or r.worker_credentials_closed_at is not null as stopped
      from runs r join workflow_versions v on v.id=r.workflow_version_id
@@ -71,7 +79,7 @@ export async function readContext(sql: SqlQuery, interaction: DurableInteraction
     || canonicalGraphJson(r.agentConfigurationVersionIds) !== canonicalGraphJson(v.agentConfigurationVersionIds)) return fail('APPROVAL_IDENTITY_MISMATCH')
   const stopped = row.stopped || !isOpenRunState(r.executionState)
   if (requireOpen && stopped) return fail('EXECUTION_STOPPED')
-  const requesterRow = (await sql.query<{ record: unknown; closed: boolean }>(
+  const requesterRow = prefetched ? prefetched.requesters.get(interaction.executionId) : (await sql.query<{ record: unknown; closed: boolean }>(
     `select record,worker_credentials_closed_at is not null as closed from harness_executions
      where run_id=$1 and id=$2`, [r.id, interaction.executionId])).rows[0]
   const requester = requesterRow ? HarnessExecutionSchema.parse(requesterRow.record) : undefined
@@ -82,7 +90,7 @@ export async function readContext(sql: SqlQuery, interaction: DurableInteraction
   if (interaction.kind === 'work_direction') {
     if (interaction.approval.handler !== 'user' || interaction.nativeRequestType !== 'workflow/work_direction'
       || interaction.id !== `work-direction-${r.id}` || requester.state !== 'completed'
-      || !(await sql.query('select 1 from run_work_direction_waits where run_id=$1', [r.id])).rowCount) {
+      || !(prefetched ? prefetched.directionWait : (await sql.query('select 1 from run_work_direction_waits where run_id=$1', [r.id])).rowCount)) {
       return fail('WORK_DIRECTION_WAIT_CONFLICT')
     }
     return { scope: { workspaceId: r.workspaceId, workflowId: r.workflowId, runId: r.id,
@@ -91,7 +99,7 @@ export async function readContext(sql: SqlQuery, interaction: DurableInteraction
   if (requireOpen && !completedReplay && (requester.state === 'completed' || requesterRow!.closed)) return fail('EXECUTION_STOPPED')
   const route = interaction.approval.handler === 'orchestrator' ? resolveImmutableApprovalRoute(v, requester.workflowNodeId, requester.agentId) : undefined
   if (interaction.approval.handler === 'orchestrator' && !route?.relationshipId) return fail('APPROVAL_DIRECT_CONNECTION_REQUIRED')
-  const binding = route ? await new PostgresRepeatReviewerBindings(sql).select(interaction, route.orchestratorNodeId) : undefined
+  const binding = route ? await new PostgresRepeatReviewerBindings(prefetched?.reviewerSql ?? sql).select(interaction, route.orchestratorNodeId) : undefined
   const reviewer = binding?.execution
   if (route && (!reviewer || reviewer.workflowNodeId !== route.orchestratorNodeId
     || reviewer.agentConfigurationVersionId !== route.reviewerConfigurationVersionId
@@ -99,7 +107,7 @@ export async function readContext(sql: SqlQuery, interaction: DurableInteraction
     || reviewer.state !== 'completed' || reviewer.result?.outcome !== 'succeeded')) return fail('REVIEWER_EXECUTION_NOT_READY')
   const scope: RunGraphScope = { workspaceId: r.workspaceId, workflowId: r.workflowId, runId: r.id,
     workflowVersionId: v.id, executionSemanticsVersion: 3 }
-  const saved = (await sql.query<{ approval_relationship_id: string | null; approval_reviewer_execution_id: string | null }>(
+  const saved = prefetched ? prefetched.bindings.get(interaction.id) : (await sql.query<{ approval_relationship_id: string | null; approval_reviewer_execution_id: string | null }>(
     'select approval_relationship_id,approval_reviewer_execution_id from durable_interactions where id=$1', [interaction.id])).rows[0]
   if (saved && (saved.approval_relationship_id !== (route?.relationshipId ?? null)
     || saved.approval_reviewer_execution_id !== (reviewer?.id ?? null))) return fail('APPROVAL_IDENTITY_MISMATCH')

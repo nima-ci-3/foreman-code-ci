@@ -26,7 +26,11 @@ function fixture(executionId: string | null = 'execution', audience: 'worker' | 
   const query = vi.fn(async (sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
     if (sql.includes('from workspaces')) return { rows: [{ record: { id: 'workspace', name: 'CI fixture',
       repository: { provider: 'github', owner: 'fixture', name: 'site', defaultBranch: 'main' } } }], rowCount: 1 }
-    if (sql.startsWith('insert into ci_runs')) records.push(CiRunRecordSchema.parse(JSON.parse(params[3] as string)))
+    if (sql.startsWith('insert into ci_runs')) {
+      for (let offset = 0; offset < params.length; offset += 10) {
+        records.push(CiRunRecordSchema.parse(JSON.parse(params[offset + 3] as string)))
+      }
+    }
     if (sql.includes('recent_ci_groups')) return { ...await recent(...params), rowCount: 1 }
     if (sql.includes('where id=$1 and workspace_id=$2')) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(String(params[0]))) {
@@ -138,8 +142,9 @@ it.each(['ci_get', 'ci_logs_read'])('suggests the real agent ticket after a typo
   try {
     const started = await f.call('ci_run', { suite: 'integration', scope: 'full', partitions: 2, commit: 'a'.repeat(40) })
     expect(started.isError).not.toBe(true)
-    const { ticketId } = CiRunOutputSchema.parse(JSON.parse(started.content[0]!.text))
+    const { ticketId, partitions } = CiRunOutputSchema.parse(JSON.parse(started.content[0]!.text))
     expect(f.records).toHaveLength(2)
+    expect(partitions?.map(partition => partition.ticketId)).toEqual(f.records.map(record => record.id))
     const typo = `${ticketId.slice(0, -1)}${ticketId.endsWith('0') ? '1' : '0'}`
     const result = await f.call(tool, { ticketId: typo })
     expect(result.isError).toBe(true)

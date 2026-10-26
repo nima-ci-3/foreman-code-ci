@@ -143,6 +143,9 @@ describe.skipIf(!postgresEnabled)('trusted local Main workspace storage bootstra
       const saved = await client.callTool({ name: 'workspace_root_location_set', arguments: input })
       expect(saved.isError).not.toBe(true)
       const accepted = WorkspaceBoundLocationSetResultSchema.parse(decodeMcpToolResult(saved))
+      const locations = new WorkspaceLocationService(db.pool, commands, runtimeRoot, 'runner-local', () => sources.policies)
+      expect((await locations.inspectMany(owner.principal, [workspaceId])).get(workspaceId))
+        .toMatchObject({ locationRevision: 2, locationValidation: { status: 'ready' } })
       expect(decodeMcpToolResult(saved)).toMatchObject({ replayed: false, value: { evidence: 'bound', locationRevision: 2,
         executionLocation: { runnerId: 'runner-local', rootPath: join(storageRoot, 'Project') },
         binding: { hostRef: { kind: 'main', mainId }, applicationInstallationId: mainId, rootPolicyRevision: '1', configurationRevision: '1' } } })
@@ -173,6 +176,8 @@ describe.skipIf(!postgresEnabled)('trusted local Main workspace storage bootstra
       expect(await bootstrap()).toEqual(approved)
       await rename(storageRoot, `${storageRoot}-original`); await mkdir(storageRoot, { mode: 0o700 })
       await expect(bootstrap()).rejects.toMatchObject({ code: 'ROOT_BASE_CHANGED' })
+      expect((await locations.inspectMany(owner.principal, [workspaceId])).get(workspaceId))
+        .toMatchObject({ locationValidation: { status: 'unavailable' } })
     } finally {
       await Promise.allSettled(clients.map(client => client.close())); await app.close(); await db.close()
       await removeFixtureDirectory(directory)

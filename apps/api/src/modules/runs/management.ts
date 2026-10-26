@@ -15,7 +15,7 @@ import { RunActivitiesService } from './activities.js'
 import { RunHandoffReadService } from './handoffRead.js'
 import { readCurrentRunDetails, withCurrentRunRead } from './currentRead.js'
 import {
-  readAcceptedRepeatRunLocked, readAcceptedRepeatRunSnapshot, readRecordedRepeatRunSnapshot,
+  readAcceptedRepeatRunLocked, readAcceptedRepeatRunSnapshot, readRecordedRepeatRuns,
 } from './repeatStartRead.js'
 import { admitRepeatRun, type RepeatStartOptions } from './repeatStartAdmission.js'
 import { resolveRunStart } from './startResolution.js'
@@ -101,13 +101,8 @@ export class RunManagementService {
 
   async list(principal: ManagementPrincipal, input: RunListInput) {
     const page = await this.listPage(principal, input)
-    // Listing committed facts must not queue behind lifecycle writers or credential cleanup.
-    const items = await Promise.all(page.items.map(({ run }) => withCurrentRunRead(
-      this.pool, principal, run.workspaceId, run.id, 'runs:read',
-      async (_sql, snapshot, live) => this.visibleRun(live, snapshot.run), readRecordedRepeatRunSnapshot,
-    )))
     requireRunListScope(principal, input)
-    return { ...page, items }
+    return page
   }
 
   private async listPage(principal: ManagementPrincipal, input: RunListInput) {
@@ -119,9 +114,15 @@ export class RunManagementService {
         expiresAt: new Date(Math.min(Date.parse(principal.expiresAt), Date.parse(live.expiresAt))).toISOString() }
       requireRunListScope(effective, input)
       const page = await this.readListRows(client, effective, input)
+      const current = await readLiveManagementPrincipal(client, principal.id)
+      const snapshots = await readRecordedRepeatRuns(client, page.items.map(({ run }) => run.id))
+      const items = snapshots.map(({ run }) => {
+        requireAuthorization(current, 'runs:read', { workspaceId: run.workspaceId, workflowId: run.workflowId, runId: run.id })
+        return this.visibleRun(current, run)
+      })
       requireRunListScope(principal, input)
       requireRunListScope(live, input)
-      return page
+      return { ...page, items }
     })
   }
 

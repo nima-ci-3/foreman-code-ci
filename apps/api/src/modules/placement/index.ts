@@ -14,3 +14,4 @@ export type { PreparedRunPlacementAdmission, RunPlacementAdmissionPort } from '.
 export { type placedContinuationValidator } from './continuation.js'
 export { type createProductionRemoteWorkflow } from './productionRemoteWorkflow.js'
 export { remoteMcpPreflight } from './remoteMcpPreflight.js'
+export { readSavePlacementEvidence, saveNativePlacement } from './persistence.js'

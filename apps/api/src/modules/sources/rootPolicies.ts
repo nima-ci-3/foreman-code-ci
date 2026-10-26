@@ -35,7 +35,7 @@ export class PostgresWorkspaceRootPolicies implements WorkspaceRootPolicyPort {
     if (mainId !== this.mainId) throw new DomainError('ROOT_WRONG_MAIN', 'Root policy belongs to the original main installation.', 403)
     const row = snapshot?.workspace_id === workspaceId ? snapshot.workspace : (await sql.query<{
       location_revision: string; archived_at: Date | null
-    }>('select location_revision,archived_at from workspaces where id=$1 for share', [workspaceId])).rows[0]
+    }>('select location_revision::text,archived_at from workspaces where id=$1 for share', [workspaceId])).rows[0]
     if (!row) throw new DomainError('WORKSPACE_NOT_FOUND', 'The workspace was not found.', 404)
     if (row.archived_at) throw new DomainError('WORKSPACE_ARCHIVED', 'Archived workspaces cannot select or authorize roots.', 409)
     return { ...live, locationRevision: Number(row.location_revision) }
@@ -132,9 +132,9 @@ export class PostgresWorkspaceRootPolicies implements WorkspaceRootPolicyPort {
     const root = { selection, allowlist, ownerPrincipalId: live.ownerId, registration }
     this.actors.set(root, structuredClone(principal)); return root
   }
-  async attest(root: AuthorizedWorkspaceRoot): Promise<WorkspaceRootAttestation> {
+  async attest(root: AuthorizedWorkspaceRoot, sql?: SqlQuery): Promise<WorkspaceRootAttestation> {
     if (!this.actors.has(root)) throw new DomainError('ROOT_AUTHORIZATION_MISSING', 'Attestation requires the actual main-authorized root object.', 403)
-    return this.validateAttestation(root, await this.hosts.attest(root))
+    return this.validateAttestation(root, await this.hosts.attest(root, sql))
   }
   private assertManagedSelection(root: AuthorizedWorkspaceRoot): void {
     const base = root.allowlist.bases.find(value => value.baseId === root.selection.allowedBaseId)
@@ -290,7 +290,7 @@ export class PostgresWorkspaceRootPolicies implements WorkspaceRootPolicyPort {
       registration: accepted.registration,
     }
     this.actors.set(root, structuredClone(principal))
-    const attestation = await this.attest(root)
+    const attestation = await this.attest(root, sql)
     if (attestation.canonicalProjectRoot !== accepted.canonicalProjectRoot
       || !isDeepStrictEqual(attestation.filesystem, accepted.filesystem)
       || attestation.directoryIdentityHash !== accepted.directoryIdentityHash

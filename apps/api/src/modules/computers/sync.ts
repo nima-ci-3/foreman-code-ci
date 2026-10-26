@@ -50,12 +50,14 @@ export class ComputerSyncService {
       state = { installed: false, running: false, deviceId: null, folders: [],
         message: error instanceof Error ? error.message.slice(0, 500) : 'Sync status is unavailable.' }
     }
-    const folders = await Promise.all((await this.repository.workspaces()).filter(workspace => workspace.active).map(async workspace => ({
+    const workspaces = (await this.repository.workspaces()).filter(workspace => workspace.active)
+    const preference = await this.repository.preferences(this.pool, workspaces.map(workspace => workspace.id), [target])
+    const folders = workspaces.map(workspace => ({
       workspaceId: workspace.id, name: workspace.name,
       participating: workspace.targets.some(member => sameDeviceProvisioningTarget(member, target)),
-      ...await this.repository.preference(this.pool, workspace.id, target),
+      ...preference(workspace.id, target),
       status: state.folders.find(folder => folder.workspaceId === workspace.id) ?? null,
-    })))
+    }))
     await this.authorize(principal, source, action, target)
     return ComputerSyncStatusSchema.parse({ target, installed: unavailable ? null : state.installed,
       running: unavailable ? null : state.running,
@@ -146,6 +148,7 @@ export class ComputerSyncService {
         workspaceId === undefined || workspace.id === workspaceId)
       const failures: unknown[] = []
       const computers = await this.repository.computers()
+      const preference = await this.repository.preferences(this.pool, workspaces.map(workspace => workspace.id), computers)
       let nextWorkspace = 0
       const configureNext = async () => {
         while (nextWorkspace < workspaces.length) {
@@ -156,7 +159,7 @@ export class ComputerSyncService {
               failures.push(...await pending)
               continue
             }
-            const request = this.configureWorkspace(workspace, computers)
+            const request = this.configureWorkspace(workspace, computers, preference)
               .finally(() => this.workspaceRequests.delete(workspace.id))
             this.workspaceRequests.set(workspace.id, request)
             failures.push(...await request)
@@ -199,13 +202,14 @@ export class ComputerSyncService {
     }
   }
 
-  private async configureWorkspace(workspace: SyncWorkspace, computers: DeviceProvisioningTarget[]) {
+  private async configureWorkspace(workspace: SyncWorkspace, computers: DeviceProvisioningTarget[],
+    preference: Awaited<ReturnType<SyncRepository['preferences']>>) {
     this.assertOpen()
     const main = this.repository.mainTarget
-    const mainEnabled = workspace.active && (await this.repository.preference(this.pool, workspace.id, main)).enabled
-    const members = await Promise.all(computers.map(async target => ({ target,
+    const mainEnabled = workspace.active && preference(workspace.id, main).enabled
+    const members = computers.map(target => ({ target,
       enabled: mainEnabled && workspace.targets.some(member => sameDeviceProvisioningTarget(member, target))
-        && (await this.repository.preference(this.pool, workspace.id, target)).enabled })))
+        && preference(workspace.id, target).enabled }))
     const failures: unknown[] = []
     const identities = new Map(members.filter(member => member.enabled).map(member =>
       [buildComputerKey(member.target), this.identity(member.target).then(identity => ({ identity }), error => ({ error }))]))
