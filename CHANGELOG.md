@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.130] - 2026-10-26
+
 ### Changed
 
 - Deploys are about two minutes faster: the API exits as soon as its shutdown finishes instead of waiting 60 s for systemd to kill it (and logs any handle still open), an already installed browser runtime is reused without copying or rehashing 850 MB again, and the web build cache resolves the Vite config's imports.
