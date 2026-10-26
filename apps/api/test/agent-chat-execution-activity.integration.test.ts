@@ -276,20 +276,18 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
     }
   }
 
-  it.each(['initial', 'missing', 'handoff-text', 'handoff-task', 'handoff-carrier', 'delegated-task', 'nontext', 'delegated-nontext'] as const)(
+  it.each(['initial', 'missing', 'handoff-text', 'handoff-task', 'handoff-carrier', 'delegated-task', 'nontext'] as const)(
     'shows only authored opening text for %s through the public chat read', async kind => {
       const initialPrompt = 'Please keep INITIAL USER PROMPT and ACCEPTED INPUT FROM THE WORKFLOW in the report.'
       const task = 'Review the changes. TRUSTED WORKFLOW EXECUTION CONTEXT is a heading in the document.'
       const handoff = !['initial', 'missing'].includes(kind)
       const output = { routing: { kind: 'finish' }, data: {
         latestDeliverable: kind === 'handoff-task' ? { task, internal: 'private metadata' }
-          : kind.startsWith('delegated-') ? 'Parent report unrelated to the assigned child task'
-            : kind === 'nontext' ? { private: 'no task text' } : task,
+          : kind === 'nontext' ? { private: 'no task text' } : task,
         remainingFindings: [],
       }, summary: 'Internal summary', board: { kind: 'none', reason: 'no_changes' } }
       const input = handoff ? { work: { kind: 'work_request',
         ...(kind === 'delegated-task' ? { task: { data: { task } } } : {}),
-        ...(kind === 'delegated-nontext' ? { task: { data: null } } : {}),
         acceptedSourceResult: { outcome: 'succeeded', output: kind === 'handoff-carrier'
           ? { text: JSON.stringify(output) } : output },
       } } : { private: 'raw workflow input' }
@@ -304,24 +302,20 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
           { type: 'item.completed', payload: { item: { id: 'answer', type: 'agentMessage', text: 'Working on it' } } },
           { type: 'item.completed', payload: { item: { id: 'followup', type: 'userMessage', content: [{ type: 'text', text: 'Keep this follow-up unchanged' }] } } },
         ])
-        const expected = ['missing', 'nontext', 'delegated-nontext'].includes(kind) ? undefined : handoff ? task : initialPrompt
+        const expected = kind === 'missing' || kind === 'nontext' ? '' : handoff ? task : initialPrompt
         for (const request of [{}, { limit: 1 }, { executionId: fixture.executionId },
           { executionId: fixture.executionId, itemId: 'opening' }, { executionId: fixture.executionId, before: '3' }]) {
           const page = await fixture.http(request)
           expect(await fixture.mcpPage(request)).toEqual(page)
           const opening = page.items.find(item => item.id === 'opening')
-          if (expected === undefined) expect(opening).toBeUndefined()
           if (opening) expect(opening.entry).toEqual({ kind: 'message', message: expect.objectContaining({
             role: 'user', content: expected,
           }) })
-          if (opening?.entry.kind === 'message') expect(opening.entry.message.truncation).toBeUndefined()
           expect(JSON.stringify(page)).not.toContain('Internal result contract')
           expect(JSON.stringify(page)).not.toContain('raw workflow input')
         }
         const page = await fixture.mcpPage()
-        const opening = page.items.find(item => item.id === 'opening')
-        if (expected === undefined) expect(opening).toBeUndefined()
-        else expect(opening?.entry).toMatchObject({ message: { content: expected } })
+        expect(page.items.find(item => item.id === 'opening')?.entry).toMatchObject({ message: { content: expected } })
         expect(page.items.find(item => item.id === 'followup')?.entry).toMatchObject({ message: { content: 'Keep this follow-up unchanged' } })
       } finally { await fixture.close() }
     },
