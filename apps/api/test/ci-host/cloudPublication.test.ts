@@ -132,7 +132,7 @@ it('requeues a part whose publication hit a transient Main database timeout inst
   const runId = randomUUID()
   await f.cloud.handle({ operation: 'start', runId, workspaceId: 'ci-workspace',
     repository: 'octo/site', commit: f.commit, suite: 'lint', deferMirror: true })
-  await expect.poll(async () => f.cloud.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1 }), { timeout: 5000 })
-    .toMatchObject({ run: { state: 'queued' } })
+  await expect.poll(async () => (await f.cloud.handle({ operation: 'read', runId, afterOffset: 0, maxBytes: 1 })).run?.state,
+    { timeout: 5000 }).toBe('queued')
   expect(f.dispatched).toHaveLength(0)
 })
