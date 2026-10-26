@@ -144,13 +144,23 @@ test('acceptance rejects empty selections, broad filters and paths outside API t
   }
 })
 
-test('the root acceptance command forwards file selection and rejects invalid paths before native execution', () => {
-  const result = spawnSync('corepack', ['pnpm', 'test:acceptance', '--files', '../outside.acceptance.test.ts'], {
-    cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', timeout: 10_000,
-  })
-  assert.ifError(result.error)
-  assert.notEqual(result.status, 0)
-  assert.match(result.stdout + result.stderr, /Invalid acceptance test file:/)
+test('the root acceptance command forwards file selection and rejects invalid paths before native execution', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'native-acceptance-validation-'))
+  const blocked = join(directory, 'blocked')
+  try {
+    // Setup must be unreachable for invalid input, even when scheduler storage is unavailable.
+    await writeFile(blocked, 'not a directory')
+    const result = spawnSync('corepack', ['pnpm', 'test:acceptance', '--files', '../outside.acceptance.test.ts'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, FOREMAN_CODE_HEAVY_BASE_TMPDIR: blocked },
+    })
+    assert.ifError(result.error)
+    assert.equal(result.status, 1, result.stdout + result.stderr)
+    assert.match(result.stdout + result.stderr, /Invalid acceptance test file: \.\.\/outside\.acceptance\.test\.ts/)
+    assert.equal(await readFile(blocked, 'utf8'), 'not a directory')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test('physical transfer and provider cases are selected explicitly as acceptance suites', () => {

@@ -13,6 +13,7 @@ import { HostCiService, type HostCiComputer } from '@foreman-code/ci/service'
 import { ProductionHostCiEndpoint } from '@foreman-code/ci/endpoint'
 import { CircleStandby } from '@foreman-code/ci/circleStandby'
 import type { CiUnitInventory } from '@foreman-code/ci/parts'
+import { buildComputerIntegrationShards } from '@foreman-code/ci/capacity'
 import { CI_GET_ACTIONS, CI_RUN_ACTIONS, RunCiAuthority } from '../src/modules/jobs/ciAuthority.js'
 import { migratedDatabase } from './helpers/migratedDatabase.js'
 import { createTestPool } from './helpers/testPool.mjs'
@@ -211,12 +212,13 @@ it('persists a second GitHub integration wave through MCP while CircleCI orgs re
     expect(clouds.length).toBeGreaterThan(1)
     expect(clouds.length).toBeGreaterThan(new Set(clouds.map(run => run.plannedHostKey)).size)
     for (const run of clouds) expect(run.expectedDurationMs).toBeLessThanOrEqual(45 * 60_000)
-    const builder = integration.find(run => run.plannedHostKey === 'builder')!
-    expect(builder.files.length).toBeGreaterThan(0)
+    expect(clouds).toHaveLength(integration.length)
     for (const run of clouds) expect(checks.some(check => check.plannedHostKey === run.plannedHostKey)).toBe(true)
     expect(read.partitions!.some(run => run.plannedHostKey?.startsWith('circleci:'))).toBe(false)
     expect(integration.flatMap(run => run.files).sort()).toEqual([...f.files].sort())
-    const hostOnlyTime = f.files.length * 120_000 / Math.floor(builder.integrationShards! / 2)
+    const builder = listed.computers.find(computer => computer.hostRef.kind !== 'cloud')!
+    const hostShards = buildComputerIntegrationShards({ cpuCount: builder.cpuCount!, memoryBytes: builder.memoryBytes! })
+    const hostOnlyTime = f.files.length * 120_000 / Math.floor(hostShards / 2)
     expect(read.gate!.criticalPath.expectedDurationMs).toBeLessThan(hostOnlyTime / 2)
     const saved = (await f.pool.query('select record from ci_runs where workspace_id=$1', [f.workspaceId])).rows
     expect(saved).toHaveLength(read.partitions!.length)

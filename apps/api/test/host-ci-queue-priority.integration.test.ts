@@ -13,19 +13,22 @@ async function settle(service: { dispatch(): Promise<void>; drain(): Promise<voi
   await service.drain()
 }
 
-it('fills GitHub slots before CircleCI and build computers for ordinary integration requests', async () => {
-  const f = await fixture({ cloud: { github: 2, circleci: 2 } })
+it('uses build computers for small selections, then GitHub before CircleCI when builders are busy', async () => {
+  const file = 'apps/api/test/agent-chat.integration.test.ts'
+  const f = await fixture({ cloud: { github: 2, circleci: 2 },
+    integrationInventory: { files: [file], durations: { [file]: 60_000 } } })
   try {
     await settle(f.ci)
     for (let index = 0; index < 5; index++) {
       const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', {
-        suite: 'integration', scope: 'affected', files: ['apps/api/test/agent-chat.integration.test.ts'],
+        suite: 'integration', scope: 'affected', files: [file],
         commit: String(index + 1).repeat(40), commandId: `provider-order-${index}`,
       }))
       await settle(f.ci)
       const read = await f.waitFor(f.operator, started.ticketId, output => output.run.state === 'running')
-      expect(read.run.computer?.hostRef).toMatchObject(index < 4
-        ? { kind: 'cloud', provider: index < 2 ? 'github' : 'circleci' } : { kind: 'device' })
+      expect(read.run.selectionDurationMs).toBe(60_000)
+      expect(read.run.computer?.hostRef).toMatchObject(index < 2
+        ? { kind: 'device' } : { kind: 'cloud', provider: index < 4 ? 'github' : 'circleci' })
     }
   } finally { await f.close() }
 })

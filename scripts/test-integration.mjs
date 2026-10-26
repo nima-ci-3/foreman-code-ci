@@ -540,7 +540,10 @@ export function signalOwnedChildren(active, timers, signal, graceMs = 5000) {
 }
 
 export function integrationEnvironment(environment, slot) {
-  return testEnvironment(environment, slot)
+  // Vitest deletes its entire module cache on lockfile changes. Give each serial slot its own stable cache,
+  // outside the workspace-wide default cache that other Vitest processes can invalidate.
+  const cache = environment.FOREMAN_CODE_VITEST_CACHE || join(root, 'apps/api/node_modules/.cache/vitest')
+  return { ...testEnvironment(environment, slot), FOREMAN_CODE_VITEST_CACHE: join(cache, `integration-slot-${slot.index}`) }
 }
 
 export function options(argv, environment = process.env) {

@@ -35,7 +35,7 @@ it.each(['not-ready', 'offline', 'extension-rejected'])('excludes a %s build com
       { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) },
       { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, fleet(2, unavailable))
     expect(parts.some(part => part.plannedHostKey === 'builder-paired')).toBe(false)
-    expect(parts.some(part => part.plannedHostKey === 'builder-main')).toBe(true)
+    expect(parts.every(part => part.plannedHostKey.startsWith('cloud-'))).toBe(true)
     expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
       .toEqual([...files].sort())
   })
@@ -55,7 +55,7 @@ it.each([1, 2])('excludes a builder with %i occupied slots from gate planning', 
     { files, durations: Object.fromEntries(files.map(file => [file, 120_000])) },
     { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, endpoint)
   expect(parts.some(part => part.plannedHostKey === 'builder-main')).toBe(false)
-  expect(parts.some(part => part.plannedHostKey === 'builder-paired')).toBe(true)
+  expect(parts.every(part => part.plannedHostKey.startsWith('cloud-'))).toBe(true)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort()).toEqual([...files].sort())
 })
 
@@ -89,7 +89,7 @@ it.each([
     expect(integration.find(part => part.files.includes(hostFile)))
       .toMatchObject({ plannedHostKey: 'builder-main', requiresBuildComputer: true })
     expect(integration.find(part => part.files.includes(ordinaryFile))?.plannedHostKey)
-      .toMatch(clouds === 2 ? /^builder-main$/ : /^cloud-/)
+      .toMatch(/^cloud-/)
     expect(integration.flatMap(part => part.files).sort()).toEqual([hostFile, ordinaryFile].sort())
   })
 
@@ -141,13 +141,13 @@ it.each([80_000, 120_000])('balances %i ms integration files against cloud check
     { files: ['apps/api/src/site.test.ts', 'packages/contracts/src/site.test.ts'], durations: {}}, {}, endpoint)
   const integration = parts.filter(part => part.suite === 'integration')
   expect(integration.flatMap(part => part.files).sort()).toEqual([...files].sort())
-  expect(integration.filter(part => part.plannedHostKey.startsWith('builder-'))).toHaveLength(2)
+  expect(parts.every(part => part.plannedHostKey.startsWith('cloud-'))).toBe(true)
   const checks = parts.filter(part => part.suite !== 'integration')
   // typecheck and lint (API and other) and one unit part each for the API and the rest.
   expect(checks).toHaveLength(6)
-  expect(integration).toHaveLength(20)
+  expect(integration).toHaveLength(18)
   for (const part of integration) {
-    const cpuSlots = part.plannedHostKey.startsWith('builder-') ? 16 : 4
+    const cpuSlots = 4
     expect(part.integrationShards).toBe(cpuSlots)
     const concurrentFiles = cpuSlots / 2
     expect(part.expectedDurationMs).toBe(90_000 + Math.ceil(part.files.length / concurrentFiles) * durationMs)
@@ -160,7 +160,7 @@ it.each([80_000, 120_000])('balances %i ms integration files against cloud check
   }
   expect(times.size).toBe(parts.length)
   // Heavy files reserve two CPU slots; check executors cannot also run integration in this wave.
-  const concurrentFiles = 2 * (16 / 2) + (24 - checks.length) * (4 / 2)
+  const concurrentFiles = (24 - checks.length) * (4 / 2)
   const integrationWaves = Math.ceil(files.length / concurrentFiles)
   const maxGateDurationMs = Math.max(210_000, 90_000 + integrationWaves * durationMs)
   expect(Math.max(...times.values())).toBeLessThanOrEqual(maxGateDurationMs)
@@ -187,10 +187,13 @@ it('lets a build computer without a queued gate part take cloud parts and anothe
 })
 
 it.each([
-  [16, 14, 50, 3, 4],
-  [32, 4, 50, 1, 1],
-])('plans gate shards within the saved CPU and memory allowance', async (cpuCount, memoryGiB, allowance, shards, cloudShards) => {
-  const endpoint = fleet(24)
+  [16, 14, 50, 3, 4, 24],
+  [32, 4, 50, 1, 1, 24],
+  [16, 14, 50, 3, 4, 0],
+  [32, 4, 50, 1, 1, 0],
+])('plans gate shards within %i CPUs and %i GiB at %i percent allowance (%i host shards, %i cloud shards, %i clouds)',
+  async (cpuCount, memoryGiB, allowance, shards, cloudShards, cloudCount) => {
+  const endpoint = fleet(cloudCount)
   const computers = await endpoint.computers()
   for (const computer of computers.filter(computer => computer.hostRef.kind !== 'cloud')) {
     Object.assign(computer, { buildAllowancePercent: allowance })
@@ -205,10 +208,10 @@ it.each([
         memoryBytes: memoryGiB * 2 ** 30, runs: [] }),
     })
   const hosts = parts.filter(part => part.suite === 'integration' && part.plannedHostKey.startsWith('builder-'))
-  expect(hosts).toHaveLength(2)
+  expect(hosts).toHaveLength(cloudCount ? 0 : 2)
   for (const host of hosts) expect(host.integrationShards).toBe(shards)
   const clouds = parts.filter(part => part.suite === 'integration' && part.plannedHostKey.startsWith('cloud-'))
-  expect(clouds.length).toBeGreaterThan(0)
+  expect(clouds).toHaveLength(cloudCount ? 24 : 0)
   for (const cloud of clouds) expect(cloud.integrationShards).toBe(cloudShards)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort()).toEqual([...files].sort())
 })
@@ -236,7 +239,7 @@ it.each([
     expect(parts.filter(part => part.part === 'unit-api')).toHaveLength(expectedShards)
   })
 
-it('plans one gate part per cloud executor so no part waits behind another on the same slot', async () => {
+it('plans one integration part per cloud executor, including slots running checks, while preserving reserved slots', async () => {
   const files = Array.from({ length: 400 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const unit = Array.from({ length: 30 }, (_, index) => `apps/api/src/feature-${index}.test.ts`)
   const unitDurations = Object.fromEntries(unit.map(file => [file, 30_000]))
@@ -245,12 +248,19 @@ it('plans one gate part per cloud executor so no part waits behind another on th
     { files: unit, durations: unitDurations}, unitDurations, fleet(24), new Map(), 2)
   const clouds = parts.filter(part => part.plannedHostKey.startsWith('cloud-'))
   expect(clouds.some(part => part.suite !== 'integration')).toBe(true)
+  expect(clouds).toHaveLength(parts.length)
+  expect(parts.filter(part => part.suite !== 'integration')).toHaveLength(11)
   const perCloud = new Map<string, number>()
-  for (const part of clouds) perCloud.set(part.plannedHostKey, (perCloud.get(part.plannedHostKey) ?? 0) + 1)
+  for (const part of clouds.filter(part => part.suite === 'integration')) {
+    perCloud.set(part.plannedHostKey, (perCloud.get(part.plannedHostKey) ?? 0) + 1)
+  }
+  expect(perCloud.size).toBe(22)
   expect([...perCloud.values()].every(count => count === 1)).toBe(true)
-  expect(parts.length).toBeLessThanOrEqual(2 + 24 - 2)
+  expect(parts.some(part => ['cloud-22', 'cloud-23'].includes(part.plannedHostKey))).toBe(false)
+  expect(parts).toHaveLength(22 + 11)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort()).toEqual([...files].sort())
-  const ends = parts.filter(part => part.suite === 'integration').map(part => part.expectedDurationMs)
+  const ends = [...perCloud.keys()].map(key => parts.filter(part => part.plannedHostKey === key)
+    .reduce((sum, part) => sum + part.expectedDurationMs, 0))
   expect(Math.max(...ends) - Math.min(...ends)).toBeLessThanOrEqual(200_000)
 })
 
@@ -263,10 +273,11 @@ it.each([
     'apps/api/test/slow-first.integration.test.ts',
     'apps/api/test/slow-second.integration.test.ts',
   ] },
-])('budgets two CPU slots per heavy file before an exclusive recovery at $durationMs ms',
-  async ({ durationMs, heavyFiles }) => {
+].flatMap(scenario => [0, 2].map(cloudCount => ({ ...scenario, cloudCount }))))(
+  'budgets two CPU slots per heavy file before an exclusive recovery at $durationMs ms with $cloudCount clouds',
+  async ({ durationMs, heavyFiles, cloudCount }) => {
     const files = [...heavyFiles, 'apps/api/test/remote-review-production-worker-crash.integration.test.ts']
-    const base = fleet(2, 'not-ready')
+    const base = fleet(cloudCount, 'not-ready')
     const endpoint: HostCiEndpoint = {
       computers: base.computers,
       request: async (computer, request) => {
@@ -279,8 +290,22 @@ it.each([
       { files, durations: { [files[0]!]: durationMs, [files[1]!]: durationMs, [files[2]!]: 81_000 } },
       { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, endpoint)
     const integration = parts.filter(part => part.suite === 'integration')
-    expect(integration).toHaveLength(1)
-    expect(integration[0]!.files.slice().sort()).toEqual(files.slice().sort())
-    expect(integration[0]).toMatchObject({ integrationShards: 2,
-      expectedDurationMs: 90_000 + 2 * durationMs + 81_000 })
+    expect(integration.flatMap(part => part.files).sort()).toEqual(files.slice().sort())
+    if (!cloudCount) {
+      expect(integration).toHaveLength(1)
+      expect(integration[0]).toMatchObject({ plannedHostKey: 'builder-main', integrationShards: 2,
+        expectedDurationMs: 90_000 + 2 * durationMs + 81_000 })
+    } else if (durationMs === 30_000) {
+      expect(integration).toHaveLength(1)
+      expect(integration[0]).toMatchObject({ plannedHostKey: 'cloud-1', integrationShards: 4,
+        expectedDurationMs: 90_000 + durationMs + 81_000 })
+    } else {
+      expect(integration).toHaveLength(2)
+      expect(integration.find(part => part.files.includes(heavyFiles[0]!)))
+        .toMatchObject({ files: heavyFiles, plannedHostKey: 'cloud-1', integrationShards: 4,
+          expectedDurationMs: 90_000 + durationMs })
+      expect(integration.find(part => part.files.includes(files[2]!)))
+        .toMatchObject({ files: [files[2]], plannedHostKey: 'cloud-0', integrationShards: 4,
+          expectedDurationMs: 90_000 + 81_000 })
+    }
   })

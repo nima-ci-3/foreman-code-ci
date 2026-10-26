@@ -58,7 +58,7 @@ it('learns each executor speed from recent passed gate parts it was planned for'
 })
 
 function endpoint(): HostCiEndpoint {
-  const fleet = computers.filter(computer => computer.key !== 'builder-spare')
+  const fleet = computers.filter(computer => computer.key !== 'builder-spare' && computer.hostRef.kind !== 'cloud')
   return {
     computers: async () => fleet,
     request: async computer => ({ operation: 'status', ready: true, reasons: [],
@@ -77,29 +77,34 @@ async function builderPlan(speeds?: Map<string, number>) {
   expect(integration.flatMap(part => part.files).sort()).toEqual([...files].sort())
   const part = (key: string) => integration.find(item => item.plannedHostKey === key)!
   const work = (key: string) => part(key).files.length * 30_000
+  const end = (key: string) => parts.filter(part => part.plannedHostKey === key)
+    .reduce((sum, part) => sum + part.expectedDurationMs, 0)
   return { main: part('builder-main'), paired: part('builder-paired'),
-    mainWork: work('builder-main'), pairedWork: work('builder-paired') }
+    mainWork: work('builder-main'), pairedWork: work('builder-paired'),
+    mainEnd: end('builder-main'), pairedEnd: end('builder-paired') }
 }
 
-it('gives a slower computer proportionally less work so predicted finishes balance', async () => {
-  const { main, paired, mainWork, pairedWork } = await builderPlan(new Map([['builder-main', 2]]))
+it('gives a slower fallback builder proportionally less work so predicted gate finishes balance', async () => {
+  const { main, mainWork, pairedWork, mainEnd, pairedEnd } = await builderPlan(new Map([['builder-main', 2]]))
   expect(mainWork).toBeLessThan(pairedWork * 0.55)
   expect(main.speedFactor).toBe(2)
-  expect(Math.abs(main.expectedDurationMs - paired.expectedDurationMs)).toBeLessThanOrEqual(60_000)
+  expect(Math.abs(mainEnd - pairedEnd)).toBeLessThanOrEqual(60_000)
 })
 
-it('treats computers without speed history as nominal', async () => {
-  const { main, paired, mainWork, pairedWork } = await builderPlan()
-  expect(Math.abs(mainWork - pairedWork)).toBeLessThanOrEqual(30_000)
+it('treats fallback builders without speed history as nominal and includes checks when balancing', async () => {
+  const { main, paired, mainEnd, pairedEnd } = await builderPlan()
   expect(main.speedFactor ?? 1).toBe(1)
-  expect(Math.abs(main.expectedDurationMs - paired.expectedDurationMs)).toBeLessThanOrEqual(30_000)
+  for (const part of [main, paired]) {
+    expect(part.expectedDurationMs).toBe(90_000 + Math.ceil(part.files.length / 2) * 30_000)
+  }
+  expect(Math.abs(mainEnd - pairedEnd)).toBeLessThanOrEqual(30_000)
 })
 
 it.each([
   { cpuCount: 8, wallTimes: [800_000, 800_000, 800_000, 100_000] },
   { cpuCount: 32, wallTimes: [800_000, 800_000, 800_000, 100_000] },
   { cpuCount: 32, wallTimes: [800_000, 100_000, 100_000, 100_000] },
-])('bounds a build part by measured throughput with $cpuCount reported CPUs and $wallTimes history',
+])('uses capable clouds before builders and bounds fallback throughput with $cpuCount CPUs and $wallTimes history',
   async ({ cpuCount, wallTimes }) => {
   const builder = computers[0]!
   const historyFiles = Array.from({ length: 148 }, (_, index) => `apps/api/test/history-${index}.integration.test.ts`)
@@ -122,19 +127,24 @@ it.each([
   }
   const speeds = await readExecutorSpeeds(pool, fleet)
   const files = Array.from({ length: 700 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
-  const parts = await planCiGate(mainCiContext, { suite: 'integration', scope: 'full', gate: true, commandId: 'throughput' },
-    { files, durations: Object.fromEntries(files.map(file => [file, 20_000])) },
-    { files: ['apps/api/src/site.test.ts'], durations: {}}, {}, fleet, speeds)
+  const input: CiRunInput = { suite: 'integration', scope: 'full', gate: true, commandId: 'throughput' }
+  const inventory = { files, durations: Object.fromEntries(files.map(file => [file, 20_000])) }
+  const unit = { files: ['apps/api/src/site.test.ts'], durations: {} }
+  const parts = await planCiGate(mainCiContext, input, inventory, unit, {}, fleet, speeds)
   expect(parts.filter(part => part.suite === 'integration').flatMap(part => part.files).sort())
     .toEqual([...files].sort())
-  const host = parts.find(part => part.plannedHostKey === builder.key)!
-  // A cloud host finishes after its checks and its integration part.
-  const cloudEnd = Math.max(...[...new Set(parts.map(part => part.plannedHostKey))].filter(key => key !== builder.key)
-    .map(key => parts.filter(part => part.plannedHostKey === key).reduce((sum, part) => sum + part.expectedDurationMs, 0)))
-  const measuredEnd = host.files.length * 20_000 / (148 * 20_000 / 800_000)
-  // Files are placed whole: the builder may end at most one cloud wave (one 20 s file) after the clouds.
-  expect(measuredEnd).toBeLessThanOrEqual(cloudEnd + 20_000)
-  expect(host.expectedDurationMs).toBeGreaterThanOrEqual(measuredEnd)
+  expect(parts.every(part => part.plannedHostKey.startsWith('cloud-'))).toBe(true)
+  const fallback = await planCiGate(mainCiContext, input, inventory, unit, {}, {
+    ...fleet, computers: async () => [builder],
+  }, speeds)
+  const integration = fallback.filter(part => part.suite === 'integration')
+  expect(integration).toHaveLength(1)
+  const host = integration[0]!
+  expect(host.plannedHostKey).toBe(builder.key)
+  expect([...host.files].sort()).toEqual([...files].sort())
+  const measuredEnd = files.length * 20_000 / (148 * 20_000 / 800_000)
+  const nominalEnd = 90_000 + Math.ceil(files.length / host.integrationShards!) * 20_000
+  expect(host.expectedDurationMs).toBe(Math.ceil(Math.max(nominalEnd, measuredEnd)))
 })
 
 it('uses the same measured file throughput for persisted partition weights', async () => {

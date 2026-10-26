@@ -68,17 +68,17 @@ function status(slotsTotal: number, slotsUsed: number): CiHostStatus {
     memoryBytes: 16 * 2 ** 30, slotsTotal, slotsUsed, runs: [] }
 }
 
-it('keeps queued integration parts sized to eligible capacity when runners and persisted reservations are busy', async () => {
+it('keeps queued integration parts sized to eligible builders without a CI mirror when reservations are busy', async () => {
   const { output, records } = await admit(computers, [status(4, 4), status(3, 0)], [0, 3])
-  expect(output.partitions).toHaveLength(7)
-  expect(records).toHaveLength(7)
-  expect(records.every(record => record.state === 'queued' && record.partition?.count === 7)).toBe(true)
+  expect(output.partitions).toHaveLength(3)
+  expect(records).toHaveLength(3)
+  expect(records.every(record => record.state === 'queued' && record.partition?.count === 3)).toBe(true)
 })
 
-it('includes three free build slots alongside one free cloud slot for ordinary integration work', async () => {
+it('uses three free build slots without counting cloud capacity a workspace without a CI mirror cannot use', async () => {
   const { output, records } = await admit(computers, [status(1, 0), status(3, 0)], [0, 0])
-  expect(output.partitions).toHaveLength(4)
-  expect(records).toHaveLength(4)
+  expect(output.partitions).toHaveLength(3)
+  expect(records).toHaveLength(3)
   expect(records.every(record => record.requiresBuildComputer === false)).toBe(true)
 })
 

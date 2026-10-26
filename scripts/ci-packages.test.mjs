@@ -108,13 +108,37 @@ for (const input of ['package.json', 'apps/api/package.json', 'pnpm-lock.yaml', 
     assert.equal(first.status, 0, first.stderr)
     const before = f.key()
     assert.equal(before.status, 0, before.stderr)
-    writeFileSync(join(f.root, input), readFileSync(join(f.root, input), 'utf8') + '\n')
+    const contents = readFileSync(join(f.root, input), 'utf8')
+    writeFileSync(join(f.root, input), input.endsWith('package.json')
+      ? JSON.stringify({ ...JSON.parse(contents), dependencies: { dependency: '2.0.0' } })
+      : contents + '\n')
     const after = f.key()
     assert.equal(after.status, 0, after.stderr)
     assert.notEqual(before.stdout, after.stdout)
     f.clear()
     assert.equal(f.run().status, 0)
     assert.equal(f.commands().length, 1)
+  })
+}
+
+for (const input of ['package.json', 'apps/api/package.json']) {
+  test(`packages cache reuses installed state after version and task script edits in ${input}`, t => {
+    const f = fixture(t)
+    assert.equal(f.run().status, 0)
+    const before = f.key()
+    assert.equal(before.status, 0, before.stderr)
+    const manifest = JSON.parse(readFileSync(join(f.root, input), 'utf8'))
+    for (const fields of [{ version: '2.0.0' }, { scripts: { test: 'node test.mjs', build: 'node build.mjs' } }]) {
+      Object.assign(manifest, fields)
+      writeFileSync(join(f.root, input), JSON.stringify(manifest) + '\n')
+      const after = f.key()
+      assert.equal(after.status, 0, after.stderr)
+      assert.equal(after.stdout, before.stdout)
+      f.clear()
+      const result = f.run()
+      assert.equal(result.status, 0, result.stdout + result.stderr)
+      assert.deepEqual(f.commands(), [])
+    }
   })
 }
 

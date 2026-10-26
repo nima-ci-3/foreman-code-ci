@@ -6,7 +6,7 @@ import type { HostCiComputer, HostCiEndpoint } from '@foreman-code/ci/service'
 import { CI_GET_ACTIONS } from '../src/modules/jobs/ciAuthority.js'
 import { fixture } from './helpers/hostCiMcpFixture.js'
 
-it('admits MCP requests and runs own-computer work while cloud publication is pending, then persists ready readback', async () => {
+it('falls back without cloud and queues further work behind cloud publication, then persists ready readback', async () => {
   const mirror = await mirrorFixture()
   let release!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })
@@ -50,10 +50,10 @@ it('admits MCP requests and runs own-computer work while cloud publication is pe
   try {
     const reader = await f.connect(CI_GET_ACTIONS)
     expect((await f.call(reader, 'ci_run', { ...input, commandId: randomUUID() })).isError).toBe(true)
-    await run()
+    const fallback = await run()
     await f.ci.dispatch()
     await f.ci.drain()
-    expect(localRun?.state).toBe('running')
+    expect(localRun).toMatchObject({ runId: fallback.ticketId, state: 'running' })
     cloudAvailable = true
     const cloudRun = await run()
     let timer: NodeJS.Timeout | undefined
@@ -67,10 +67,12 @@ it('admits MCP requests and runs own-computer work while cloud publication is pe
     const read = async () => CiGetOutputSchema.parse(await f.value(reader, 'ci_get', { ticketId: cloudRun.ticketId })).run
     expect(await read()).toMatchObject({ mirrorPublication: { state: 'pending' } })
     localRun = { ...localRun!, state: 'passed', exitCode: 0, finishedAt: new Date().toISOString() }
-    const own = await run()
+    const waiting = await run()
     await f.ci.dispatch()
     await f.ci.drain()
-    expect(localRun.runId).toBe(own.ticketId)
+    expect(CiGetOutputSchema.parse(await f.value(reader, 'ci_get', { ticketId: waiting.ticketId })).run)
+      .toMatchObject({ state: 'queued', computer: null })
+    expect(localRun).toMatchObject({ runId: fallback.ticketId, state: 'passed' })
     expect(mirror.dispatched).toHaveLength(0)
     release()
     await expect.poll(read, { timeout: 5000 }).toMatchObject({ mirrorPublication: { state: 'ready' } })

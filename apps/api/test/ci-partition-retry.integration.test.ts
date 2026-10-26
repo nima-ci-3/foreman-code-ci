@@ -16,15 +16,16 @@ it('preserves full integration file membership after a cloud setup failure and r
     expect((await f.call(reader, 'ci_run', input)).isError).toBe(true)
     const admitted = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', input))
     const initial = await f.waitFor(f.operator, admitted.ticketId,
-      output => output.partitions?.length === 4 && output.partitions.every(run => run.state === 'running'))
-    const failed = initial.partitions!.find(run => run.computer?.hostRef.kind === 'cloud')!
+      output => output.partitions?.length === 4 && output.partitions.filter(run => run.state === 'running').length === 2)
+    expect(initial.partitions!.filter(run => run.state === 'queued')).toHaveLength(2)
+    expect(initial.partitions!.filter(run => run.state === 'running').every(run => run.computer?.hostRef.kind === 'cloud'))
+      .toBe(true)
+    const failed = initial.partitions!.find(run => run.state === 'running')!
     expect(failed).toBeDefined()
-    const originals = f.started.map(item => item.request).filter((request): request is Start =>
-      request.operation === 'start' && request.suite === 'integration')
-    expect(originals).toHaveLength(4)
-    const original = originals.find(request => request.runId === failed.id)!
+    expect(f.started).toHaveLength(2)
+    const original = f.started.map(item => item.request).find((request): request is Start =>
+      request.operation === 'start' && request.runId === failed.id)!
     const slice = (request: Start) => integrationPartition(files, request.durations ?? {}, request.partition!)
-    expect(originals.flatMap(slice).sort()).toEqual([...files].sort())
 
     const endpoint = f.endpoint.request.bind(f.endpoint)
     f.endpoint.request = async (computer, request) => {
@@ -36,10 +37,22 @@ it('preserves full integration file membership after a cloud setup failure and r
       return reply
     }
     f.finish(failed.id, 1, 'Install failed before tests started.\n')
-    const completed = initial.partitions!.find(run => run.computer?.hostRef.kind !== 'cloud')!
+    const completed = initial.partitions!.find(run => run.state === 'running' && run.id !== failed.id)!
     f.finish(completed.id, 0, 'Completed original partition.\n')
     await f.ci.dispatch()
     await f.ci.drain()
+    // The remaining ordinary full partitions share the two cloud slots with the setup retry.
+    const waiting = new Set(initial.partitions!.filter(run => run.state === 'queued').map(run => run.id))
+    while (waiting.size) {
+      const progress = await f.waitFor(f.operator, admitted.ticketId,
+        output => output.partitions!.some(run => waiting.has(run.id) && run.state === 'running'))
+      const running = progress.partitions!.find(run => waiting.has(run.id) && run.state === 'running')!
+      expect(running.computer?.hostRef.kind).toBe('cloud')
+      f.finish(running.id, 0, 'Completed queued original partition.\n')
+      waiting.delete(running.id)
+      await f.ci.dispatch()
+      await f.ci.drain()
+    }
     const retried = await f.waitFor(f.operator, failed.id,
       output => output.run.state === 'running' && output.run.setupRetry !== undefined)
     const retry = f.started.map(item => item.request).find((request): request is Start =>
@@ -48,6 +61,11 @@ it('preserves full integration file membership after a cloud setup failure and r
     expect(retry.durations).toEqual(original.durations)
     expect(retry.partition).toEqual(original.partition)
     expect(slice(retry)).toEqual(slice(original))
+    const originalIds = new Set(initial.partitions!.map(run => run.id))
+    const originals = f.started.map(item => item.request).filter((request): request is Start =>
+      request.operation === 'start' && originalIds.has(request.runId))
+    expect(originals).toHaveLength(4)
+    expect(originals.flatMap(slice).sort()).toEqual([...files].sort())
     const executed = originals.flatMap(request => slice(request.runId === failed.id ? retry : request))
     expect(executed.sort()).toEqual([...files].sort())
     expect(new Set(executed).size).toBe(files.length)

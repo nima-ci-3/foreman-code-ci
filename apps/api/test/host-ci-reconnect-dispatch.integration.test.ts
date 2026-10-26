@@ -1,10 +1,10 @@
-import { CiGetOutputSchema, CiRunOutputSchema } from '@foreman-code/contracts'
+import { CiComputersOutputSchema, CiGetOutputSchema, CiRunOutputSchema } from '@foreman-code/contracts'
 import { decodeMcpToolResult } from '@foreman-code/contracts/operator-mcp'
 import { expect, it, vi } from 'vitest'
 import { CI_GET_ACTIONS } from '../src/modules/jobs/ciAuthority.js'
 import { fixture } from './helpers/hostCiMcpFixture.js'
 
-it('dispatches a planned gate part when fresh Worker readiness is observed during an offline dispatch pass', async () => {
+it('dispatches a cloud-planned gate part on a recovered Worker while cloud remains unavailable', async () => {
   const files = Array.from({ length: 64 }, (_, index) => `apps/api/test/feature-${index}.integration.test.ts`)
   const f = await fixture({ cloud: { github: 8, circleci: 0 },
     unitInventory: { files: ['apps/api/src/feature.test.ts', 'apps/web/src/feature.test.tsx'],
@@ -15,6 +15,7 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
     // ignore: the readiness wake-up drives dispatch; no periodic timer runs in this regression.
   })
   const admissionDispatch = vi.spyOn(f.ci, 'dispatch').mockResolvedValue()
+  const clock = vi.spyOn(Date, 'now')
   let release!: () => void
   let entered!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })
@@ -33,13 +34,12 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
       return CiGetOutputSchema.parse(decodeMcpToolResult(result))
     }
     const parts = (await read()).partitions!
-    const planned = parts.find(run => run.plannedHostKey === worker.key)!
+    const planned = parts.find(run => run.suite === 'integration')!
     expect(planned).toMatchObject({ state: 'queued', suite: 'integration' })
+    expect(f.computers.find(computer => computer.key === planned.plannedHostKey)?.hostRef.kind).toBe('cloud')
     for (const part of parts.filter(run => run.id !== planned.id)) {
       await f.value(f.operator, 'ci_cancel', { ticketId: part.id })
     }
-    admissionDispatch.mockRestore()
-
     let ready = false
     const request = f.endpoint.request.bind(f.endpoint)
     f.endpoint.request = async (computer, input) => {
@@ -48,7 +48,12 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
       return { ...reply, ready: ready && computer.key === worker.key,
         reasons: ready && computer.key === worker.key ? [] : ['Worker reconnecting'] }
     }
-    await f.value(f.operator, 'ci_computers_list', {})
+    // Planning just read ready statuses; expire those snapshots before observing the outage.
+    const now = Date.now()
+    clock.mockReturnValue(now + 6000)
+    const offline = CiComputersOutputSchema.parse(await f.value(f.operator, 'ci_computers_list', {}))
+    expect(offline.computers.every(computer => !computer.ready)).toBe(true)
+    admissionDispatch.mockRestore()
     let pause = true
     let discoveries = 0
     const computers = f.endpoint.computers.bind(f.endpoint)
@@ -65,7 +70,9 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
     dispatch = f.ci.dispatch()
     await observingOffline
     ready = true
-    await f.value(f.operator, 'ci_computers_list', {})
+    clock.mockReturnValue(now + 12_000)
+    const online = CiComputersOutputSchema.parse(await f.value(f.operator, 'ci_computers_list', {}))
+    expect(online.computers.filter(computer => computer.ready).map(computer => computer.hostRef)).toEqual([worker.hostRef])
     const beforeWake = discoveries
     wake = f.ci.dispatch()
     release()
@@ -74,7 +81,7 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
     await f.ci.close()
 
     const recovered = (await read()).partitions!.find(run => run.id === planned.id)!
-    expect(recovered).toMatchObject({ state: 'running', plannedHostKey: worker.key,
+    expect(recovered).toMatchObject({ state: 'running', plannedHostKey: planned.plannedHostKey,
       computer: { hostRef: worker.hostRef } })
     expect(f.started.filter(entry => entry.request.operation === 'start' && entry.request.runId === planned.id))
       .toHaveLength(1)
@@ -85,6 +92,7 @@ it('dispatches a planned gate part when fresh Worker readiness is observed durin
     await Promise.allSettled([dispatch, wake])
     admissionDispatch.mockRestore()
     start.mockRestore()
+    clock.mockRestore()
     await f.close()
   }
 })
