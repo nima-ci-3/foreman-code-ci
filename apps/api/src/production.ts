@@ -2373,7 +2373,7 @@ async function initializeCiServices(
   // Stopped with the runtime so a start our shutdown interrupts is resumed, not failed.
   started.cloudCis = clouds
 
-  const hostCi = createHostCi({ pool: database.pool, mainId: machine.installationId, commands,
+  const hostCi = await createHostCi({ pool: database.pool, mainId: machine.installationId, commands,
     devices: () => deviceRuntime.endpointForDomains(), workerExecution, clouds, discoverClouds, readAgentFiles,
     circleCredits, circleStandby })
   const ciTransport = await createCiHttpTransport(hostCi)

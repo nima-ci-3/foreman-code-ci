@@ -13,7 +13,7 @@ import { currentInitialPrompt } from './currentRouting.js'
 import { trustedWorkNoticePrompt } from './workHandoffNotice.js'
 import { repeatTickIndex } from './repeatResolution.js'
 import { workflowCoordinationPrompt } from './workflowCoordinationPrompt.js'
-import { isCoordinatorRole, workflowTeamPrompt, type WorkflowTeam } from './workflowTeamPrompt.js'
+import { teamKanbanWriter, isCoordinatorRole, workflowTeamPrompt, type WorkflowTeam } from './workflowTeamPrompt.js'
 
 function every(seconds: number | undefined): string {
   if (!seconds) return 'on an interval'
@@ -97,7 +97,7 @@ export function workflowExecutionPromptContext(input: WorkflowExecutionRequestIn
     'requestId may be omitted when replying to the single open request you received. If supplied, copy it verbatim.',
   ].join('\n') : undefined
   const coordination = resultProtocol ? workflowCoordinationPrompt({ resultProtocol, definition: version.definition,
-    workflowNodeId: node.id, interval: tickIndex !== undefined }) : undefined
+    workflowNodeId: node.id, interval: tickIndex !== undefined }, teamKanbanWriter(team, node.id)) : undefined
   const direction = workInput?.work.kind === 'hierarchy_direction' ? [
     'This is the existing Run’s held Master continuation after Waiting for direction.',
     `Previous result: ${workInput.work.direction.sourceExecutionId}, digest ${workInput.work.direction.sourceResultDigest}.`,

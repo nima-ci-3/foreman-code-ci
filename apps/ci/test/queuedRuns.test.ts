@@ -14,16 +14,16 @@ function gate(id: string, groupId: string, state: CiRunRecord['state'] = 'queued
   })
 }
 
-it('checks failures only for live gate groups without hydrating historical failed records', async () => {
-  const doomed = gate('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222')
-  const ready = gate('33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444')
-  const query = vi.fn()
-    .mockResolvedValueOnce({ rows: [doomed, ready].map(record => ({ record, created_at: new Date(record.queuedAt) })) })
-    .mockResolvedValueOnce({ rows: [{ group_id: doomed.groupId }] })
+it('keeps the earlier gate first and its hosts reserved after one of its parts fails', async () => {
+  const failing = gate('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222')
+  const failedPart = { ...failing, id: '55555555-5555-4555-8555-555555555555', state: 'failed' as const }
+  const later = gate('33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444')
+  later.queuedAt = '2026-10-15T00:00:05.000Z'
+  const query = vi.fn().mockResolvedValueOnce({ rows: [failing, failedPart, later]
+    .map(record => ({ record, created_at: new Date(record.queuedAt) })) })
   const result = await readCiGateReservation({ query } as unknown as pg.Pool)
-  expect(result.gate).toEqual(ready)
+  expect(result.gate).toEqual(failing)
   expect([...result.reservedHosts]).toEqual(['fixture-executor'])
-  expect(query.mock.calls[1]?.[1]).toEqual([[doomed.groupId, ready.groupId]])
 })
 
 it('does not query failed gate history when no live gates remain', async () => {
