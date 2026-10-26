@@ -45,14 +45,25 @@ export function installProcessLifecycleLogging(log: Logger, exit: (code: number)
 /**
  * Ends the process once a signal's shutdown has finished. Shutdown drains requests, runtime steps and the
  * database first; a handle still open after that must not keep a closed API alive until systemd kills it.
+ * A shutdown still running at the deadline names what it waits for, flushed so the line survives, then exits
+ * before systemd's own kill would discard the evidence.
  */
 export async function exitAfterShutdown(close: () => Promise<void>, log: Logger,
-  exit: (code: number) => void = (code) => process.exit(code)) {
+  exit: (code: number) => void = (code) => process.exit(code),
+  { deadlineMs = 20_000, pending = () => ({}) }: { deadlineMs?: number; pending?: () => object } = {}) {
   let code = 0
-  try { await close() } catch (error) {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<'deadline'>(resolve => { timer = setTimeout(() => resolve('deadline'), deadlineMs) })
+  try {
+    if (await Promise.race([close().then(() => 'closed' as const), deadline]) === 'deadline') {
+      log.error({ deadlineMs, ...pending() }, 'shutdown deadline reached')
+      flushLogsSync()
+      code = 1
+    }
+  } catch (error) {
     log.error({ err: error }, 'shutdown failed')
     code = 1
-  }
+  } finally { clearTimeout(timer) }
   const handles = process.getActiveResourcesInfo().filter(kind => kind !== 'TTYWrap')
   if (handles.length) log.warn({ handles }, 'handles still open after shutdown')
   exit(code)

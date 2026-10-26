@@ -103,7 +103,8 @@ async function main() {
     closing ??= app.close()
     return closing
   }
-  const onSignal = () => { void exitAfterShutdown(close, lifecycle) }
+  const onSignal = () => { void exitAfterShutdown(close, lifecycle, undefined, {
+    pending: () => ({ requests: inFlight.describe().slice(0, 20), requestCount: inFlight.size(), steps: shutdownPending() }) }) }
   // Recovery can run native work. Signals must own cleanup before listening or
   // any initialization await, including partially initialized infrastructure.
   process.once('SIGINT', onSignal)

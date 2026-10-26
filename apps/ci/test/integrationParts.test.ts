@@ -241,3 +241,10 @@ it('keeps an affected selection with both tiers within the eligible slots', () =
   const fast = slices.filter((_, index) => parts[index]!.partition!.tier === 'fast')
   expect(fast.flat().some(file => slow.includes(file))).toBe(false)
 })
+
+it('sends the test-database startup file only to executors that provide Docker Compose', () => {
+  const startup = 'apps/api/test/test-database-startup.integration.test.ts'
+  const affected = { ...input, scope: 'affected' as const, files: [startup] }
+  expect(planIntegrationParts(affected, { files: [...files, startup], durations }, { host: 0, ordinary: 44 }))
+    .toMatchObject([{ files: [startup], requiresBuildComputer: true }])
+})

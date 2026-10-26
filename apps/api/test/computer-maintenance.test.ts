@@ -74,6 +74,24 @@ function ports(overrides: { versions?: Record<string, string | null>; sudo?: boo
   }
   return { value, runs, later, versions, written, codexMcp, plugins }
 }
+
+it('checks the actual browser only on request and reports its result', async () => {
+  const fake = ports()
+  let checks = 0
+  let reason: string | null = 'Browser sandbox needs the Foreman AppArmor profile. Run: sudo apparmor_parser -r profile'
+  const browserStatus = { computerId: 'main', ready: true, phase: 'ready', reason: null }
+  fake.value.browserRuntime = { status: () => browserStatus, retry: async () => browserStatus,
+    probe: async () => { checks++; return { ready: reason === null, reason } } }
+  const maintenance = new ComputerMaintenance(fake.value)
+  expect((await maintenance.status(AbortSignal.timeout(1000))).browserProbe).toBeUndefined()
+  expect(checks).toBe(0)
+  expect((await maintenance.status(AbortSignal.timeout(1000), { browserProbe: true })).browserProbe)
+    .toEqual({ ready: false, reason })
+  reason = null
+  expect((await maintenance.status(AbortSignal.timeout(1000), { browserProbe: true })).browserProbe)
+    .toEqual({ ready: true, reason: null })
+  expect(checks).toBe(2)
+})
 async function settle(maintenance: ComputerMaintenance) {
   for (let attempt = 0; attempt < 50; attempt++) {
     const status = await maintenance.status(AbortSignal.timeout(1000))

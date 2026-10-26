@@ -1,8 +1,10 @@
 import { exclusiveIntegrationFiles, requirements, userSystemdIntegrationFiles } from './integrationScheduling.mjs'
 
-/** @param {string} file */
+/** Files that must run on a build computer or a cloud executor with user systemd. Those executors also provide
+ * Docker Compose, which the test-database startup file needs; GitHub Actions slots have neither.
+ * @param {string} file */
 export function requiresUserSystemd(file) {
-  return userSystemdIntegrationFiles.has(file)
+  return userSystemdIntegrationFiles.has(file) || requirements.get(file)?.includes('testDatabaseStartup') === true
 }
 
 /** Place user-systemd files first, then balance remaining durations by computer speed.

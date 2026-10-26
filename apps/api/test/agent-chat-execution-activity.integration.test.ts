@@ -12,6 +12,7 @@ import {
   CURRENT_WORKFLOW_ROUTES, CURRENT_WORKFLOW_TOOLS, CurrentWorkflowReadResultSchema,
 } from '@foreman-code/contracts/current'
 import { buildApp } from '../src/app.js'
+import { buildHarnessPrompt } from '../src/modules/harnesses/prompt.js'
 import type { OperatorServices } from '../src/mcp/operator/types.js'
 import { AgentChatService } from '../src/modules/conversations/agentChat.js'
 import { PostgresAgentChatRepository } from '../src/modules/conversations/agentChatRepository.js'
@@ -78,9 +79,10 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
     }
   })
 
-  async function setup(harness?: ClaudeHarnessConfiguration) {
+  async function setup(harness?: ClaudeHarnessConfiguration, options: { initialPrompt?: string } = {}) {
     const graph = await graphFixture(database, {
       form: 'single',
+      ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       ...(harness ? { harness } : { intervalEverySeconds: 10 }),
     })
     const node = agentWorkflowNode(graph.version.definition.nodes[0])
@@ -272,6 +274,45 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
       },
     }
   }
+
+  // Hand-off openings are covered through openingMessage; these run the real admitted entry path.
+  it.each(['initial', 'missing'] as const)(
+    'shows only authored opening text for %s through the public chat read', async kind => {
+      const initialPrompt = 'Please keep INITIAL USER PROMPT and ACCEPTED INPUT FROM THE WORKFLOW in the report.'
+      const input = { private: 'raw workflow input' }
+      const fixture = await setup(undefined, kind === 'missing' ? {} : { initialPrompt })
+      try {
+        const prompt = buildHarnessPrompt({ configuration: fixture.graph.f.configurations[0]!,
+          initialPrompt: `${initialPrompt}\nInternal result contract, team, browser and Kanban instructions`,
+          input })
+        await fixture.append([
+          { type: 'item.started', payload: { item: { id: 'opening', type: 'userMessage', content: [{ type: 'text', text: prompt }] } } },
+          { type: 'item.completed', payload: { item: { id: 'opening', type: 'userMessage', content: [{ type: 'text', text: prompt }] } } },
+          { type: 'item.completed', payload: { item: { id: 'answer', type: 'agentMessage', text: 'Working on it' } } },
+          { type: 'item.completed', payload: { item: { id: 'followup', type: 'userMessage', content: [{ type: 'text', text: 'Keep this follow-up unchanged' }] } } },
+        ])
+        const expected = kind === 'missing' ? undefined : initialPrompt
+        for (const request of [{}, { limit: 1 }, { executionId: fixture.executionId },
+          { executionId: fixture.executionId, itemId: 'opening' }, { executionId: fixture.executionId, before: '3' }]) {
+          const page = await fixture.http(request)
+          expect(await fixture.mcpPage(request)).toEqual(page)
+          const opening = page.items.find(item => item.id === 'opening')
+          if (expected === undefined) expect(opening).toBeUndefined()
+          if (opening) expect(opening.entry).toEqual({ kind: 'message', message: expect.objectContaining({
+            role: 'user', content: expected,
+          }) })
+          if (opening?.entry.kind === 'message') expect(opening.entry.message.truncation).toBeUndefined()
+          expect(JSON.stringify(page)).not.toContain('Internal result contract')
+          expect(JSON.stringify(page)).not.toContain('raw workflow input')
+        }
+        const page = await fixture.mcpPage()
+        const opening = page.items.find(item => item.id === 'opening')
+        if (expected === undefined) expect(opening).toBeUndefined()
+        else expect(opening?.entry).toMatchObject({ message: { content: expected } })
+        expect(page.items.find(item => item.id === 'followup')?.entry).toMatchObject({ message: { content: 'Keep this follow-up unchanged' } })
+      } finally { await fixture.close() }
+    },
+  )
 
   it('keeps retained execution history consistent with canonical graph readback', async () => {
     const fixture = await setup()

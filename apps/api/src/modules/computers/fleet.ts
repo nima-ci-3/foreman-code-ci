@@ -5,6 +5,7 @@ import { componentLogger } from '../diagnostics/index.js'
 import { failedReadObservation, successfulReadObservation } from '../diagnostics/index.js'
 import type pg from 'pg'
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { APP_MCP_SERVER_NAMES } from '@foreman-code/contracts/product'
 import {
   COMPUTER_MAINTENANCE_NAMESPACE, WORKER_UPDATE_NAMESPACE, ComputerMaintenanceListSchema, ComputerMaintenanceReadInputSchema,
@@ -15,6 +16,7 @@ import {
   type WorkerReleasePublication,
   type WorkerBundleReadiness,
   type SyncedPlugin,
+  type RepositoryProbeInput,
 } from '@foreman-code/contracts/computer-maintenance'
 import { DeviceRegistrationSchema } from '@foreman-code/contracts/device-identity'
 import { sameDeviceProvisioningTarget, type DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
@@ -23,6 +25,7 @@ import { requireAuthorization } from '../access/policy.js'
 import { readLiveManagementPrincipal } from '../access/liveManagementPrincipal.js'
 import type { PostgresCommandCoordinator } from '../commands/index.js'
 import { DomainError } from '../errors.js'
+import { HarnessInstanceSettingsRepository } from '../harnesses/index.js'
 import type { ClaudePluginCatalog } from './claudePlugins.js'
 import type { ComputerMaintenance } from './maintenance.js'
 import { syncFingerprint } from './syncFingerprint.js'
@@ -46,6 +49,8 @@ export interface FleetSources {
   workerPublication?(): Promise<WorkerReleasePublication>
   /** Sign-in and Foreman Code MCP facts for one computer, read with the caller's own authority. */
   connections?(principal: ManagementPrincipal, target: DeviceProvisioningTarget): Promise<ComputerConnections>
+  /** Recheck and repair app-managed requirements on this computer. */
+  runRequirementsRepair?(target: DeviceProvisioningTarget): Promise<void>
 }
 
 interface WorkerArtifactIdentities {
@@ -193,18 +198,35 @@ export class FleetMaintenanceService {
 
   async readTarget(principal: ManagementPrincipal, source: 'http' | 'mcp', raw: unknown): Promise<ComputerMaintenanceList> {
     const input = ComputerMaintenanceReadInputSchema.parse(raw)
-    try { requireAuthorization(principal, 'settings:read') } catch (error) {
+    try {
+      requireAuthorization(principal, 'settings:read')
+      if (input.claudeProfileProbe) requireAuthorization(principal, 'harnesses:read')
+    } catch (error) {
       await this.commands.recordDenied(principal.id, source, 'computers_maintenance_status', this.mainId)
       throw error
     }
     const sql = await this.pool.connect()
+    let claudeProfileProbe: { profileDirectory: string } | undefined
     try {
-      requireAuthorization(await readLiveManagementPrincipal(sql, principal.id), 'settings:read')
+      const live = await readLiveManagementPrincipal(sql, principal.id)
+      requireAuthorization(live, 'settings:read')
       await assertComputerTarget(sql, this.mainId, input.target)
+      if (input.claudeProfileProbe) {
+        requireAuthorization(live, 'harnesses:read')
+        const profile = await new HarnessInstanceSettingsRepository(this.pool).latest(sql, input.claudeProfileProbe.instanceId)
+        if (!profile || !profile.enabled || profile.driverId !== 'claude' || profile.configuration.harness !== 'claude'
+          || profile.configuration.authMode !== 'subscription' || profile.instanceRevision !== input.claudeProfileProbe.instanceRevision
+          || profile.target.applicationInstallationId !== input.target.applicationInstallationId
+          || !isDeepStrictEqual(profile.target.hostRef, input.target.hostRef)) {
+          throw new DomainError('HARNESS_PROFILE_SELECTION_CONFLICT', 'The selected Claude profile does not match this computer.', 409)
+        }
+        claudeProfileProbe = { profileDirectory: profile.configuration.configDirectory }
+      }
     } finally { sql.release() }
     const workerPublication = await this.sources.workerPublication?.()
     return ComputerMaintenanceListSchema.parse({
-      computers: [{ target: input.target, ...await this.observeComputer(input.target, input.refresh === true),
+      computers: [{ target: input.target, ...await this.observeComputer(input.target, input.refresh === true,
+        input.browserProbe === true, input.repositoryProbe, claudeProfileProbe),
         ...(workerPublication ? { workerPublication } : {}), ...await this.connections(principal, input.target) }],
     })
   }
@@ -244,28 +266,34 @@ export class FleetMaintenanceService {
 
   private async keepCurrentNow(): Promise<void> {
     const targets = await this.allTargets()
-    const artifacts = await this.workerArtifacts()
-    const sync = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
-    await Promise.all(targets.map(async target => {
-      const status = await this.status(target, true)
-      if (!status) return
-      const behind = status.harnesses.filter(entry => entry.latest && entry.version !== entry.latest).map(entry => entry.harness)
-      if (behind.length) await this.startOn(target, { kind: 'update-harnesses', harnesses: behind })
-        .catch(ignoreError('lifecycle', 'start harness update on computer', { host: target.hostRef, nextRetryMs: 60_000 }))
-      if (target.hostRef.kind === 'main') return
-      await this.syncWorkerUpdate(target, status, artifacts)
-      for (const task of sync) {
-        if (task.status === 'fulfilled') await this.syncSource(target, task.value, status)
-      }
-    }))
-    const failures = sync.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
-    if (failures.length) throw new AggregateError(failures, 'Some fleet settings could not be read.')
+    const pendingRequirements = this.repairRequirements(targets)
+    try {
+      const artifacts = await this.workerArtifacts()
+      const sync = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
+      await Promise.all(targets.map(async target => {
+        const status = await this.status(target, true)
+        if (!status) return
+        const behind = status.harnesses.filter(entry => entry.latest && entry.version !== entry.latest).map(entry => entry.harness)
+        if (behind.length) await this.startOn(target, { kind: 'update-harnesses', harnesses: behind })
+          .catch(ignoreError('lifecycle', 'start harness update on computer', { host: target.hostRef, nextRetryMs: 60_000 }))
+        if (target.hostRef.kind === 'main') return
+        await this.syncWorkerUpdate(target, status, artifacts)
+        for (const task of sync) {
+          if (task.status === 'fulfilled') await this.syncSource(target, task.value, status)
+        }
+      }))
+      const requirements = await pendingRequirements
+      const failures = sync.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
+      if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
+      if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+    } finally { await pendingRequirements }
   }
 
   private readonly deliveries = new Map<string, {
     fingerprint: string; taskId: string; state: 'pending' | 'failed' | 'delivered'; retryAt: number
   }>()
   private readonly syncing = new Map<string, Promise<void>>()
+  private readonly requirementsRetry = new Map<string, number>()
   private readonly workerUpdates = new Map<string, {
     manifests: string; commandId: string; pending: boolean; retryAt: number
   }>()
@@ -279,18 +307,42 @@ export class FleetMaintenanceService {
   }
 
   private async syncChangedSourcesNow(): Promise<void> {
-    const sources = await Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
-    const targets = (await this.allTargets()).filter(target => target.hostRef.kind !== 'main')
-    const artifacts = await this.workerArtifacts()
-    await Promise.all(targets.map(async target => {
-      const status = await this.status(target, true)
-      await this.syncWorkerUpdate(target, status, artifacts)
-      await Promise.all(sources.map(async source => {
-        if (source.status === 'fulfilled') await this.syncSource(target, source.value, status)
+    const pendingSources = Promise.allSettled([this.taskFor({ kind: 'sync-mcp' }), this.taskFor({ kind: 'sync-plugins' })])
+    const allTargets = await this.allTargets()
+    const pendingRequirements = this.repairRequirements(allTargets)
+    try {
+      const sources = await pendingSources
+      const targets = allTargets.filter(target => target.hostRef.kind !== 'main')
+      const artifacts = await this.workerArtifacts()
+      await Promise.all(targets.map(async target => {
+        const status = await this.status(target, true)
+        await this.syncWorkerUpdate(target, status, artifacts)
+        await Promise.all(sources.map(async source => {
+          if (source.status === 'fulfilled') await this.syncSource(target, source.value, status)
+        }))
       }))
+      const requirements = await pendingRequirements
+      const failures = sources.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
+      if (failures.length) throw new AggregateError([...failures, ...requirements], 'Some fleet settings could not be read.')
+      if (requirements.length) throw new AggregateError(requirements, 'Some computer requirements could not be repaired.')
+    } finally { await pendingRequirements }
+  }
+
+  private async repairRequirements(targets: DeviceProvisioningTarget[]): Promise<unknown[]> {
+    if (!this.sources.runRequirementsRepair) return []
+    const repair = this.sources.runRequirementsRepair
+    const results = await Promise.allSettled(targets.map(target => {
+      const key = `${this.key(target)}:requirements`
+      const running = this.syncing.get(key)
+      if (running) return running
+      if (this.closing || this.now() < (this.requirementsRetry.get(key) ?? 0)) return Promise.resolve()
+      this.requirementsRetry.set(key, this.now() + SYNC_RETRY_MS)
+      const task = Promise.resolve().then(() => repair(target)).finally(() => this.syncing.delete(key))
+      this.syncing.set(key, task)
+      return task
     }))
-    const failures = sources.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
-    if (failures.length) throw new AggregateError(failures, 'Some fleet settings could not be read.')
+    return results.flatMap((result, index) => result.status === 'rejected'
+      ? [new Error(`Requirements repair failed for computer ${targets[index]!.applicationInstallationId}.`, { cause: result.reason })] : [])
   }
 
   private syncWorkerUpdate(target: DeviceProvisioningTarget, status: MaintenanceStatus | null,
@@ -528,8 +580,9 @@ export class FleetMaintenanceService {
     }
   }
 
-  private async observeComputer(target: DeviceProvisioningTarget, refresh: boolean) {
-    const observation = await this.observeStatus(target, refresh)
+  private async observeComputer(target: DeviceProvisioningTarget, refresh: boolean, browserProbe = false,
+    repositoryProbe?: RepositoryProbeInput, claudeProfileProbe?: { profileDirectory: string }) {
+    const observation = await this.observeStatus(target, refresh, browserProbe, repositoryProbe, claudeProfileProbe)
     const endpoint = this.endpoint()
     if (!observation.status || observation.observation.status !== 'available'
       || target.hostRef.kind !== 'device' || !endpoint?.workerBundleReadiness) return observation
@@ -543,17 +596,21 @@ export class FleetMaintenanceService {
     }
   }
 
-  private observeStatus(target: DeviceProvisioningTarget, refresh: boolean): Promise<MaintenanceObservation> {
+  private observeStatus(target: DeviceProvisioningTarget, refresh: boolean, browserProbe = false,
+    repositoryProbe?: RepositoryProbeInput, claudeProfileProbe?: { profileDirectory: string }): Promise<MaintenanceObservation> {
     const key = this.key(target)
     const cached = this.cache.get(key)
     // A running task's progress is read again within seconds; settled status is reused longer.
     const ttl = cached?.running ? RUNNING_CACHE_MS : CACHE_MS
-    if (cached && (cached.pending || (!refresh && cached.observation?.status === 'available'
+    if (!browserProbe && !repositoryProbe && !claudeProfileProbe && cached && (cached.pending || (!refresh && cached.observation?.status === 'available'
       && this.now() - cached.at < ttl))) return cached.value
     // A bounded shared observation survives one reader canceling so other readers can still use it.
     const read = (async () => {
-      if (target.hostRef.kind === 'main') return this.local.status(AbortSignal.timeout(90_000))
-      const reply = MaintenanceReplySchema.parse((await this.request(target.hostRef.deviceId, { operation: 'status' })).payload)
+      const probes = { ...(browserProbe ? { browserProbe: true } : {}), ...(repositoryProbe ? { repositoryProbe } : {}),
+        ...(claudeProfileProbe ? { claudeProfileProbe } : {}) }
+      if (target.hostRef.kind === 'main') return this.local.status(AbortSignal.timeout(90_000), probes)
+      const reply = MaintenanceReplySchema.parse((await this.request(target.hostRef.deviceId,
+        { operation: 'status', ...probes })).payload)
       if (reply.operation !== 'status') {
         throw new DomainError('COMPUTER_MAINTENANCE_INVALID', 'The computer returned an unexpected reply.', 502)
       }
