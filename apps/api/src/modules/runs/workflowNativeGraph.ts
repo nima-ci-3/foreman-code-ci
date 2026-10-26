@@ -7,7 +7,8 @@ import { currentRunGraphPublication } from '../run-graph/publication.js'
 import { appendNativeGraphEvent } from '../run-graph/nativeIngestion.js'
 import { nativeDisconnectObservation, normalizeNativeProducerEvent } from '../run-graph/nativeProducerNormalization.js'
 import { appendNormalizedNativeEvent, readPersistedNativeSequence } from './nativeEvents.js'
-import { readNativeGraphActivity, readNativeGraphCorrelation, type NativeGraphProjectionGuard } from '../run-graph/records.js'
+import { readNativeCheckpoint, readNativeGraphActivity, readNativeGraphCorrelation, type NativeGraphProjectionGuard } from '../run-graph/records.js'
+import { parseNativeCheckpoint } from '../run-graph/nativeCheckpoint.js'
 import { PostgresNativeGraphProjectionWriter } from '../run-graph/nativeWriter.js'
 import { DomainError } from '../errors.js'
 import { assertGraphTransaction } from '../run-graph/connection.js'
@@ -131,6 +132,34 @@ export async function appendWorkflowNativeGraphEventLocked(sql: SqlTransaction, 
         connectionGeneration: String(currentLane?.record.connectionGeneration ?? 0), ownership: held ? 'held' : 'lost',
         access: held ? 'project' : 'observe' }
     }) }
+    if (lease.providerId && turnCorrelation !== `execution:${execution.id}`) {
+      const checkpoint = await readNativeCheckpoint(sql, scope, key)
+      const previousTurn = checkpoint && parseNativeCheckpoint(checkpoint.checkpoint).boundTurnId
+      if (previousTurn && previousTurn !== lease.providerId) {
+        const repair = await sql.query(`select 1 from execution_work_result_repairs rejected
+          where rejected.execution_id=$1 and rejected.rejected_provider_id=$2
+            and exists(select 1 from execution_work_result_repairs current
+              where current.execution_id=rejected.execution_id and current.attempt>=rejected.attempt
+                and $3='execution:' || current.execution_id || ':result-repair:' || current.attempt::text)`,
+        [execution.id, previousTurn, turnCorrelation])
+        if (repair.rowCount !== 1) throw new DomainError('NATIVE_TURN_IDENTITY_CONFLICT',
+          'The current native turn has no reserved repair of the projected turn.', 409)
+        // A native terminal ends one submitted turn, not the still-open execution.
+        // Retain its correlation/history; rebuild only the current projection from
+        // the reserved turn's own evidence, including on recovery of existing Runs.
+        const batch = activeNativeBatch(sql)
+        if (batch) await flushNativeGraphRows(batch, ['correlation', 'activity', 'checkpoint'])
+        await sql.query(`update run_native_activity set terminal_native_sequence=null,
+          projection_revision=projection_revision+1
+          where run_id=$1 and execution_id=$2 and work_kind='workflow'`, [scope.runId, execution.id])
+        await sql.query(`delete from run_native_projection_checkpoints
+          where run_id=$1 and execution_id=$2 and work_kind='workflow'`, [scope.runId, execution.id])
+        if (batch) {
+          forgetNativeRow(batch, stagedNativeRecordId('activity', key))
+          forgetNativeRow(batch, stagedNativeRecordId('checkpoint', key))
+        }
+      }
+    }
     nativeCommitCheck(sql, `graph-lane:${lease.id}`, async () => {
       await renewWorkflowNativePublicationLease(sql, owner, lease.id)
       await owner.readOneShotFence(sql)

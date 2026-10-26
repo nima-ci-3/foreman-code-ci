@@ -199,7 +199,7 @@ export async function recoverInstalledWorkflowReply(input: {
     return { payload: pagePhysicalReadout(await input.physical.read(frame), frame.metadata) }
   }
   if (frame.method === 'physical-ack') {
-    const readout = frame.retire ? await input.physical.read(frame, input.signal) : undefined
+    const readout = frame.retire ? await input.physical.readForAcknowledgment(frame, input.signal) : undefined
     const terminalSource = frame.sourceDigest === remoteWorkflowSourceDigest({ type: 'boundary' })
       || readout?.history && frame.sourceDigest === remoteWorkflowSourceDigest({
         type: 'history', history: remoteWorkflowNativeHistory(readout.history),

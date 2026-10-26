@@ -1393,12 +1393,12 @@ class InstalledWorkflowHostRuntime {
           const status = await log.status(frame.intent.operationId)
           if (frame.retire && resident.physicalClosure
             && status.status === 'known' && status.receipt.terminal && status.receipt.sequence === frame.receiptSequence) {
-            const readout = await this.physical.read(frame, context.signal)
+            const readout = await this.physical.readForAcknowledgment(frame, context.signal)
             const terminalSource = frame.sourceDigest === remoteWorkflowSourceDigest({ type: 'boundary' })
-              || readout.history && frame.sourceDigest === remoteWorkflowSourceDigest({
+              || readout?.history && frame.sourceDigest === remoteWorkflowSourceDigest({
                 type: 'history', history: remoteWorkflowNativeHistory(readout.history),
               })
-            if (terminalSource) {
+            if (readout && terminalSource) {
               await log.retireSettled(frame.intent, frame.receiptSequence)
               const ack = await this.physical.ack(frame)
               await this.releaseSettled(frame.intent)

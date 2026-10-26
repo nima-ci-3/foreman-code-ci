@@ -422,6 +422,17 @@ export class InstalledWorkflowPhysicalReadouts {
       { cleanup: retained.cleanup, original: retained.selector })
     return readout
   }
+  /** ACK replays may name an already removed event alias or reply. Missing
+   * bytes are not closure evidence; other physical verification failures stay errors. */
+  async readForAcknowledgment(input: PhysicalReadoutSelector,
+    signal?: AbortSignal): Promise<RemoteWorkflowPhysicalReadout | undefined> {
+    try { return await this.read(input, signal) }
+    catch (error) {
+      if (error instanceof DomainError && error.code === 'REMOTE_NATIVE_PHYSICAL_UNAVAILABLE'
+        && error.details?.reason === 'not_retained') return undefined
+      throw error
+    }
+  }
   /** An exact original reply selector retires its derived event indexes too.
    * Main sends this only after their durable canonical publication; this class
    * never writes an execution/journal outcome or treats an ACK as success. */
