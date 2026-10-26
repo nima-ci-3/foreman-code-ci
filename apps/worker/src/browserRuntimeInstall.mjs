@@ -524,14 +524,13 @@ export async function provisionBrowserVirtualDisplay({ signal } = {}) {
 }
 
 /** Installation-only readiness uses temporary managed data and the normal Chromium sandbox. */
-export async function checkBrowserRuntimeReadiness(descriptor, { signal, installDisplay = true, probeDisplay = false } = {}) {
-  const virtualDisplay = installDisplay ? await provisionBrowserVirtualDisplay({ signal }) : await findBrowserVirtualDisplay();
-  if (process.platform === 'linux' && !virtualDisplay) throw new Error('Agent browsers on Linux need Xvfb. Install it with: sudo apt-get install xvfb');
+export async function checkBrowserRuntimeReadiness(descriptor, { signal } = {}) {
+  await provisionBrowserVirtualDisplay({ signal });
   const manifest = JSON.parse(await readFile(join(descriptor.rootDirectory, 'manifest.json'), 'utf8'));
   const workspace = join(descriptor.rootDirectory, 'empty-workspace');
   await privateDirectory(workspace, true);
   invariant((await readdir(workspace)).length === 0, 'Harness workspace must remain empty');
-  const script = `import importlib.metadata as m,json,os,pathlib,select,shutil,signal,subprocess,sys,tempfile,time,urllib.request,urllib.parse
+  const script = `import importlib.metadata as m,json,os,pathlib,shutil,subprocess,sys,tempfile,time,urllib.request,urllib.parse
 assert not list(pathlib.Path(os.environ['BH_AGENT_WORKSPACE']).iterdir())
 import browser_use, browser_harness.helpers
 from websockets.sync.client import connect
@@ -541,27 +540,8 @@ assert m.version('browser-use') == configuration['browserUseVersion']
 assert m.version('browser-harness') == configuration['browserHarnessVersion']
 directory=tempfile.mkdtemp(prefix='foreman-browser-ready-')
 child=None
-display=None
-def stop(signum,frame): raise SystemExit(128+signum)
-signal.signal(signal.SIGTERM,stop)
 try:
- environment=os.environ.copy()
- args=[configuration['chromiumExecutable']]
- if configuration.get('virtualDisplay'):
-  readfd,writefd=os.pipe()
-  try:
-   display=subprocess.Popen([configuration['virtualDisplay'],'-displayfd',str(writefd),'-screen','0','1440x900x24','-nolisten','tcp'],pass_fds=(writefd,),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-  finally: os.close(writefd)
-  try:
-   if not select.select([readfd],[],[],10)[0]: raise RuntimeError('Xvfb did not report a display in time')
-   number=os.read(readfd,128).decode().strip()
-   if not number.isdecimal(): raise RuntimeError('Xvfb did not start a display')
-  finally: os.close(readfd)
-  environment['DISPLAY']=':'+number
-  environment.pop('WAYLAND_DISPLAY',None)
-  args+=['--ozone-platform=x11','--window-size=1440,900']
- else: args+=['--headless=new']
- child=subprocess.Popen(args+['--remote-debugging-address=127.0.0.1','--remote-debugging-port=0','--user-data-dir='+directory,'--no-first-run','--disable-background-networking','--disable-component-update','data:text/html,<title>Foreman Browser Ready</title>'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,env=environment)
+ child=subprocess.Popen([configuration['chromiumExecutable'],'--headless=new','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0','--user-data-dir='+directory,'--no-first-run','--disable-background-networking','--disable-component-update','data:text/html,<title>Foreman Browser Ready</title>'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
  port_file=pathlib.Path(directory)/'DevToolsActivePort'
  deadline=time.monotonic()+30
  while not port_file.exists():
@@ -596,10 +576,6 @@ finally:
   child.terminate()
   try: child.wait(timeout=5)
   except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
- if display is not None and display.poll() is None:
-  display.terminate()
-  try: display.wait(timeout=5)
-  except subprocess.TimeoutExpired: display.kill(); display.wait(timeout=5)
  shutil.rmtree(directory)
 `;
   const home = await mkdtemp(join(dirname(descriptor.rootDirectory), '.browser-readiness-'));
@@ -609,7 +585,7 @@ finally:
     const { stdout } = await execute(descriptor.pythonExecutable, ['-I', '-B', '-c', script,
       JSON.stringify({ pythonVersion: manifest.pythonVersion, browserUseVersion: manifest.browserUseVersion,
         browserHarnessVersion: manifest.browserHarnessVersion, chromiumVersion: manifest.chromiumVersion,
-        chromiumExecutable: descriptor.chromiumExecutable, ...(probeDisplay && virtualDisplay ? { virtualDisplay } : {}) })],
+        chromiumExecutable: descriptor.chromiumExecutable })],
     { timeout: 60000, maxBuffer: 65536, signal, cwd: workspace,
       env: { PATH: `${join(descriptor.rootDirectory, 'python', 'bin')}:/usr/bin:/bin`, LANG: 'C.UTF-8',
         HOME: home, BH_AGENT_WORKSPACE: workspace,
@@ -622,23 +598,6 @@ finally:
   } finally {
     try { await removeBrowserRuntimeDirectory(runtimeDirectory); }
     finally { await rm(home, { recursive: true, force: true }); }
-  }
-}
-
-/** Check the installed sandbox and virtual display without touching a browser profile or installing packages. */
-export async function probeBrowserRuntime(descriptor, { signal, releaseDirectory } = {}) {
-  try {
-    await checkBrowserRuntimeReadiness(descriptor, { signal, installDisplay: false, probeDisplay: true });
-    return { ready: true, reason: null };
-  } catch (error) {
-    signal?.throwIfAborted();
-    const detail = String(error.stderr || error.message || error);
-    if (/No usable sandbox!/.test(detail) && releaseDirectory) {
-      const profile = join(releaseDirectory, 'runtime/browser/apparmor/foreman-browser-runtime').replaceAll("'", "'\\''");
-      return { ready: false, reason: 'Browser sandbox needs the Foreman AppArmor user-namespace profile. Run:\n'
-        + `sudo install -m 0644 '${profile}' /etc/apparmor.d/foreman-browser-runtime && sudo apparmor_parser -r /etc/apparmor.d/foreman-browser-runtime` };
-    }
-    return { ready: false, reason: detail.slice(-2000) };
   }
 }
 

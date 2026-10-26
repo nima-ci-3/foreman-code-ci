@@ -29,7 +29,6 @@ export interface MaintenancePorts {
   browserRuntime?: {
     status(): NonNullable<MaintenanceStatus['browserRuntime']>
     retry(): Promise<NonNullable<MaintenanceStatus['browserRuntime']>>
-    probe?(signal: AbortSignal): Promise<NonNullable<MaintenanceStatus['browserProbe']>>
   }
   workerUpdate?: {
     status(): Promise<WorkerUpdateStatus>

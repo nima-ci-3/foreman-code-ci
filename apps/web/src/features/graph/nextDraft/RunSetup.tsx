@@ -1,130 +1,71 @@
 import { useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { RunRequirementsInputSchema, RunRequirementsResultSchema,
-  type RunRequirementsInput, type RunRequirementsResult } from '@foreman-code/contracts/computer-maintenance'
-import type { Agent } from '@foreman-code/contracts'
+import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
+import type { DeviceProvisioningTarget } from '@foreman-code/contracts/device-resources'
 import { sameWorkflowValue } from '@foreman-code/contracts/current'
-import { apiClient } from '../../../shared/api/client'
+import { applyManagedMcp, harnessSettingsKeys, readMcpList } from '../../../shared/api/harnessSettings'
 import { useComputerName } from '../../../shared/api/computerActivity'
-import { harnessSettingsKeys } from '../../../shared/api/harnessSettings'
 import { Button, Dialog } from '../../../shared/ui/nocturne'
 import { agentNodeFacts, type NextDraftEdit } from '../../board-core'
 
+type HostRef = DeviceProvisioningTarget['hostRef']
+type Need = { harness: 'codex' | 'claude'; hostRef?: HostRef; enable: boolean; label: string }
 type Graph = NextDraftEdit['context']['draft']['graph']
-type Agents = readonly (Parameters<typeof agentNodeFacts>[0] & Pick<Agent, 'id' | 'harnessProfileSelection'>)[]
-type Requirement = { input: RunRequirementsInput; result: RunRequirementsResult }
+type Agents = readonly (Parameters<typeof agentNodeFacts>[0] & { id: string })[]
 
-function requirementsFor(graph: Graph, agents: Agents): RunRequirementsInput[] {
-  const targets: RunRequirementsInput[] = []
-  for (const node of graph.nodes) {
-    if (node.kind === 'job') {
-      let jobs = targets.find(target => target.harness === 'job' && (target.jobDefinitions.length < 100
-        || target.jobDefinitions.some(job => job.id === node.jobDefinitionId && job.revision === node.jobDefinitionRevision)))
-      if (!jobs) {
-        jobs = { workspaceId: graph.workspaceId, harness: 'job', agentIds: [], browserProfiles: [], jobDefinitions: [], action: 'check' }
-        targets.push(jobs)
-      }
-      if (!jobs.jobDefinitions.some(job => job.id === node.jobDefinitionId && job.revision === node.jobDefinitionRevision)) {
-        jobs.jobDefinitions.push({ id: node.jobDefinitionId, revision: node.jobDefinitionRevision })
-      }
-      continue
-    }
-    const agent = agents.find(candidate => candidate.id === node.agentId)
-    const harness = agent && agentNodeFacts(agent).harness
-    if (harness !== 'codex' && harness !== 'claude') throw new Error(`Choose a Codex or Claude harness for ${node.name ?? node.label ?? 'this Agent'} before running.`)
-    const hostRef = node.placement?.hostRef
-    const rootBinding = node.placement?.rootBinding ?? (!hostRef ? graph.defaultWorktree?.rootBinding : undefined)
-    const rootPolicyId = node.placement?.rootPolicyId
-    let target = targets.find(value => value.harness === harness
-      && sameWorkflowValue(value.hostRef, hostRef) && sameWorkflowValue(value.rootBinding, rootBinding) && value.rootPolicyId === rootPolicyId
-      && (value.agentIds.length < 100 || value.agentIds.includes(node.agentId))
-      && (!node.browser?.enabled || value.browserProfiles.length < 100 || value.browserProfiles.includes(node.browser.profileId ?? null))
-      && !value.agentConfigurations?.some(config => config.agentId === node.agentId
-        && (config.placementInstanceId !== node.placement?.instanceId
-          || config.placementInstanceRevision !== node.placement?.instanceRevision)))
-    if (!target) {
-      target = { workspaceId: graph.workspaceId, harness, ...(hostRef ? { hostRef } : {}),
-        ...(rootBinding ? { rootBinding } : {}), ...(rootPolicyId ? { rootPolicyId } : {}), agentIds: [], browserProfiles: [], jobDefinitions: [], action: 'check' }
-      targets.push(target)
-    }
-    if (!target.agentIds.includes(node.agentId)) target.agentIds.push(node.agentId)
-    if (agent?.harnessConfiguration && !target.agentConfigurations?.some(value => value.agentId === node.agentId)) {
-      target.agentConfigurations ??= []
-      target.agentConfigurations.push({ agentId: node.agentId, configuration: agent.harnessConfiguration,
-        ...(agent.harnessProfileSelection ? { selection: agent.harnessProfileSelection } : {}),
-        ...(node.placement ? { placementInstanceId: node.placement.instanceId,
-          placementInstanceRevision: node.placement.instanceRevision } : {}) })
-    }
-    if (node.browser?.enabled) {
-      const profile = node.browser.profileId ?? null
-      if (!target.browserProfiles.includes(profile)) target.browserProfiles.push(profile)
-    }
-  }
-  return targets
-}
-
-async function readRequirements(input: RunRequirementsInput): Promise<Requirement> {
-  try {
-    const result = await apiClient.request('/api/management/computers/run-requirements', RunRequirementsResultSchema,
-      { method: 'POST', body: RunRequirementsInputSchema.parse(input) })
-    return { input, result }
-  } catch (error) {
-    return { input, result: { target: null, items: [{ id: 'check-failed', state: 'unknown', fixable: false,
-      message: error instanceof Error ? error.message : 'The computer could not be checked.' }] } }
-  }
-}
-
-async function setUpRequirements(requirement: Requirement): Promise<Requirement> {
-  let current = requirement
-  const attempted = new Set<string>()
-  for (;;) {
-    const fixable = current.result.items.filter(item => item.state !== 'ready' && item.fixable).map(item => item.id).sort().join('\0')
-    if (!fixable) return readRequirements({ ...current.input, action: 'check' })
-    if (attempted.has(fixable)) return current
-    attempted.add(fixable)
-    current = await readRequirements({ ...current.input, action: 'fix' })
-  }
-}
-
+/** Before Run: find computers whose harness lacks Foreman Code MCP and offer to set them all up at once. */
 export function useRunSetup() {
   const client = useQueryClient()
   const computerName = useComputerName()
-  const [requirements, setRequirements] = useState<Requirement[]>()
+  const [needs, setNeeds] = useState<Need[]>()
   const [busy, setBusy] = useState(false)
-  const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string>()
   const pending = useRef<() => Promise<unknown>>(undefined)
-  const checkingRef = useRef(false)
 
   const guard = async (graph: Graph, agents: Agents, run: () => Promise<unknown>) => {
-    if (checkingRef.current) return
-    checkingRef.current = true
-    setChecking(true)
-    try {
-      const inputs = requirementsFor(graph, agents)
-      const checked = await Promise.all(inputs.map(readRequirements))
-      if (checked.every(({ result }) => result.items.every(item => item.state === 'ready'))) return await run()
-      pending.current = run
-      setError(undefined)
-      setRequirements(checked)
-    } finally {
-      checkingRef.current = false
-      setChecking(false)
+    const targets: Omit<Need, 'enable' | 'label'>[] = []
+    for (const node of graph.nodes) {
+      if (node.kind === 'job') continue
+      const agent = agents.find(candidate => candidate.id === node.agentId)
+      const harness = agent ? agentNodeFacts(agent).harness : undefined
+      if (harness !== 'codex' && harness !== 'claude') continue
+      const placed = node.placement?.hostRef
+      const hostRef = placed?.kind === 'device' ? placed : undefined
+      // Main's Claude receives Foreman Code MCP from the app itself.
+      if (!hostRef && harness === 'claude') continue
+      if (!targets.some(target => target.harness === harness && sameWorkflowValue(target.hostRef, hostRef))) {
+        targets.push({ harness, ...(hostRef ? { hostRef } : {}) })
+      }
     }
+    const found: Need[] = []
+    for (const target of targets) {
+      // An unreadable computer is left to Start, which reports it.
+      const status = (await readMcpList(target.harness, target.hostRef))?.presets?.[INSTALLATION_NAMES.mcp.server]
+      if (!status || status === 'installed' || status === 'inherited') continue
+      const computer = target.hostRef ? computerName({ hostRef: target.hostRef }) ?? 'a paired computer' : 'this computer'
+      found.push({ ...target, enable: status === 'disabled',
+        label: `Foreman Code MCP ${status === 'disabled' ? 'is turned off' : status === 'missing' ? 'isn’t set up' : 'is out of date'} for ${target.harness === 'codex' ? 'Codex' : 'Claude'} on ${computer}.` })
+    }
+    if (!found.length) return run()
+    pending.current = run
+    setError(undefined)
+    setNeeds(found)
   }
 
   const setUp = async () => {
-    if (!requirements) return
+    if (!needs) return
     setBusy(true)
     setError(undefined)
     try {
-      const checked = await Promise.all(requirements.map(setUpRequirements))
-      setRequirements(checked)
-      await client.invalidateQueries({ queryKey: harnessSettingsKeys.root })
-      if (checked.every(({ result }) => result.items.every(item => item.state === 'ready'))) {
-        await pending.current?.()
-        setRequirements(undefined)
+      for (const need of needs) {
+        const base = { harness: need.harness, preset: INSTALLATION_NAMES.mcp.server, commandId: crypto.randomUUID(),
+          ...(need.hostRef ? { hostRef: need.hostRef } : {}) }
+        const plan = await applyManagedMcp(need.enable ? { ...base, enabled: true } : { ...base, installed: true })
+        if (plan.status !== 'applied' && plan.status !== 'reconciled') throw new Error(plan.error ?? `Setup didn’t finish (${plan.status}).`)
       }
+      await client.invalidateQueries({ queryKey: harnessSettingsKeys.root })
+      setNeeds(undefined)
+      await pending.current?.()
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -132,28 +73,12 @@ export function useRunSetup() {
     }
   }
 
-  const groups = new Map<string, { title: string; items: { id: string; message: string }[] }>()
-  for (const { input, result } of requirements ?? []) {
-    const missing = result.items.filter(item => item.state !== 'ready')
-    if (!missing.length) continue
-    const host = result.target?.hostRef ?? input.hostRef
-    const key = input.harness === 'job' ? 'jobs' : host ? JSON.stringify(host) : input.rootBinding ? JSON.stringify(input.rootBinding) : 'main'
-    const title = input.harness === 'job' ? 'Build computers' : host ? computerName({ hostRef: host }) ?? 'Selected computer' : input.rootBinding ? 'Selected computer' : 'This computer'
-    const group = groups.get(key) ?? { title, items: [] }
-    for (const item of missing) {
-      const message = input.harness === 'job' ? item.message : `${input.harness === 'codex' ? 'Codex' : 'Claude'}: ${item.message}`
-      if (!group.items.some(existing => existing.message === message)) group.items.push({ id: `${input.harness}:${item.id}`, message })
-    }
-    groups.set(key, group)
-  }
-  const dialog = <Dialog open={!!requirements} onOpenChange={open => { if (!open && !busy) setRequirements(undefined) }} busy={busy} size="sm"
+  const dialog = <Dialog open={!!needs} onOpenChange={open => { if (!open && !busy) setNeeds(undefined) }} busy={busy} size="sm"
     title="Set up before running?"
-    footer={<div className="n-actions"><Button disabled={busy} onClick={() => setRequirements(undefined)}>Decline</Button>
+    footer={<div className="n-actions"><Button disabled={busy} onClick={() => setNeeds(undefined)}>Decline</Button>
       <Button variant="primary" loading={busy} onClick={() => void setUp()}>Set up and run</Button></div>}>
-    {requirements && !groups.size ? <p>Setup is complete.</p> : null}
-    {[...groups].map(([key, group]) => <div key={key}><strong>{group.title}</strong>
-      <ul>{group.items.map(item => <li key={`${item.id}:${item.message}`} style={{ whiteSpace: 'pre-wrap' }}>{item.message}</li>)}</ul></div>)}
+    <ul>{needs?.map(need => <li key={need.label}>{need.label}</li>)}</ul>
     {error ? <p className="n-field-error" role="alert">{error}</p> : null}
   </Dialog>
-  return { guard, dialog, checking }
+  return { guard, dialog }
 }

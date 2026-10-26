@@ -34,7 +34,7 @@ function repository(t) {
   return { root, cwd, env, commit: git(['-C', cwd, 'rev-parse', 'HEAD']) }
 }
 
-async function endpoint(t, audience, expectedWorkspace, hiddenCi = false) {
+async function endpoint(t, audience, expectedWorkspace) {
   const calls = []
   const server = createServer(async (request, response) => {
     let body = ''
@@ -48,17 +48,13 @@ async function endpoint(t, audience, expectedWorkspace, hiddenCi = false) {
         schema.properties.workspaceId = { type: 'string' }
         schema.required.push('workspaceId')
       }
-      result = hiddenCi ? { tools: [{ name: 'tool_schema', inputSchema: schema }] } : message.params.cursor === 'ci-page'
+      result = message.params.cursor === 'ci-page'
         ? { tools: [{ name: 'ci_run', inputSchema: schema }] }
         : { tools: [{ name: 'ci_get', inputSchema: schema }], nextCursor: 'ci-page' }
     }
     if (message.method === 'tools/call') {
       const { name, arguments: input } = message.params
-      if (name === 'tool_schema' && hiddenCi) {
-        assert.equal(input.name, 'ci_run')
-        result = { content: [{ type: 'text', text: JSON.stringify({ name: 'ci_run',
-          inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' } }, required: ['workspaceId'] } }) }] }
-      } else if (audience === 'operator' && name === 'workspace_list') {
+      if (audience === 'operator' && name === 'workspace_list') {
         result = { content: [{ type: 'text', text: JSON.stringify({ items: [{ workspace: { id: expectedWorkspace } }] }) }] }
       } else if (audience === 'operator' && name === 'workspace_get') {
         result = { content: [{ type: 'text', text: JSON.stringify({ workspace: { repository: { owner: 'example', name: 'project' } } }) }] }
@@ -163,20 +159,6 @@ test('Operator CLI keeps its explicit workspace for admission, waits and diagnos
   assert.deepEqual(tools.map(call => call.message.params.name), ['ci_run', 'ci_get', 'ci_logs_read', 'ci_get'])
   assert.ok(tools.every(call => call.message.params.arguments.workspaceId === 'chosen-workspace'))
   assert.ok(server.calls.every(call => call.authorization === 'Bearer operator-fixture'))
-})
-
-test('Operator CLI discovers CI when tools/list only exposes core and discovery tools', async t => {
-  const fixture = repository(t)
-  const server = await endpoint(t, 'operator', 'chosen-workspace', true)
-  const env = { ...fixture.env, CI: '', FOREMAN_CODE_CI_LOCAL: '', FOREMAN_CODE_MAIN_URL: server.url,
-    FOREMAN_CODE_OPERATOR_TOKEN: 'operator-fixture', FOREMAN_CODE_WORKSPACE_ID: 'chosen-workspace' }
-  delete env.FOREMAN_CODE_MCP_TOKEN
-  const result = await runCli(fixture.cwd, env)
-  assert.equal(result.code, 1, result.stderr)
-  assert.match(result.stderr, /unit FAILED/)
-  const tools = server.calls.filter(call => call.message.method === 'tools/call')
-  assert.deepEqual(tools.map(call => call.message.params.name), ['tool_schema', 'ci_run', 'ci_get', 'ci_logs_read', 'ci_get'])
-  assert.equal(tools[1].message.params.arguments.workspaceId, 'chosen-workspace')
 })
 
 for (const tokenName of ['FOREMAN_CODE_MCP_TOKEN']) {

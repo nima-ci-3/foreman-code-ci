@@ -13,7 +13,7 @@ export async function ensureAgentCard(tx: SqlTransaction, authority: MemoryBoard
   input: { subject: Extract<AgentSubject, { kind: 'execution' }>; work: LogicalWorkRef; title: string }, now: string): Promise<void> {
   assertGraphTransaction(tx)
   const { agent, execution } = input.subject
-  await authority.lifecycle(tx, agent, input.work, execution.executionId)
+  if (!await authority.lifecycle(tx, agent, input.work, execution.executionId)) return
   await lockIdentity(tx, `work:${workKey(input.work)}`)
   await lockIdentity(tx, `node:${nodeKey(agent)}`)
   const row = await ensureBoard(tx, { kind: 'workflow', workspaceId: agent.workspaceId, workflowId: agent.workflowId })
