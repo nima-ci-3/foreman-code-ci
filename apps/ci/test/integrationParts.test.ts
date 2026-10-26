@@ -224,3 +224,19 @@ it('splits a small selection across idle executors when parallel work outweighs 
   const single = planIntegrationParts(affected, { files: selected, durations: measured }, { host: 0, ordinary: 8 }, 1)
   expect(single).toHaveLength(1)
 })
+
+it('keeps an affected selection with both tiers within the eligible slots', () => {
+  const quick = Array.from({ length: 200 }, (_, index) => `apps/api/test/quick-${index}.integration.test.ts`)
+  const slow = Array.from({ length: 30 }, (_, index) => `apps/api/test/slow-${index}.integration.test.ts`)
+  const selected = [...quick, ...slow]
+  const measured = { ...Object.fromEntries(quick.map(file => [file, 20_000])),
+    ...Object.fromEntries(slow.map(file => [file, 90_000])) }
+  const parts = planIntegrationParts({ suite: 'integration', commandId: 'affected', scope: 'affected', files: selected },
+    { files: selected, durations: measured }, { host: 0, ordinary: 40 }, 40)
+
+  expect(parts.length).toBeLessThanOrEqual(40)
+  const slices = parts.map(part => integrationPartition(selected, measured, part.partition!))
+  expect(slices.flat().sort()).toEqual([...selected].sort())
+  const fast = slices.filter((_, index) => parts[index]!.partition!.tier === 'fast')
+  expect(fast.flat().some(file => slow.includes(file))).toBe(false)
+})

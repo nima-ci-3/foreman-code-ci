@@ -12,8 +12,9 @@ const SETUP_MS = 90_000
 export const SLOW_TEST_MS = 60_000
 
 /** Keep systemd files on capable slices and spread full-suite work across eligible slots by measured duration.
- * Slow files have separate parts that can start alongside fast parts. Idle ordinary slots split smaller work
- * in affected selections while each part still carries at least one setup time of tests. */
+ * Slow files have separate parts that can start alongside fast parts; together the tiers use at most the eligible
+ * slots. Idle ordinary slots split smaller work in affected selections while each part still carries at least one
+ * setup time of tests. */
 export function planIntegrationParts(input: CiRunInput, inventory: CiIntegrationInventory, slots: CiIntegrationSlots,
   idleOrdinary = 0) {
   const affected = (input.scope ?? 'affected') === 'affected' && input.files !== undefined
@@ -45,7 +46,8 @@ export function planIntegrationParts(input: CiRunInput, inventory: CiIntegration
     const workMs = tierFiles.reduce((sum, file) => sum + duration(file), 0)
     return { tierFiles, tier, hostCount, ordinary, count, workMs }
   })
-  if (full) {
+  {
+    // Tiers share the eligible slots: parts beyond them would wait for a second wave, each paying setup again.
     const limits = plans.map(plan => plan.count)
     for (const plan of plans) {
       plan.count = Math.min(plan.count, Number(plan.hostCount > 0) + Number(plan.ordinary.length > 0))
