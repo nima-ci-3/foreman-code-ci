@@ -26,7 +26,7 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
     : { harness: 'claude', model: 'default', authMode: 'subscription', configDirectory: options.apostrophePath ? "/tmp/claude's" : '/tmp/claude',
       permissionMode: 'default', sandbox: 'danger-full-access', tools: [], permissionRules: [], instructions: '', mcpServers: {} }
   const applyManaged = vi.fn(async () => { preset = 'installed'; return { status: 'applied' } })
-  const readMaintenance = vi.fn(async (_principal: unknown, _source: unknown, _input: unknown) => ({ computers: [{ target: selectedTarget, status: options.online === false ? null
+  const readMaintenance = vi.fn(async (...args: [unknown, unknown, unknown]) => { void args; return { computers: [{ target: selectedTarget, status: options.online === false ? null
     : { ...(options.repository ? { repositoryProbe: { ready: options.repositoryReady === true,
       reason: options.repositoryReady ? null : 'Repository unavailable.' } } : {}),
       ...(options.browserMissing ? { browserRuntime: { ready: browserReady, reason: browserReady ? null : 'Browser runtime missing.' },
@@ -34,7 +34,7 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
       ...(options.claudeDefault ? { claudeProfileProbe: {
         authenticated: options.selectedProfileSignedIn !== false, reason: null } } : {}) },
     ...(options.oldWorker ? { workerReadiness: { ready: false, code: 'WORKER_VERSION_SKEW' } } : {}),
-    observation: { status: options.online === false ? 'unavailable' : 'available' } }] }))
+    observation: { status: options.online === false ? 'unavailable' : 'available' } }] } })
   const startMaintenance = vi.fn(async () => { browserReady = true; return { computers: [{ task: { state: 'succeeded' } }] } })
   const nativeOptions = vi.fn(async () => ({ authenticated: true, models: [
     options.priorityCodex ? { id: configuration.model, reasoningEfforts: ['medium'], serviceTiers: ['priority'] }
@@ -50,7 +50,7 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
       ? [{ enabled: true, driverId: 'claude', configuration, qualification: 'qualified' }] : [] }),
       check: async () => ({ proof: { authenticated: true, qualified: true } }) },
     extensions: { native: { options: nativeOptions } },
-    agents: { get: async (_principal: unknown, _workspaceId: string, id: string) => ({ agent: { id, harnessConfiguration: configuration } }) },
+    agents: { get: async (...args: [unknown, string, string]) => ({ agent: { id: args[2], harnessConfiguration: configuration } }) },
     workspaces: { get: async () => ({ workspace: options.repository ? { repository: { owner: 'owner', name: 'public' } } : {},
       locationValidation: { status: 'ready' } }) },
   } as unknown as OperatorServices

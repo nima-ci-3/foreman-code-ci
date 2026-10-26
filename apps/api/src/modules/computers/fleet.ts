@@ -198,7 +198,10 @@ export class FleetMaintenanceService {
 
   async readTarget(principal: ManagementPrincipal, source: 'http' | 'mcp', raw: unknown): Promise<ComputerMaintenanceList> {
     const input = ComputerMaintenanceReadInputSchema.parse(raw)
-    try { requireAuthorization(principal, 'settings:read') } catch (error) {
+    try {
+      requireAuthorization(principal, 'settings:read')
+      if (input.claudeProfileProbe) requireAuthorization(principal, 'harnesses:read')
+    } catch (error) {
       await this.commands.recordDenied(principal.id, source, 'computers_maintenance_status', this.mainId)
       throw error
     }
