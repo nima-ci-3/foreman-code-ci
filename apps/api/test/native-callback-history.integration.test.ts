@@ -39,9 +39,9 @@ describe.skipIf(!postgresEnabled)('Workflow native callback history', () => {
         [f.f.run.id, sources.rows.map((row) => row.first_sequence)])
       const facts = batches.rows.flatMap((row) => (JSON.parse(row.payload) as { events: { fact: { type: string;
         state?: { lifecycle: string } } }[] }).events.map((event) => event.fact))
-      // The initial queued state is uncertain until the provider's explicit
-      // submission acknowledgement promotes this exact turn to running.
-      expect(facts.some((fact) => fact.type === 'node.state' && fact.state?.lifecycle === 'unknown')).toBe(true)
+      // Before the provider's explicit submission acknowledgement the turn shows as starting; the acknowledgement
+      // promotes this exact turn to running.
+      expect(facts.some((fact) => fact.type === 'node.state' && fact.state?.lifecycle === 'starting')).toBe(true)
       expect(facts.some((fact) => fact.type === 'node.state' && fact.state?.lifecycle === 'running')).toBe(true)
     } finally { await f.close() }
   }, 60000)
