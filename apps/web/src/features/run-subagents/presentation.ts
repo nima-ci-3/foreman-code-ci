@@ -1,6 +1,5 @@
 import type { RunSubagent, RunSubagentTool } from '@foreman-code/contracts/subagents'
 import type { Tone } from '../../shared/ui/nocturne'
-import { formatElapsed } from '../../shared/ui/timeFormatters'
 
 export const providerNames: Record<RunSubagent['provider'], string> = { codex: 'Codex', claude: 'Claude', opencode: 'Retired harness (OpenCode): read-only' }
 
@@ -40,12 +39,20 @@ export function formatClock(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+export function formatDuration(milliseconds: number) {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
 /** "Started 1:00 AM · ran 2m 4s" or "Started 1:00 AM · running for 40s". */
 export function subagentTiming(subagent: RunSubagent, now = Date.now()) {
   const started = subagent.startedAt ?? subagent.firstObservedAt
   const parts = [`Started ${formatClock(started)}`]
-  if (subagent.finishedAt) parts.push(`ran ${formatElapsed(Date.parse(subagent.finishedAt) - Date.parse(started))}`)
-  else if (['running', 'waiting', 'interrupting', 'pending'].includes(subagent.status)) parts.push(`${formatElapsed(now - Date.parse(started))} so far`)
+  if (subagent.finishedAt) parts.push(`ran ${formatDuration(Date.parse(subagent.finishedAt) - Date.parse(started))}`)
+  else if (['running', 'waiting', 'interrupting', 'pending'].includes(subagent.status)) parts.push(`${formatDuration(now - Date.parse(started))} so far`)
   return parts.join(' · ')
 }
 

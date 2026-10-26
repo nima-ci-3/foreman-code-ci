@@ -9,7 +9,6 @@ import { useWorkspaceNames } from './workspaceNames'
 import { CommandAttempt } from '../../shared/api/commandAttempt'
 import { useSkillAssignments } from './skillAssignments'
 import './skills.css'
-import { formatDateTime } from '../../shared/ui/timeFormatters'
 
 export function NewSkillPage({ workspaceId, onSaved, onCancel }: { workspaceId?: string | undefined; onSaved(result: SavedSkill): void; onCancel(): void }) {
   const { workspaces, options } = useWorkspaceNames()
@@ -41,11 +40,11 @@ function VersionHistory({ workspaceId, skillId, current }: { workspaceId: string
       : versions.isError ? <ErrorState title="Couldn't load versions." description="Try again in a moment." onRetry={() => void versions.refetch()} />
         : <ol className="skill-history-list">{versions.data.items.map((item) => <li key={item.version}>
           <span><strong>Version {item.version}</strong>{item.version === current ? <Badge tone="success">Current</Badge> : null}</span>
-          <span className="skill-history-meta">{item.name} · <time dateTime={item.createdAt}>{formatDateTime(item.createdAt)}</time></span>
+          <span className="skill-history-meta">{item.name} · <time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></span>
           <Button size="sm" variant="ghost" aria-label={`View version ${item.version}`} onClick={() => setOpen(item.version)}>View</Button>
         </li>)}</ol> : null}</div>
     <Dialog open={Boolean(open)} onOpenChange={(value) => { if (!value) setOpen(undefined) }} size="lg" title={`Version ${open ?? ''}`}
-      description={exact.data ? `${exact.data.version.name} · saved ${formatDateTime(exact.data.version.createdAt)}` : undefined}>
+      description={exact.data ? `${exact.data.version.name} · saved ${new Date(exact.data.version.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : undefined}>
       {exact.isPending ? <LoadingState label="Loading version…" rows={3} />
         : exact.isError ? <ErrorState title="Couldn't load this version." description="Try again in a moment." onRetry={() => void exact.refetch()} />
           : <SkillTextPreview text={exact.data.version.instructions} />}

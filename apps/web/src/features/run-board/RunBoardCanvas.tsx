@@ -1,5 +1,6 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, type EdgeProps, type NodeChange, type NodeProps } from '@xyflow/react'
 import { AgentNodeView } from '../../shared/ui/nocturne/Canvas'
 import { Button, useReducedMotion, type AgentPanel } from '../../shared/ui/nocturne'
@@ -12,19 +13,20 @@ import {
 import { nextDraftKey, editorAgents, useFloatingCurve, useWorkflowBoard, withTeamPositionChanges } from '../board-core'
 import {
   CiServerNode, CiTransferEdge, type CiServerFlowNode, type CiTransferFlowEdge, CI_SERVER_NODE_ID,
-  ciNodeActivities, useCiTransfers, useBoardCiServer,
+  ciJobRefreshing, ciNodeActivities, runCiApi, useCiTransfers, runInspectionQueryKey, useBoardCiServer,
   BoardKanbanNode, KanbanActivityEdge, KANBAN_NODE_ID, type KanbanActivityFlowEdge, type KanbanFlowNode,
   useBoardKanban, BoardDock,
 } from '../workflow-board'
 import '../workflow-board/inspect/inspection.css'
 import { ciNodePresentation } from './ciPresentation'
+import { isRunAccessError } from '../runs-selector'
 import { RunSubagentsOverlay } from '../run-subagents'
 import { savedEdgeCurve } from './curve'
 import { RunLiveNodes, RunLivePulses, useRunLiveNodes } from './useRunLiveNodes'
 import { projectRunBoard, runBoardCi, READ_ONLY_FLOW_PROPS, type AvailableRunBoardSnapshot, type SavedBoardEdge, type SavedBoardNode } from './model'
 import '@xyflow/react/dist/style.css'
 import './runBoard.css'
-import { useRunCiJobs } from './useRunCiJobs'
+import { useProtectedAccessError } from '../../shared/api/useProtectedAccessError'
 
 const sides = [Position.Top, Position.Right, Position.Bottom, Position.Left] as const
 const SavedAgent = memo(function SavedAgent({ id, data }: NodeProps<SavedBoardNode>) {
@@ -164,14 +166,25 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
     runId: snapshot.runId, workflowVersionId: snapshot.workflowVersionId, executionSemanticsVersion: 3 as const }), [snapshot])
   const active = !activitySnapshot || activitySnapshot.active.length > 0
     || activitySnapshot.queued.length > 0 || activitySnapshot.hasMoreActiveWork === true
-  const { panel: ciPanel, nodeJobs: ciJobs } = useRunCiJobs(scope, { enabled: visible, active })
+  const ciList = useQuery({
+    queryKey: [...runInspectionQueryKey(scope), 'ci-jobs'],
+    enabled: visible,
+    queryFn: ({ signal }) => runCiApi.list({ workspaceId: scope.workspaceId, runId: scope.runId }, { signal }),
+    refetchInterval: (query) => {
+      if (!visible || isRunAccessError(query.state.error)) return false
+      return active || query.state.data?.jobs.some(ciJobRefreshing) ? 1500 : false
+    },
+  })
+  // A denied read must not leave authorized-looking jobs behind; any other failure keeps the last jobs read.
+  const ciDenied = useProtectedAccessError(ciList)
   const names = useMemo(() => new Map(snapshot.nodes.map((node) => [node.id, node.name])), [snapshot.nodes])
   const towerNodes = useMemo(() => nodes.map((node) => ({ position: node.position, width: node.initialWidth, height: node.initialHeight })), [nodes])
   const ciTicketId = scope.runId === (location.search.selectedRunId ?? location.search.runId) ? location.search.boardCiTicketId : undefined
   const ci = useBoardCiServer({ ticketId: ciTicketId, onCloseTicket: () => {
     void navigate({ to: location.pathname, replace: true, search: previous => ({ ...previous, boardCiTicketId: undefined }) })
   }, nodes: towerNodes, names, scope, workflow: { workspaceId: scope.workspaceId, workflowId: scope.workflowId },
-    ...ciPanel })
+    jobs: !ciDenied && ciList.data?.runId === scope.runId ? ciList.data.jobs : undefined,
+    truncated: !ciDenied && (ciList.data?.truncated ?? false), error: Boolean(ciDenied) || ciList.isError, loading: ciList.isPending, readError: ciDenied ?? ciList.error, onRefresh: () => void ciList.refetch() })
   // The workflow's Kanban sits on its Board in every view, so Agents' card changes show live during the Run.
   const shownIds = useMemo(() => new Set(visibleNodes.map(node => node.id)), [visibleNodes])
   const kanban = useBoardKanban({ workspaceId: snapshot.workspaceId, workflowId: snapshot.workflowId, nodes: towerNodes,
@@ -185,6 +198,7 @@ export function RunBoardCanvas({ snapshot, activitySnapshot, executionQueue, onI
   }, [kanbanShown, refit])
   const flowNodes = useMemo<(SavedBoardNode | CiServerFlowNode | KanbanFlowNode)[]>(() =>
     [...visibleNodes, ...(kanban.node ? [kanban.node] : []), ...(ci.node ? [ci.node] : [])], [visibleNodes, ci.node, kanban.node])
+  const ciJobs = !ciDenied && !ciList.isError && ciList.data?.runId === scope.runId ? ciList.data.jobs : undefined
   // A node waits on its newest unfinished CI from either the Run's Activity or the CI server's own list.
   const cis = useMemo(() => new Map([...runBoardCi(snapshot, activitySnapshot), ...ciNodeActivities(ciJobs ?? [])]),
     [snapshot, activitySnapshot, ciJobs])

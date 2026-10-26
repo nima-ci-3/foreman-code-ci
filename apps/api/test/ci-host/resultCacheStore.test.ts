@@ -73,16 +73,3 @@ it('cancels active Git reads and leaves queued blobs unread when the key budget 
   await vi.advanceTimersByTimeAsync(30_000)
   expect(started).toBe(stoppedAt)
 })
-
-it('serves files proven under another test runner from the cache except a canary sample of each part', async () => {
-  // A change to the test runner alone used to rerun every test; now about one in twenty reruns to prove the runner.
-  const files = Array.from({ length: 40 }, (_, index) => `apps/api/test/runner-${index}.test.ts`)
-  const proofs = vi.fn(async (_sql: string, values: unknown[]) => ({ rows: (values[2] as string[])
-    .filter(key => key.startsWith('free:')).map(key => ({ cache_key: key, file: key.slice(5), ticket_id: 'earlier', commit: 'b'.repeat(40) })) }))
-  const result = await planCachedSelection(mainCiContext, { query: proofs } as unknown as pg.Pool, { ...selection, files,
-    keys: async keyed => Object.fromEntries(keyed.map(({ file }) => [file, { key: `new:${file}`, runnerFreeKey: `free:${file}` }])) })
-  expect(result.files).toHaveLength(2)
-  expect(result.cached).toHaveLength(38)
-  // The canaries record their pass under both keys.
-  expect(result.keys[result.files[0]!]).toBe(`new:${result.files[0]} free:${result.files[0]}`)
-})

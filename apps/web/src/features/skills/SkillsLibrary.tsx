@@ -5,7 +5,6 @@ import { useWorkspaceNames } from './workspaceNames'
 import { LoadMore } from '../../shared/ui/LoadMore'
 import { Badge, Button, EmptyState, ErrorState, Icon, LoadingState, SearchField, Select, Switch } from '../../shared/ui/nocturne'
 import { ProtectedAccessError } from '../../shared/ui/ProtectedAccessError'
-import { useDebouncedCommit } from '../../shared/ui/useDebounced'
 import { useProtectedAccessError } from '../../shared/api/useProtectedAccessError'
 import { useSkillPages } from './skillsApi'
 import { useSkillAssignments } from './skillAssignments'
@@ -42,7 +41,12 @@ export function SkillsLibrary({ search, onSearchChange }: { search: SkillLibrary
   const { workspaces, options, name } = useWorkspaceNames()
   const [text, setText] = useState(search.q ?? '')
   useEffect(() => setText(search.q ?? ''), [search.q])
-  useDebouncedCommit(text.trim() || undefined, search.q, q => onSearchChange({ ...search, q }), 250)
+  useEffect(() => {
+    const next = text.trim() || undefined
+    if (next === search.q) return
+    const timer = setTimeout(() => onSearchChange({ ...search, q: next }), 250)
+    return () => clearTimeout(timer)
+  }, [text, search, onSearchChange])
   const pages = useSkillPages({ workspaceId: search.workspace, query: search.q, includeArchived: search.archived })
   const accessError = useProtectedAccessError(pages)
   const skillsById = new Map<string, SkillSummary>()

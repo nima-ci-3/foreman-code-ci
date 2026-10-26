@@ -16,6 +16,15 @@
 }
 .chat-retention-field, .chat-retention-field .n-input-wrap, .chat-retention-field .n-select-wrap { min-width: 0; }
 .chat-retention-field .n-input { box-sizing: border-box; width: 100%; min-width: 0; }
+/* Labels remain accessible; the heading, number and unit are enough visible text. */
+.chat-retention-field > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .chat-retention p { margin: 0; font-size: 0.8125rem; overflow-wrap: anywhere; }
 @media (max-width: 390px) {
   .chat-retention-controls { gap: 0.375rem; }

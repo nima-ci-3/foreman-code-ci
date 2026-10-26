@@ -6,22 +6,17 @@ interface FieldMeta { label: string; labelHint?: ReactNode; hint?: ReactNode; er
 function descriptions(id: string, hint: ReactNode, error: string | undefined, supplied?: string) {
   return [supplied, hint ? `${id}-hint` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined
 }
-/** `labelHidden` keeps the label for screen readers only, where the surrounding layout already names the field. */
-interface HideableLabel { labelHidden?: boolean }
-function FieldLabel({ id, label, labelHint, required, hidden }: { id: string; label: string; labelHint?: ReactNode; required?: boolean; hidden?: boolean }) {
-  const text = <label htmlFor={id} className={hidden && !labelHint ? 'n-sr-only' : undefined}>{label}{required && <span aria-hidden="true"> *</span>}</label>
-  return labelHint ? <div className={cx('n-field-label', hidden && 'n-sr-only')}>{text}{labelHint}</div> : text
-}
 function FieldNotes({ id, hint, error }: { id: string; hint?: ReactNode; error?: string }) {
   return <>{hint && <span id={`${id}-hint`} className="n-field-hint">{hint}</span>}{error && <span id={`${id}-error`} className="n-field-error"><Icon name="warning" size={14} />{error}</span>}</>
 }
 
-export function TextField({ label, labelHint, labelHidden, hint, error, className, id: suppliedId, leading, trailing, ...props }:
-  InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> } & FieldMeta & HideableLabel & { leading?: ReactNode; trailing?: ReactNode; labelHint?: ReactNode }) {
+export function TextField({ label, labelHint, hint, error, className, id: suppliedId, leading, trailing, ...props }:
+  InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> } & FieldMeta & { leading?: ReactNode; trailing?: ReactNode; labelHint?: ReactNode }) {
   const generated = useId()
   const id = suppliedId ?? generated
+  const fieldLabel = <label htmlFor={id}>{label}{props.required && <span aria-hidden="true"> *</span>}</label>
   return <div className={cx('n-field', className)}>
-    <FieldLabel id={id} label={label} labelHint={labelHint} required={props.required} hidden={labelHidden} />
+    {labelHint ? <div className="n-field-label">{fieldLabel}{labelHint}</div> : fieldLabel}
     <div className="n-input-wrap" data-invalid={Boolean(error)}>
       {leading && <span className="n-input-leading">{leading}</span>}
       <input {...props} id={id} className="n-input" aria-invalid={error ? true : props['aria-invalid']}
@@ -30,26 +25,28 @@ export function TextField({ label, labelHint, labelHidden, hint, error, classNam
     </div><FieldNotes id={id} hint={hint} error={error} /></div>
 }
 
-export function SearchField(props: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> } & FieldMeta & HideableLabel) {
+export function SearchField(props: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> } & FieldMeta) {
   return <TextField {...props} type="search" leading={<Icon name="search" size={16} />} />
 }
 
-export function Textarea({ label, labelHint, labelHidden, hint, error, className, id: suppliedId, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> } & FieldMeta & HideableLabel) {
+export function Textarea({ label, labelHint, hint, error, className, id: suppliedId, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> } & FieldMeta) {
   const generated = useId()
   const id = suppliedId ?? generated
+  const fieldLabel = <label htmlFor={id}>{label}{props.required && <span aria-hidden="true"> *</span>}</label>
   return <div className={cx('n-field', className)}>
-    <FieldLabel id={id} label={label} labelHint={labelHint} required={props.required} hidden={labelHidden} />
+    {labelHint ? <div className="n-field-label">{fieldLabel}{labelHint}</div> : fieldLabel}
     <textarea {...props} id={id} className="n-input n-textarea" aria-invalid={error ? true : props['aria-invalid']}
       aria-describedby={descriptions(id, hint, error, props['aria-describedby'])} /><FieldNotes id={id} hint={hint} error={error} /></div>
 }
 
 export interface SelectOption { value: string; label: string; disabled?: boolean }
-export function Select({ label, labelHint, labelHidden, hint, error, options, className, id: suppliedId, ...props }:
-  SelectHTMLAttributes<HTMLSelectElement> & { ref?: Ref<HTMLSelectElement> } & FieldMeta & HideableLabel & { options: readonly SelectOption[]; labelHint?: ReactNode }) {
+export function Select({ label, labelHint, hint, error, options, className, id: suppliedId, ...props }:
+  SelectHTMLAttributes<HTMLSelectElement> & { ref?: Ref<HTMLSelectElement> } & FieldMeta & { options: readonly SelectOption[]; labelHint?: ReactNode }) {
   const generated = useId()
   const id = suppliedId ?? generated
+  const fieldLabel = <label htmlFor={id}>{label}{props.required && <span aria-hidden="true"> *</span>}</label>
   return <div className={cx('n-field', className)}>
-    <FieldLabel id={id} label={label} labelHint={labelHint} required={props.required} hidden={labelHidden} />
+    {labelHint ? <div className="n-field-label">{fieldLabel}{labelHint}</div> : fieldLabel}
     <div className="n-select-wrap"><select {...props} id={id} className="n-input" aria-invalid={error ? true : props['aria-invalid']}
       aria-describedby={descriptions(id, hint, error, props['aria-describedby'])}>{options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select><Icon name="down" size={15} /></div>
     <FieldNotes id={id} hint={hint} error={error} /></div>
@@ -101,23 +98,4 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onValueChan
   return <div className="n-field"><div className="n-between"><label htmlFor={id}>{label}</label><output htmlFor={id} className="n-mono">{format(safe)}</output></div>
     <input className="n-range" id={id} type="range" value={safe} min={lower} max={upper} step={Number.isFinite(step) && step > 0 ? step : 1} disabled={disabled || lower === upper}
       aria-valuetext={format(safe)} onChange={(event) => onValueChange(Number(event.currentTarget.value))} /></div>
-}
-
-/** A number and its unit side by side ("Every 5 minutes"): the two fields only, so the caller's row lays them out
- * beside its own controls. Validation of the combined duration stays with the caller. */
-export function DurationField<U extends string>({ label = 'Every', unitLabel = 'Unit', amount, unit, units, onAmountChange, onUnitChange,
-  error, labelHidden, disabled, className, amountProps }: {
-  label?: string; unitLabel?: string; amount: string; unit: U; units: readonly { value: U; label: string }[]
-  onAmountChange(amount: string): void; onUnitChange(unit: U): void; error?: string; labelHidden?: boolean; disabled?: boolean
-  className?: string; amountProps?: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'disabled'>
-}) {
-  return <>
-    <TextField label={label} labelHidden={labelHidden} className={className} type="number" inputMode="numeric" min={1} step={1}
-      {...amountProps} value={amount} disabled={disabled} error={error} onChange={event => onAmountChange(event.currentTarget.value)} />
-    <Select label={unitLabel} labelHidden={labelHidden} className={className} value={unit} options={units} disabled={disabled}
-      onChange={event => {
-        const next = units.find(option => option.value === event.currentTarget.value)
-        if (next) onUnitChange(next.value)
-      }} />
-  </>
 }

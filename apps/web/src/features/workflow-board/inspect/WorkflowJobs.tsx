@@ -4,7 +4,7 @@ import type { JobExecutionRecord } from '@foreman-code/contracts/job-verificatio
 import { jobQueueHasExecution } from '@foreman-code/contracts/job-admission'
 import { Button, Icon, type IconName } from '../../../shared/ui/nocturne'
 import { JobResult, JobQueueFacts, jobError, useWorkflowJobHistory, useWorkflowJobQueue } from '../../jobs'
-import { formatElapsed } from '../../../shared/ui/timeFormatters'
+import { formatDuration } from '../../resource-telemetry'
 import { useComputerName } from '../../../shared/api/computerActivity'
 
 function createJobsPanelStore() {
@@ -98,7 +98,7 @@ function JobRow({ name, execution, onClick }: { name: string; execution: JobExec
   const computerName = useComputerName()
   const status = jobStatus(execution)
   const duration = execution.startedAt
-    ? formatElapsed(Math.max(0, Date.parse(execution.finishedAt ?? execution.updatedAt) - Date.parse(execution.startedAt)))
+    ? formatDuration(Math.max(0, Date.parse(execution.finishedAt ?? execution.updatedAt) - Date.parse(execution.startedAt)))
     : '—'
   const label = execution.initiatingAgent && !name.startsWith('CI: ') ? `CI: ${name}` : name
   const target = execution.acceptedSpec.target

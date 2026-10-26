@@ -3,7 +3,6 @@ import { Button, ConfirmDialog } from '../../../shared/ui/nocturne'
 import { useGraphDraftStore } from '../store'
 import { nodeTitle, type ConflictRecovery, type NextDraftEdit } from '../../board-core'
 import { discardConflictRecovery, readConflictRecoveries } from './editIntentStorage'
-import { formatDateTime } from '../../../shared/ui/timeFormatters'
 
 export function ConflictRecoveryPanel({ draftKey, edit, pending, report }: {
   draftKey: string; edit: NextDraftEdit; pending: boolean; report(error: unknown): void
@@ -15,7 +14,7 @@ export function ConflictRecoveryPanel({ draftKey, edit, pending, report }: {
     <h3>Recovered drafts</h3>
     <p className="next-draft-hint">Kept after a reload. Reapply what you need, then save.</p>
     <ul className="conflict-recovery-list">{recoveries.map(item => <li key={item.id} className="workflow-settings-row">
-      <span>{formatDateTime(item.recordedAt)}</span>
+      <span>{new Date(item.recordedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
       <span className="n-actions">
         <Button size="sm" variant="ghost" aria-pressed={selected === item.id} onClick={() => setSelected(selected === item.id ? undefined : item.id)}>
           {selected === item.id ? 'Hide' : 'Compare'}</Button>

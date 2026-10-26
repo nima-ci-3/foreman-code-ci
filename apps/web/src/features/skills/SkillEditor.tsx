@@ -156,7 +156,7 @@ export function SkillEditor({ saved, workspaceOptions, initialWorkspace, onSaved
         {/* // InfoHint: Import previews one Markdown or text file before replacing the draft. */}
         {drop.isDragging ? <p className="n-field-hint" role="status">Drop to import</p> : null}
         <Tabs label="Instructions view" value={view} onValueChange={setView} items={[
-          { value: 'write', label: 'Write', content: <Textarea label="Instructions" labelHidden className="skill-instructions-input" required rows={18}
+          { value: 'write', label: 'Write', content: <Textarea label="Instructions" className="skill-instructions-input" required rows={18}
             maxLength={MAX_SKILL_INSTRUCTIONS_CHARS} value={draft.instructions} readOnly={readOnly} disabled={uncertain} spellCheck={false}
             placeholder={'# When reviewing code\n\n- Check tests first\n- Explain each finding'} error={fieldMessage(issues, 'instructions')}
             hint={`${draft.instructions.length.toLocaleString()} / ${MAX_SKILL_INSTRUCTIONS_CHARS.toLocaleString()} characters`}

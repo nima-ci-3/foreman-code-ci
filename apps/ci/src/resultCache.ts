@@ -2,14 +2,9 @@ import { isBuiltin } from 'node:module'
 import { posix } from 'node:path'
 import { ciCodeFile, ciExportSource, importSpecifiers, resolveImport } from '@foreman-code/contracts/ci-import-graph'
 import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
-import { parse as parseYaml } from 'yaml'
 
 /** Bump when the key inputs or the doubt rules change, so earlier passes stop matching. */
-const CI_RESULT_CACHE_VERSION = 2
-
-/** A test file's input key, or null with the reason it must run. `runnerFreeKey` leaves out the files that run tests
- * (TEST_EXECUTION_FILES): a proof that matches only it was made by another runner, so a sample of such files reruns. */
-export interface CiResultKey { key: string | null; reason?: string; runnerFreeKey?: string }
+const CI_RESULT_CACHE_VERSION = 1
 
 /** One commit of the repository for result cache keys. */
 export interface CiTestTree {
@@ -182,11 +177,6 @@ const scriptFile = /\.[cm]?[jt]sx?$/
 const DATA = '\0data:'
 /** Marks an edge whose imports are followed without doubts (a script inside a named directory). */
 const LOOSE = '\0loose:'
-/** Marks an installed package a file imports (`<project>\t<name>`); it joins the key by its locked dependency tree. */
-const PACKAGE = '\0package:'
-/** Marks a project's development tools (test runner, loaders); they join the key by their locked dependency trees. */
-const TOOLS = '\0tools:'
-const LOCKFILE = 'pnpm-lock.yaml'
 const relativeLiteral = /['"`](\.{1,2}\/[^'"`\s$]*)['"`]/g
 
 /** Share the read limit across manifests and all test closures of the selection. */
@@ -308,9 +298,6 @@ export class CiResultKeys {
     // A release only bumps the root manifest's version, which no test reads; it must not invalidate every proof.
     const root = manifests.find(manifest => manifest.path === 'package.json')
     if (root) keys.identities.set('package.json', `version-free:${sha256Hex(JSON.stringify({ ...root.value, version: null }))}`)
-    if (tree.blobs.has(LOCKFILE)) {
-      for (const [marker, identity] of lockIdentities(parseYaml(await tree.read(LOCKFILE, signal)) as Lockfile)) keys.identities.set(marker, identity)
-    }
     return keys
   }
 
@@ -322,40 +309,22 @@ export class CiResultKeys {
   }
 
   /** The file's key for the suite and part, or null with the reason it must run. */
-  async key(file: string, suite: string, part: string): Promise<CiResultKey> {
+  async key(file: string, suite: string, part: string): Promise<{ key: string | null; reason?: string }> {
     try {
       this.signal.throwIfAborted()
       const project = projectOf(file)
       const environment = this.environment(project)
       const harness = await this.harnessFiles(project, environment)
       const own = await this.closure([file], true)
-      const paths = [...new Set([...environment, ...harness, ...own, ...this.locked ? [`${TOOLS}${this.importer(project)}`] : []])].sort()
+      const paths = [...new Set([...environment, ...harness, ...own])].sort()
       // The file is part of its key: tests whose closures reach each other cover the same paths, and one proof per
       // key would otherwise stand for several files.
-      const hash = (selected: string[], scope: string) => sha256Hex(JSON.stringify([CI_RESULT_CACHE_VERSION, scope, suite, part, file,
-        selected.map(path => [path, this.identity(path)])]))
-      return { key: hash(paths, 'all'),
-        runnerFreeKey: hash(paths.filter(path => !TEST_EXECUTION_FILES.some(pattern => pattern.test(path))), 'runner-free') }
+      return { key: sha256Hex(JSON.stringify([CI_RESULT_CACHE_VERSION, suite, part, file,
+        paths.map(path => [path, this.identities.get(path) ?? this.tree.blobs.get(path)])])) }
     } catch (error) {
       if (error instanceof CacheDoubt) return { key: null, reason: error.message }
       throw error
     }
-  }
-
-  /** A path's content identity; an imported package's is its locked tree as the importing project resolves it. */
-  private identity(path: string) {
-    if (!path.startsWith(PACKAGE)) return this.identities.get(path) ?? this.tree.blobs.get(path)
-    const [project, name] = path.slice(PACKAGE.length).split('\t') as [string, string]
-    return this.identities.get(`${PACKAGE}${this.importer(project)}\t${name}`) ?? this.identities.get(`${PACKAGE}*\t${name}`) ?? null
-  }
-
-  /** The lockfile was read: its packages join keys one tree at a time instead of the whole file. */
-  private get locked() {
-    return this.identities.has(`${TOOLS}.`)
-  }
-
-  private importer(project: string) {
-    return this.identities.has(`${TOOLS}${project}`) ? project : '.'
   }
 
   /** Files hashed by content for every test of a project: root files, CI scripts and workflows, the project's and the
@@ -372,8 +341,7 @@ export class CiResultKeys {
   private projectEnvironment(project: string) {
     return [...this.tree.blobs.keys()].filter(path => {
       if (/\.md$/i.test(path)) return false
-      // The lockfile joins keys per package (lockIdentities); a test sees only the locked trees it imports.
-      if (!path.includes('/')) return path !== LOCKFILE || !this.locked
+      if (!path.includes('/')) return true
       if (TEST_EXECUTION_FILES.some(pattern => pattern.test(path))) return true
       return path.startsWith(`${project}/`) && (!ciCodeFile.test(path) || PROJECT_CONFIG.test(path))
     })
@@ -424,10 +392,6 @@ export class CiResultKeys {
             files.add(file.slice(DATA.length))
             return
           }
-          if (file.startsWith(PACKAGE)) {
-            files.add(file)
-            return
-          }
           const loose = file.startsWith(LOOSE)
           const path = loose ? file.slice(LOOSE.length) : file
           // A file walked strictly needs no loose walk; a loose walk never doubts.
@@ -472,7 +436,7 @@ export class CiResultKeys {
     for (const call of strict && support && analysis.declaredInputs.length === 0 ? analysis.processes : []) {
       if (call.named) continue
       const commands = call.command.flatMap(literal => this.computedTarget(file, literal))
-        .filter((target): target is string => target !== true && !target.startsWith(PACKAGE))
+        .filter((target): target is string => target !== true)
       if (!commands.length) throw new CacheDoubt(`${file} starts a process it names by a computed path.`)
       edges.push(...commands)
     }
@@ -515,10 +479,9 @@ export class CiResultKeys {
           throw new CacheDoubt(`${file} imports ${specifier}, which is not a repository file.`)
         }
         edges.push(target)
-      } else if (!specifier.startsWith('node:') && !isBuiltin(specifier)) {
-        if (this.packages.has(name)) edges.push(`${PACKAGE}${projectOf(file)}\t${name}`)
+      } else if (strict && !specifier.startsWith('node:') && !isBuiltin(specifier) && !this.packages.has(packageName(specifier))) {
         // Aliases, virtual modules and workspace packages other than contracts have no edge the key can follow.
-        else if (strict) throw new CacheDoubt(`${file} imports ${specifier}, which no manifest pins.`)
+        throw new CacheDoubt(`${file} imports ${specifier}, which no manifest pins.`)
       }
     }
     // Code a test reaches that reads files by path or starts processes names their entrypoints and data relative to
@@ -574,8 +537,7 @@ export class CiResultKeys {
       const target = resolveImport(file, literal, this.tree.blobs, this.exports)
       return target ? [target] : []
     }
-    return /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+(?:\/[\w.@-]+)*$/.test(literal) && this.packages.has(name)
-      ? [`${PACKAGE}${projectOf(file)}\t${name}`] : []
+    return /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+(?:\/[\w.@-]+)*$/.test(literal) && this.packages.has(name) ? [true] : []
   }
 
   /** The workspace package source a `<package>/<module>` specifier names through the package's exports (built `dist`
@@ -603,60 +565,4 @@ export class CiResultKeys {
     }
     return named
   }
-}
-
-interface Lockfile {
-  lockfileVersion?: unknown; settings?: unknown; overrides?: unknown; patchedDependencies?: unknown
-  importers?: Record<string, Partial<Record<'dependencies' | 'devDependencies' | 'optionalDependencies', Record<string, { version?: string }>>>>
-  packages?: Record<string, { resolution?: unknown }>
-  snapshots?: Record<string, Partial<Record<'dependencies' | 'optionalDependencies', Record<string, string>>>>
-}
-
-/** Identities of every package each lockfile importer declares: the package's locked tree (each snapshot it reaches
- * with its resolution) plus the lockfile settings that change how anything installs. A lockfile change then
- * reaches only tests that import a package whose tree changed, or whose project's development tools changed. */
-function lockIdentities(lock: Lockfile): Map<string, string> {
-  const base = JSON.stringify([lock.lockfileVersion, lock.settings, lock.overrides, lock.patchedDependencies])
-  const snapshotKey = (name: string, version: string) => version.startsWith('link:') ? null
-    // An aliased dependency's version is the real package's `<name>@<version>`.
-    : /^@?[^@]+@/.test(version) && !/^\d/.test(version) ? version : `${name}@${version}`
-  const trees = new Map<string, string>()
-  const treeOf = (root: string) => {
-    let identity = trees.get(root)
-    if (identity) return identity
-    const reached = new Set<string>()
-    const frontier = [root]
-    while (frontier.length) {
-      const key = frontier.pop()!
-      if (reached.has(key)) continue
-      reached.add(key)
-      const snapshot = lock.snapshots?.[key]
-      for (const field of ['dependencies', 'optionalDependencies'] as const) {
-        for (const [name, version] of Object.entries(snapshot?.[field] ?? {})) {
-          const next = snapshotKey(name, version)
-          if (next) frontier.push(next)
-        }
-      }
-    }
-    identity = sha256Hex(JSON.stringify([base, [...reached].sort().map(key =>
-      [key, lock.packages?.[key.replace(/\(.*$/, '')]?.resolution ?? null, lock.snapshots?.[key] ?? null])]))
-    trees.set(root, identity)
-    return identity
-  }
-  const identities = new Map<string, string>()
-  for (const [importer, declared] of Object.entries(lock.importers ?? {})) {
-    const tools: string[] = []
-    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies'] as const) {
-      for (const [name, entry] of Object.entries(declared[field] ?? {})) {
-        const key = typeof entry?.version === 'string' ? snapshotKey(name, entry.version) : null
-        if (!key) continue
-        const identity = treeOf(key)
-        identities.set(`${PACKAGE}${importer}\t${name}`, identity)
-        if (!identities.has(`${PACKAGE}*\t${name}`)) identities.set(`${PACKAGE}*\t${name}`, identity)
-        if (field === 'devDependencies') tools.push(`${name}:${identity}`)
-      }
-    }
-    identities.set(`${TOOLS}${importer}`, sha256Hex(JSON.stringify([base, tools.sort()])))
-  }
-  return identities
 }

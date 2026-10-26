@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { MemoryCard as Card } from '@foreman-code/contracts'
 import { Button } from '../../shared/ui/nocturne/Button'
-import { useDebouncedCommit } from '../../shared/ui/useDebounced'
 import { SearchField, Select } from '../../shared/ui/nocturne/Fields'
 import { mergedMemoryItems, useMemoryCards } from './queries'
-import { MemoryCardList } from './MemoryCardList'
+import { MemoryCard } from './MemoryCard'
 import { statusLabels } from './presentation'
 import type { MemoryBoardClient, MemoryBoardView, MemoryFilters, MemoryNodeOption } from './ports'
 
@@ -14,7 +13,11 @@ export function MemoryColumns({ client, board, nodes, filters, onFiltersChange, 
 }) {
   const [search, setSearch] = useState(filters.query)
   useEffect(() => { setSearch(filters.query) }, [filters.query])
-  useDebouncedCommit(search, filters.query, query => onFiltersChange({ ...filters, query }), 250)
+  useEffect(() => {
+    if (search === filters.query) return
+    const timer = setTimeout(() => onFiltersChange({ ...filters, query: search }), 250)
+    return () => clearTimeout(timer)
+  }, [search, filters, onFiltersChange])
   return <section aria-label="Cards" className="n-stack">
     <div className="memory-filter-row">
       <SearchField label="Find cards" placeholder="Title starts with…" maxLength={240} value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
@@ -51,7 +54,8 @@ function Column({ client, board, nodes, status, filters, onFiltersChange, onOpen
       {query.isError && <p role="alert">Couldn’t load cards. <Button size="sm" onClick={() => void query.restart()}>Retry</Button></p>}
       {filters.query && query.isSuccess && <p>{cards.length} matching cards shown{query.hasNextPage ? ' · More matches available' : ''}</p>}
       {query.isSuccess && cards.length === 0 && !query.hasNextPage && <p>{filters.query ? 'No matching cards' : 'No cards yet'}</p>}
-      <MemoryCardList query={query} status={status} nodes={nodes} onOpen={onOpenCard} />
+      {cards.map((card) => <MemoryCard key={card.id} card={card} nodes={nodes} onOpen={() => onOpenCard(card.id)} />)}
+      {query.hasNextPage && <Button loading={query.isFetchingNextPage} loadingLabel="Loading cards…" onClick={() => void query.fetchNextPage()}>Load more {statusLabels[status]}</Button>}
       {query.isSuccess && cards.length === 0 && query.hasNextPage && <Button onClick={() => void query.fetchNextPage()}>Load cards</Button>}
     </>}
   </section>

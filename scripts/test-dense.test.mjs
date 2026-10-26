@@ -190,7 +190,7 @@ test('cleanup failure preserves completed attempts and cancellation codes in inc
     assert.deepEqual(result.summary.counts, { passed: 9, failed: 0, flaky: 0, notRun: 0 })
     assert.ok(result.summary.results.every(job => job.attempts.length === 1))
     const persisted = JSON.parse(readFileSync(join(f.directory, 'summary.json'), 'utf8'))
-    assert.equal(persisted.completedJobs, 9)
+    assert.equal(persisted.completedJobs, 11)
     assert.equal(persisted.error, 'fixture cleanup failed')
     const junit = readFileSync(join(f.directory, 'junit.xml'), 'utf8')
     assert.match(junit, /errors="1"/)
@@ -207,7 +207,7 @@ test('a partial integration report cannot turn completed successful jobs into a 
     } })
   assert.equal(result.code, 1)
   assert.equal(result.summary.outcome, 'incomplete')
-  assert.equal(result.summary.completedJobs, 9)
+  assert.equal(result.summary.completedJobs, 11)
   assert.equal(result.summary.error, 'Integration report is incomplete')
 })
 
@@ -218,8 +218,8 @@ test('runner death and incomplete command supervision remain failed reports', as
     integrationRunner: async () => { throw new Error('runner died') } })
   assert.equal(result.code, 1)
   assert.equal(result.summary.error, 'runner died')
-  assert.equal(result.summary.expectedJobs, 10)
-  assert.equal(result.summary.counts.notRun, 10)
+  assert.equal(result.summary.expectedJobs, 12)
+  assert.equal(result.summary.counts.notRun, 12)
   assert.deepEqual(result.summary.results.slice(0, 2).map(job => ({ id: job.id, status: job.status })),
     requiredFiles.map(id => ({ id, status: 'NOT_RUN' })))
   assert.equal(result.summary.outcome, 'incomplete')

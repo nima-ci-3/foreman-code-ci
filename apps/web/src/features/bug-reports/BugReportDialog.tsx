@@ -13,14 +13,13 @@ import { useWorkspaceDetailsQuery } from '../../shared/api/query'
 import { Alert, Button, Dialog, LoadingState, Select, TextField } from '../../shared/ui/nocturne'
 import { useUnsavedChanges } from '../../shared/ui/unsavedChanges'
 import { useBugReport, type BugReportChange } from './bugReportQueries'
-import { formatDateTime } from '../../shared/ui/timeFormatters'
 import {
   activeStatusOptions, closedStatusOptions, severityLabels, statusLabels,
 } from './bugReportPresentation'
 
 const reporterLabel = (reporter: BugReport['reporter']) => reporter.audience === 'worker' ? 'Workflow agent'
   : reporter.audience === 'operator' ? 'Operator' : reporter.name
-const when = formatDateTime
+const when = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 function ReportContent({ report }: { report: BugReport }) {
   const details = useWorkspaceDetailsQuery(report.workspaceId)

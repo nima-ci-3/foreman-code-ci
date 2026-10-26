@@ -77,7 +77,7 @@ export function PromptSettings({ page }: { page: PromptSettingsPage; onBack?(): 
     {form.error && !form.conflicted && !form.uncertain ? <Alert live tone="danger" title="Prompt was not saved">
       {form.error} Your edits are still here.
     </Alert> : null}
-    {draft ? <Textarea label={info.label} labelHidden className="prompt-settings-field" rows={14} value={draft.text} maxLength={PromptTextSchema.shape.text.maxLength ?? undefined}
+    {draft ? <Textarea label={info.label} className="prompt-settings-field" rows={14} value={draft.text} maxLength={PromptTextSchema.shape.text.maxLength ?? undefined}
       readOnly={!canEdit} disabled={form.isSaving || form.uncertain} error={fieldMessage(form.issues ?? [], 'text')}
       onChange={event => form.setDraft({ text: event.target.value })} />
       : !query.isError ? <Skeleton width="100%" height="18rem" /> : null}

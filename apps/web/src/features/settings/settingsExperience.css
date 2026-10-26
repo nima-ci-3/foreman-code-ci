@@ -92,12 +92,14 @@
 .settings-choice-footer > .provider-accounts-settings .provider-accounts-heading { margin-bottom: 0; }
 .settings-choice-footer > .provider-accounts-settings h3 { font-size: 13px; font-weight: 600; }
 .settings-saved-note { margin: 0; color: var(--n-muted); font-size: 12.5px; }
+.settings-inline-field > label, .settings-inline-field > .n-field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .settings-inline-field { min-width: 14rem; }
 .settings-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; color: var(--n-muted); font-size: 13px; }
 .settings-editor-page > .settings-save-actions { justify-content: flex-end; }
 .settings-wide-field { width: min(26rem, 100%); }
 .settings-editor-page .n-setting-control { min-width: 0; }
 .prompt-settings .settings-experience-heading p { margin: 6px 0 0; color: var(--n-muted); font-size: 13px; }
+.prompt-settings-field > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .prompt-settings-field textarea { min-height: 18rem; font-family: var(--n-font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.55; }
 .prompt-settings-saved { max-height: 12rem; overflow: auto; white-space: pre-wrap; }
 .prompt-settings-footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }

@@ -30,6 +30,7 @@ a.n-button.n-button--primary.skill-add-button, a.n-button.n-button--primary.skil
 .skill-instructions { display: grid; gap: var(--space-2); min-width: 0; }
 .skill-instructions-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
 .skill-instructions-label { font-size: 13px; font-weight: 600; }
+.skill-instructions .n-tabs .n-field > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 .skill-instructions-input textarea, .skill-instructions-input .n-textarea { min-height: 360px; font: 13px/1.65 var(--n-mono); resize: vertical; tab-size: 2; }
 .skill-preview { margin: 0; min-height: 200px; max-height: 60vh; overflow: auto; padding: var(--space-4); border-radius: var(--radius-md); background: var(--n-canvas); color: var(--n-text); font: 13px/1.65 var(--n-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .skill-preview:focus-visible { outline: 2px solid var(--n-focus); outline-offset: 2px; }

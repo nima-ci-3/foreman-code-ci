@@ -43,7 +43,7 @@ import { ciExecutionRunId } from './executionAttempt.js'
 import { CI_RETAINED_EXECUTORS, CiExecutorObservationError, CiRetainedExecutors,
   ciExecutorOutageLimit, ciTransportUnavailable, recordCiExecutorStatus } from './executorRecovery.js'
 import { CI_BUSY_TICKET, expireOverdueCiRuns } from './deadlines.js'
-import { ciCachedNotice, failedTestFiles, planCachedSelection, recordCiResultCache, storedKeys, type CachedSelection } from './resultCacheStore.js'
+import { ciCachedNotice, failedTestFiles, planCachedSelection, recordCiResultCache, type CachedSelection } from './resultCacheStore.js'
 import { CiResultKeys } from './resultCache.js'
 import { ciRequestKey, joinCiRequest, registerCiRequest, releaseCiRequester, releaseStoppedRun,
   spareSharedSupersession } from './requestSharing.js'
@@ -438,7 +438,7 @@ export class HostCiService {
       try {
         const keys = await this.keysOf(run.repository, run.commit, files.map(file => ({ file, suite: run.suite, part })),
           AbortSignal.timeout(120_000))
-        return Object.fromEntries(Object.entries(keys).flatMap(([file, value]) => value.key ? [[file, storedKeys(value)!]] : []))
+        return Object.fromEntries(Object.entries(keys).flatMap(([file, value]) => value.key ? [[file, value.key]] : []))
       } catch (error) {
         // The part's admitted keys are still recorded; these files run again next time.
         this.context.log.warn({ err: error, ticketId: run.id }, 'CI result cache keys failed for a finished part')
