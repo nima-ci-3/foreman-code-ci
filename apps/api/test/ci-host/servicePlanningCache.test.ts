@@ -26,8 +26,11 @@ it('plans from an observed computer’s capacity while its expired status refres
         provider: 'github', owner: 'fixture', name: 'project', defaultBranch: 'main',
       },
     } }] }
-    // Only the Run insert binds nine values (record at position 3).
-    if (parameters?.length === 9) records.push(CiRunRecordSchema.parse(JSON.parse(parameters![3] as string)))
+    // Capture persisted run records without depending on the insert's optional metadata columns.
+    if (typeof parameters?.[3] === 'string' && parameters[3].startsWith('{')) {
+      const record = CiRunRecordSchema.safeParse(JSON.parse(parameters[3]))
+      if (record.success) records.push(record.data)
+    }
     return { rows: [], rowCount: 1 }
   } } as unknown as pg.Pool
   const commands = { execute: async (input: Parameters<PostgresCommandCoordinator['execute']>[0]) => {

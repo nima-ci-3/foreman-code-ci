@@ -39,7 +39,18 @@ it('bounds status requests and splits a large gate across cloud executors', asyn
   const integration = parts.filter(part => part.suite === 'integration')
   expect(integration.filter(part => part.plannedHostKey.startsWith('circleci:')).length).toBeGreaterThan(1)
   expect(integration.flatMap(part => part.files).sort()).toEqual([...files].sort())
-  expect(new Set(parts.map(part => part.plannedHostKey)).size).toBe(parts.length)
+  const clouds = fleet().filter(computer => computer.hostRef.kind === 'cloud').map(computer => computer.key)
+  expect(integration.map(part => part.plannedHostKey).sort()).toEqual(clouds.sort())
+  const checks = parts.filter(part => part.suite !== 'integration')
+  expect(checks).toHaveLength(6)
+  expect(new Set(checks.map(part => part.plannedHostKey)).size).toBe(checks.length)
+  expect(checks.every(check => clouds.includes(check.plannedHostKey))).toBe(true)
+  // Checks and integration are separate tickets on the same cloud executor, each paying its own setup cost.
+  expect(parts).toHaveLength(clouds.length + checks.length)
+  for (const part of integration) {
+    expect(part.integrationShards).toBe(4)
+    expect(part.expectedDurationMs).toBe(90_000 + Math.ceil(part.files.length / 2) * 120_000)
+  }
 })
 
 it.each(['all', 'one'])('plans on ready executors when %s CircleCI status reads fail', async failure => {

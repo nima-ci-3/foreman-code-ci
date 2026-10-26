@@ -24,9 +24,10 @@ function fixture() {
   const pool = { query: vi.fn(async (sql: string, parameters?: unknown[]) => {
     if (sql.includes('from workspaces')) return { rows: [{ record: workspace }] }
     if (sql.includes('count(*)')) return { rows: [{ host_key: 'fixture-host', count: occupied }] }
-    // Only the Run insert binds nine values (record at position 3).
-    if (parameters?.length === 9) {
-      records.push(CiRunRecordSchema.parse(JSON.parse(parameters![3] as string)))
+    // Capture persisted run records without depending on the insert's optional metadata columns.
+    if (typeof parameters?.[3] === 'string' && parameters[3].startsWith('{')) {
+      const record = CiRunRecordSchema.safeParse(JSON.parse(parameters[3]))
+      if (record.success) records.push(record.data)
     }
     return { rows: [], rowCount: 1 }
   }) } as unknown as pg.Pool

@@ -33,7 +33,7 @@ function ticketDatabase() {
   const query = async (sql: string, values: unknown[] = []) => {
     const text = sql.replace(/\s+/gu, ' ').trim()
     const listed = () => [...rows.values()].map(row => ({ ...structuredClone(row), id: row.record.id,
-      log_tail: '', durations: null }))
+      log_tail: '', durations: null, duration_peaks: null }))
     if (text.includes('from workspaces')) return { rows: [{ record: { id: 'workspace', name: 'CI fixture',
       repository: { provider: 'github', owner: 'example', name: 'project', defaultBranch: 'main' } } }], rowCount: 1 }
     if (text.startsWith('insert into ci_dispatch_claims')) {
@@ -71,7 +71,7 @@ function ticketDatabase() {
     if (text.includes('from ci_runs where group_id=$1')) {
       return { rows: listed().filter(row => row.record.groupId === values[0]), rowCount: 1 }
     }
-    if (text.startsWith('select record,durations from ci_runs')) {
+    if (text.includes("from ci_runs where state='queued'")) {
       return { rows: listed().filter(row => row.record.state === 'queued') }
     }
     if (text.includes("'supersededBy' is not null") || text.includes("'gate'='true'")) return { rows: [] }

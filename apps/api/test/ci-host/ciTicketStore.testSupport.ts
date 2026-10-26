@@ -13,7 +13,8 @@ export function ticketStore(initial: CiRunRecord[], hostKeys: Record<string, str
   }
   const listed = (filter: (run: CiRunRecord, row: { state: string; hostKey: string | null }) => boolean) =>
     [...rows].filter(([, row]) => filter(CiRunRecordSchema.parse(row.record), row))
-      .map(([id, row]) => ({ id, state: row.state, host_key: row.hostKey, record: row.record, durations: null }))
+      .map(([id, row]) => ({ id, state: row.state, host_key: row.hostKey, record: row.record,
+        durations: null, duration_peaks: null }))
   const changed = (row: { state: string; hostKey: string | null; record: unknown } | undefined,
     next: { state?: unknown; hostKey?: unknown; record: unknown }) => {
     if (!row) return { rows: [], rowCount: 0 }
@@ -98,7 +99,7 @@ export function ticketStore(initial: CiRunRecord[], hostKeys: Record<string, str
     if (text.startsWith('select host_key,record from ci_runs')) {
       return { rows: listed(run => ['starting', 'running'].includes(run.state) || run.deadlineExceeded?.executor === 'retained') }
     }
-    if (text.startsWith('select record,durations from ci_runs where state=\'queued\'')) {
+    if (text.includes("from ci_runs where state='queued'")) {
       return { rows: listed(run => run.state === 'queued' && !run.supersededBy) }
     }
     return { rows: [], rowCount: 0 }
