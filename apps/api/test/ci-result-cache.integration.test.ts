@@ -432,7 +432,7 @@ it('proves a file again when only bodies of functions it never ran changed, and 
     await f.complete(first.ticketId)
 
     const unrun = await f.request('7', [LABEL])
-    expect(unrun.cachedFiles).toEqual([{ file: LABEL, ticketId: first.ticketId, commit: commit('6') }])
+    expect(unrun.cachedFiles).toEqual([{ file: LABEL, ticketId: first.ticketId, commit: commit('6'), functions: true }])
     expect(await f.sent(unrun.ticketId)).toBeNull()
 
     for (const sha of ['8', '9']) {
