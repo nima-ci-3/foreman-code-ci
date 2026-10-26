@@ -41,7 +41,8 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
     computerMaintenance: { readTarget: readMaintenance, start: startMaintenance },
     harnessSettings: { mcp: { list: async () => ({ presets: { [INSTALLATION_NAMES.mcp.server]: preset } }), applyManaged } },
     harnessInstances: { list: async () => ({ overrides: options.claudeDefault
-      ? [{ enabled: true, driverId: 'claude', configuration, qualification: 'qualified' }] : [] }) },
+      ? [{ enabled: true, driverId: 'claude', configuration, qualification: 'qualified' }] : [] }),
+      check: async () => ({ proof: { authenticated: true, qualified: true } }) },
     extensions: { native: { options: async () => ({ authenticated: true, models: [
       options.priorityCodex ? { id: configuration.model, reasoningEfforts: ['medium'], serviceTiers: ['priority'] }
         : { id: 'resolved-claude-model', defaultPriority: -1, reasoningEfforts: [], serviceTiers: [] },
@@ -109,6 +110,16 @@ describe('computer Run requirements', () => {
     const f = fixture({ signedIn: true, claudeDefault: true })
     try {
       const result = await f.call('check')
+      expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent', state: 'ready' }))
+    } finally { await f.app.close() }
+  })
+
+  it('uses the selected Claude profile even when the computer default is signed out', async () => {
+    const f = fixture({ signedIn: false, claudeDefault: true })
+    try {
+      const result = await f.call('check')
+      expect(result.items).toContainEqual(expect.objectContaining({ id: 'sign-in:agent', state: 'ready' }))
+      expect(result.items.find((value: { id: string }) => value.id === 'sign-in')).toBeUndefined()
       expect(result.items).toContainEqual(expect.objectContaining({ id: 'model:agent', state: 'ready' }))
     } finally { await f.app.close() }
   })

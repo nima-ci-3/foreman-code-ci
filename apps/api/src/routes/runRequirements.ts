@@ -183,7 +183,7 @@ async function repairSavedWorkflows(services: OperatorServices, principal: Manag
                 browserProfiles: [...request.browserProfiles].sort(), jobDefinitions: [...request.jobDefinitions].sort((a, b) => a.id.localeCompare(b.id)) })
               if (checked.has(key)) continue
               checked.add(key)
-              const result = await runRequirements(services, principal, request)
+              const result = await runRequirements(services, principal, request, false)
               const failed = result.items.filter(value => value.state !== 'ready' && value.fixable)
               if (failed.length) failures.push(new Error(failed.map(value => value.message).join('; ')))
             } catch (error) { failures.push(error) }
@@ -198,7 +198,7 @@ async function repairSavedWorkflows(services: OperatorServices, principal: Manag
 }
 
 export async function runRequirements(services: OperatorServices, principal: ManagementPrincipal,
-  raw: RunRequirementsInput): Promise<RunRequirementsResult> {
+  raw: RunRequirementsInput, checkClaude = true): Promise<RunRequirementsResult> {
   const input = RunRequirementsInputSchema.parse(raw)
   const items: RunRequirement[] = []
   const workspace = await services.workspaces.get(principal, input.workspaceId)
@@ -227,12 +227,12 @@ export async function runRequirements(services: OperatorServices, principal: Man
           'missing', `Could not prepare the build computer: ${errorText(error)}`, true)) }
       }
       const deadline = Date.now() + 180_000
-      let checked = await runRequirements(services, principal, { ...input, action: 'check' })
+      let checked = await runRequirements(services, principal, { ...input, action: 'check' }, checkClaude)
       while (checked.items.some(value => value.id.startsWith('job:') && value.state !== 'ready') && Date.now() < deadline) {
         const current = await services.ciEnrollment.read(principal, { workspaceId: input.workspaceId })
         if (!current.computers.some(computer => computer.state === 'pending' || computer.state === 'preparing')) break
         await delay(1000)
-        checked = await runRequirements(services, principal, { ...input, action: 'check' })
+        checked = await runRequirements(services, principal, { ...input, action: 'check' }, checkClaude)
       }
       checked.items.push(...failures)
       return RunRequirementsResultSchema.parse(checked)
@@ -300,7 +300,8 @@ export async function runRequirements(services: OperatorServices, principal: Man
     catch (error) { items.push(item('mcp-read', 'unknown', `Could not read Foreman Code MCP: ${errorText(error)}`)) }
   }
   items.push(...computerRequirements({ harness: input.harness, online: status?.observation?.status === 'available' && !!status.status && !!accountFacts,
-    account, mcp, managedAccount: !needsDefault, injectedMcp: target.hostRef.kind === 'main' && input.harness === 'claude' }))
+    account, mcp, managedAccount: input.harness === 'claude' || !needsDefault,
+    injectedMcp: target.hostRef.kind === 'main' && input.harness === 'claude' }))
   if (target.hostRef.kind === 'device' && status?.workerReadiness && !status.workerReadiness.ready) {
     items.push(item('worker', 'missing', `Worker needs an update (${status.workerReadiness.code ?? 'not ready'}).`, true))
   }
@@ -348,7 +349,29 @@ export async function runRequirements(services: OperatorServices, principal: Man
               : `This computer needs a ${label(input.harness)} profile matching this Agent.`),
         !!profile || !agent.placementInstanceId && !agent.selection))
     }
-    if (account?.installed && services.extensions?.native) {
+    // Without a managed account, Claude's configDirectory is the account
+    // profile. The computer-wide account probe and default options can name a
+    // different profile, so qualify this exact host/profile instead.
+    if (configuration.harness === 'claude' && !configuration.accountId && account?.installed && checkClaude) {
+      try {
+        if (!profile || !services.harnessInstances) throw new Error('Select and prepare the Agent’s Claude profile first.')
+        const checked = await services.harnessInstances.check(principal, 'http', { commandId: randomUUID(),
+          instanceId: profile.instanceId, expectedRevision: profile.revision, target: profile.target })
+        const profileItem = items.find(value => value.id === `profile:${agent.id}`)
+        if (checked.proof.qualified && checked.proof.authenticated === true) {
+          if (profileItem) Object.assign(profileItem, item(profileItem.id, 'ready', 'The selected Claude profile is ready.'))
+          items.push(item(`sign-in:${agent.id}`, 'ready', 'The selected Claude profile is signed in.'))
+          items.push(item(`model:${agent.id}`, 'ready', 'The selected Claude model and settings passed the profile check.'))
+        } else {
+          const reason = checked.proof.failure?.message ?? 'The selected Claude profile did not pass its native check.'
+          if (profileItem) Object.assign(profileItem, item(profileItem.id, 'missing', reason, true))
+          items.push(item(`sign-in:${agent.id}`, checked.proof.authenticated === false ? 'missing' : 'unknown',
+            `${reason} Open Settings → Computers → this computer → Sign-ins and check the selected Claude profile.`))
+        }
+      } catch (error) {
+        items.push(item(`sign-in:${agent.id}`, 'unknown', `Could not check the selected Claude profile: ${errorText(error)}`))
+      }
+    } else if (!(configuration.harness === 'claude' && !configuration.accountId) && account?.installed && services.extensions?.native) {
       try {
         const binding = configuration.accountId ? accountBindings.get(configuration.accountId) : undefined
         if (configuration.accountId && !binding) throw new Error('The selected provider account binding is unavailable.')
@@ -507,7 +530,7 @@ export async function runRequirements(services: OperatorServices, principal: Man
         }
       } catch (error) { failures.push(item(need.id, 'missing', `${need.message} ${errorText(error)}`, true)) }
     }
-    const checked = await runRequirements(services, principal, { ...input, action: 'check' })
+    const checked = await runRequirements(services, principal, { ...input, action: 'check' }, checkClaude)
     for (const failure of failures) {
       const index = checked.items.findIndex(value => value.id === failure.id)
       if (index >= 0 && checked.items[index]?.state !== 'ready') checked.items[index] = failure

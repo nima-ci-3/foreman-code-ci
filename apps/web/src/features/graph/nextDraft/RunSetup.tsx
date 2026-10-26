@@ -122,8 +122,8 @@ export function useRunSetup() {
       setRequirements(checked)
       await client.invalidateQueries({ queryKey: harnessSettingsKeys.root })
       if (checked.every(({ result }) => result.items.every(item => item.state === 'ready'))) {
-        setRequirements(undefined)
         await pending.current?.()
+        setRequirements(undefined)
       }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
@@ -150,6 +150,7 @@ export function useRunSetup() {
     title="Set up before running?"
     footer={<div className="n-actions"><Button disabled={busy} onClick={() => setRequirements(undefined)}>Decline</Button>
       <Button variant="primary" loading={busy} onClick={() => void setUp()}>Set up and run</Button></div>}>
+    {requirements && !groups.size ? <p>Setup is complete.</p> : null}
     {[...groups].map(([key, group]) => <div key={key}><strong>{group.title}</strong>
       <ul>{group.items.map(item => <li key={`${item.id}:${item.message}`} style={{ whiteSpace: 'pre-wrap' }}>{item.message}</li>)}</ul></div>)}
     {error ? <p className="n-field-error" role="alert">{error}</p> : null}
