@@ -129,7 +129,5 @@ export const memoryBoardAuthority: MemoryBoardAuthority = {
       || (work.kind === 'slot' && saved.work.kind === 'slot' && saved.work.slotId !== work.slotId)) {
       throw new DomainError('EXECUTION_IDENTITY_CONFLICT', 'The board fact belongs to another logical work item.', 409)
     }
-    return maySaveToKanban(saved.subject.agent.productRole,
-      await workflowAgentRoles(tx, saved.version.agentConfigurationVersionIds))
   },
 }
