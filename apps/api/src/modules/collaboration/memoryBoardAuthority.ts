@@ -1,10 +1,10 @@
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
-import { memoryExecution } from './memoryExecution.js'
+import { memoryExecution, workflowAgentRoles } from './memoryExecution.js'
 import { memoryWorkSettlement } from '../runs/memoryBoardHandoffs.js'
 import { repeatTickIndex } from '../runs/repeatResolution.js'
 import {
   isReadOnlyHarnessConfiguration,
-  effectiveForemanTools, memoryBoardTools, sameAgentNode, sameExecution,
+  effectiveForemanTools, maySaveToKanban, memoryBoardTools, sameAgentNode, sameExecution, withoutKanbanWrites,
   type AgentSubject, type LogicalWorkRef, type MemoryBoardScope,
 } from '@foreman-code/contracts'
 import type { SqlTransaction } from '../../infrastructure/transaction.js'
@@ -32,7 +32,9 @@ async function subjectAccess(tx: SqlTransaction, supplied: AgentSubject): Promis
   const tools = effectiveForemanTools(saved.subject.agent.productRole, saved.configuration[INSTALLATION_NAMES.fields.agentTools],
     saved.node[INSTALLATION_NAMES.fields.agentTools], Boolean(saved.node.interval), memoryBoardTools('write'))
     .filter(tool => !readOnly || !memoryBoardTools('write').some(name => name === tool) || memoryBoardTools('read').some(name => name === tool))
-  return { principalId: `execution:${saved.execution.id}`, subject: saved.subject, tools, readOnly,
+  const writer = maySaveToKanban(saved.subject.agent.productRole,
+    await workflowAgentRoles(tx, saved.version.agentConfigurationVersionIds))
+  return { principalId: `execution:${saved.execution.id}`, subject: saved.subject, tools: writer ? tools : withoutKanbanWrites(tools), readOnly,
     branchNodeIds: [saved.node.id] }
 }
 
