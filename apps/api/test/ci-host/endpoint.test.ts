@@ -163,6 +163,24 @@ it('does not report readiness for a Worker that never answered when its status r
   await expect(endpoint.request(computer, { operation: 'status' })).rejects.toBeInstanceOf(DeviceApplicationAdmissionError)
 })
 
+it('bounds Worker readiness waits while retaining the execution and cleanup deadlines', async () => {
+  const computer: HostCiComputer = { key: 'fixture:reconnecting-worker',
+    hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-worker' }, label: 'Worker', priority: 50 }
+  const requests: { operation: string; timeoutMs?: number }[] = []
+  const endpoint = new ProductionHostCiEndpoint(mainCiContext, {} as pg.Pool, 'fixture-main', () => ({
+    capabilities: () => [], request: async (_device, _namespace, payload, options) => {
+      requests.push({ operation: (payload as CiHostRequest).operation, timeoutMs: options?.timeoutMs })
+      throw new Error('Worker is reconnecting')
+    },
+  }), { handle: async () => { throw new Error('Unexpected local request') } })
+  for (const request of [{ operation: 'status' }, { operation: 'status', cleanupRunIds: [] },
+    { operation: 'read', runId: 'fixture-run', afterOffset: 0 }] as CiHostRequest[]) {
+    await expect(endpoint.request(computer, request)).rejects.toThrow('Worker is reconnecting')
+  }
+  expect(requests).toEqual([{ operation: 'status', timeoutMs: 1500 }, { operation: 'status', timeoutMs: 120_000 },
+    { operation: 'read', timeoutMs: 120_000 }])
+})
+
 it('spends a start retry only after a live status reports the assigned run absent', async () => {
   const computer: HostCiComputer = { key: 'fixture:recovering-worker',
     hostRef: { kind: 'device', mainId: 'fixture-main', deviceId: 'fixture-recovering-worker' },
