@@ -102,22 +102,3 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onValueChan
     <input className="n-range" id={id} type="range" value={safe} min={lower} max={upper} step={Number.isFinite(step) && step > 0 ? step : 1} disabled={disabled || lower === upper}
       aria-valuetext={format(safe)} onChange={(event) => onValueChange(Number(event.currentTarget.value))} /></div>
 }
-
-/** A number and its unit side by side ("Every 5 minutes"): the two fields only, so the caller's row lays them out
- * beside its own controls. Validation of the combined duration stays with the caller. */
-export function DurationField<U extends string>({ label = 'Every', unitLabel = 'Unit', amount, unit, units, onAmountChange, onUnitChange,
-  error, labelHidden, disabled, className, amountProps }: {
-  label?: string; unitLabel?: string; amount: string; unit: U; units: readonly { value: U; label: string }[]
-  onAmountChange(amount: string): void; onUnitChange(unit: U): void; error?: string; labelHidden?: boolean; disabled?: boolean
-  className?: string; amountProps?: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'disabled'>
-}) {
-  return <>
-    <TextField label={label} labelHidden={labelHidden} className={className} type="number" inputMode="numeric" min={1} step={1}
-      {...amountProps} value={amount} disabled={disabled} error={error} onChange={event => onAmountChange(event.currentTarget.value)} />
-    <Select label={unitLabel} labelHidden={labelHidden} className={className} value={unit} options={units} disabled={disabled}
-      onChange={event => {
-        const next = units.find(option => option.value === event.currentTarget.value)
-        if (next) onUnitChange(next.value)
-      }} />
-  </>
-}

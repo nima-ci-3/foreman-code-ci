@@ -6,58 +6,34 @@ import { useFloatingSurface } from './useFloatingSurface'
 import { useOutsidePress } from '../useOutsidePress'
 import { menuKeyTarget, tabOutOfMenu, type MenuTypeahead } from './menuKeys'
 
-export interface TabListItem { value: string; label: ReactNode; title?: string; disabled?: boolean; badge?: string | number
-  /** A control beside the tab (close); the tab and its action then sit in one `itemClassName` wrapper. */
-  action?: ReactNode }
-/**
- * Every tab strip's keyboard and focus model: one tab in the Tab order, arrows (mirrored right-to-left) and
- * Home/End move between enabled tabs. With `automatic` activation moving selects; with `manual` (a tab whose
- * selection has effects, such as taking control of a browser) moving only focuses and Enter or Space selects.
- */
-export function TabList({ label, value, items, onSelect, tabId, panelId, className, itemClassName, activation = 'automatic', children }: {
-  label: string; value: string | undefined; items: readonly TabListItem[]; onSelect(value: string): void
-  tabId(value: string, index: number): string; panelId?(value: string, index: number): string; className?: string; itemClassName?: string
-  activation?: 'automatic' | 'manual'; children?: ReactNode
-}) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([])
-  const selected = items.findIndex((item) => item.value === value)
-  const focusable = selected >= 0 && !items[selected]!.disabled ? selected : items.findIndex((item) => !item.disabled)
-  return <div role="tablist" aria-label={label} className={className} onKeyDown={(event) => {
-    const index = refs.current.indexOf(document.activeElement as HTMLButtonElement)
-    if (index < 0) return
-    const rtl = getComputedStyle(event.currentTarget).direction === 'rtl'
-    const disabled = items.map((item) => Boolean(item.disabled))
-    let next = -1
-    if (event.key === 'ArrowRight') next = nextEnabledIndex(index, rtl ? -1 : 1, disabled)
-    if (event.key === 'ArrowLeft') next = nextEnabledIndex(index, rtl ? 1 : -1, disabled)
-    if (event.key === 'Home') next = disabled.indexOf(false)
-    if (event.key === 'End') next = nextEnabledIndex(0, -1, disabled)
-    if (next < 0) return
-    event.preventDefault()
-    refs.current[next]?.focus()
-    if (activation === 'automatic') onSelect(items[next]!.value)
-  }}>
-    {items.map((item, index) => {
-      const tab = <button key={item.value} type="button" role="tab" id={tabId(item.value, index)} aria-controls={panelId?.(item.value, index)}
-        aria-selected={selected === index} tabIndex={focusable === index ? 0 : -1} disabled={item.disabled} title={item.title}
-        ref={(element) => { refs.current[index] = element }} onClick={() => onSelect(item.value)}>
-        {item.label}{item.badge !== undefined && <span className="n-count">{item.badge}</span>}
-      </button>
-      return item.action === undefined ? tab : <div key={item.value} className={itemClassName} data-selected={selected === index || undefined}>{tab}{item.action}</div>
-    })}
-    {children}
-  </div>
-}
-
 export interface TabItem { value: string; label: string; content: ReactNode; disabled?: boolean; badge?: string | number }
 export function Tabs({ label, value, onValueChange, items, className, keepMounted = true }:
   { label: string; value: string; onValueChange: (value: string) => void; items: readonly TabItem[]; className?: string; keepMounted?: boolean }) {
   const id = useId()
+  const refs = useRef<(HTMLButtonElement | null)[]>([])
   const selectedIndex = items.findIndex((item) => item.value === value && !item.disabled)
   const active = selectedIndex < 0 ? items.findIndex((item) => !item.disabled) : selectedIndex
   return <div className={cx('n-tabs', className)}>
-    <TabList label={label} value={items[active]?.value} items={items} onSelect={onValueChange} className="n-tab-list"
-      tabId={(_, index) => `${id}-tab-${index}`} panelId={(_, index) => `${id}-panel-${index}`} />
+    <div role="tablist" aria-label={label} className="n-tab-list" onKeyDown={(event) => {
+      const index = refs.current.indexOf(document.activeElement as HTMLButtonElement)
+      if (index < 0) return
+      const rtl = getComputedStyle(event.currentTarget).direction === 'rtl'
+      let next = -1
+      if (event.key === 'ArrowRight') next = nextEnabledIndex(index, rtl ? -1 : 1, items.map((item) => Boolean(item.disabled)))
+      if (event.key === 'ArrowLeft') next = nextEnabledIndex(index, rtl ? 1 : -1, items.map((item) => Boolean(item.disabled)))
+      if (event.key === 'Home') next = items.findIndex((item) => !item.disabled)
+      if (event.key === 'End') next = nextEnabledIndex(0, -1, items.map((item) => Boolean(item.disabled)))
+      if (next < 0) return
+      event.preventDefault()
+      refs.current[next]?.focus()
+      onValueChange(items[next].value)
+    }}>
+      {items.map((item, index) => <button key={item.value} type="button" role="tab" id={`${id}-tab-${index}`} aria-controls={`${id}-panel-${index}`}
+        aria-selected={active === index} tabIndex={active === index ? 0 : -1} disabled={item.disabled}
+        ref={(element) => { refs.current[index] = element }} onClick={() => onValueChange(item.value)}>
+        {item.label}{item.badge !== undefined && <span className="n-count">{item.badge}</span>}
+      </button>)}
+    </div>
     {items.map((item, index) => (keepMounted || active === index) && <div key={item.value} role="tabpanel" className="n-tab-panel" id={`${id}-panel-${index}`}
       aria-labelledby={`${id}-tab-${index}`} hidden={active !== index} tabIndex={0}>{item.content}</div>)}
   </div>

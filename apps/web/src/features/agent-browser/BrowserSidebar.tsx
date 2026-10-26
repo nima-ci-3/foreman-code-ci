@@ -1,6 +1,6 @@
 import { useId, useRef, type ReactNode } from 'react'
 import { FloatingWindow } from '../../shared/ui/FloatingWindow'
-import { Icon, IconButton, TabList } from '../../shared/ui/nocturne'
+import { Icon, IconButton } from '../../shared/ui/nocturne'
 import './browserSidebar.css'
 
 export type BrowserSidebarStatus = 'working' | 'idle' | 'ended' | 'not_started'
@@ -18,13 +18,17 @@ export function BrowserSidebar({ tabs, selectedId, emptyText, notice, onSelect, 
   const opener = useRef<HTMLElement | null>(document.querySelector('.workflow-floating-panel:not([hidden])'))
   return <FloatingWindow label="Agent browsers" title="Agent browsers" closeLabel="Close browsers"
     opener={opener} onClose={onClose} className="browser-sidebar">
-      <TabList label="Agent browsers" className="browser-sidebar-tabs" itemClassName="browser-sidebar-tab" value={selectedId}
-        activation="manual" onSelect={onSelect} tabId={value => `${id}-${value}`} panelId={() => `${id}-panel`}
-        items={tabs.map(tab => ({ value: tab.id, title: `${tab.name} · ${statusLabel[tab.status]}${tab.page ? ` · ${tab.page}` : ''}`,
-          label: <><span className="browser-sidebar-dot" data-status={tab.status} aria-hidden="true" />
-            <span className="browser-sidebar-name">{tab.name}</span></>,
-          action: <IconButton label={`Close ${tab.name} browser`} variant="ghost" size="sm" onClick={() => onCloseTab(tab.id)}>
-            <Icon name="close" size={12} /></IconButton> }))} />
+      <div className="browser-sidebar-tabs" role="tablist" aria-label="Agent browsers">
+        {tabs.map(tab => <div key={tab.id} className="browser-sidebar-tab" data-selected={tab.id === selectedId || undefined}>
+          <button type="button" role="tab" id={`${id}-${tab.id}`} aria-selected={tab.id === selectedId} aria-controls={`${id}-panel`}
+            title={`${tab.name} · ${statusLabel[tab.status]}${tab.page ? ` · ${tab.page}` : ''}`} onClick={() => onSelect(tab.id)}>
+            <span className="browser-sidebar-dot" data-status={tab.status} aria-hidden="true" />
+            <span className="browser-sidebar-name">{tab.name}</span>
+          </button>
+          <IconButton label={`Close ${tab.name} browser`} variant="ghost" size="sm" onClick={() => onCloseTab(tab.id)}>
+            <Icon name="close" size={12} /></IconButton>
+        </div>)}
+      </div>
     {notice}
     <div className="browser-sidebar-body" id={`${id}-panel`} role={selected ? 'tabpanel' : undefined}
       aria-labelledby={selected ? `${id}-${selected.id}` : undefined}>

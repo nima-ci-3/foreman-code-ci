@@ -1,7 +1,7 @@
 import { InfoHint } from '../../../shared/ui/InfoHint'
 import { useState } from 'react'
 import { AGENT_INTERVAL_MAX_SECONDS, AGENT_INTERVAL_MIN_SECONDS, AGENT_INTERVAL_PROMPT_MAX_LENGTH, type WorkflowDefinitionCurrent } from '@foreman-code/contracts/current'
-import { DurationField, Switch, Textarea } from '../../../shared/ui/nocturne'
+import { Select, Switch, Textarea, TextField } from '../../../shared/ui/nocturne'
 import type { DraftNode } from '../../board-core'
 import { largestUnit, unitSeconds, UNITS, type Unit } from './intervalLabel'
 
@@ -33,8 +33,11 @@ export function IntervalFields({ node, change }: {
     <Switch label="Loop while the workflow runs" checked={everySeconds !== undefined}
       onChange={(event) => write(event.currentTarget.checked ? (valid ? seconds : 60) : undefined)} />
     {everySeconds !== undefined ? <div className="next-draft-inline">
-      <DurationField amount={count} unit={unit} units={UNITS} error={valid ? undefined : 'Choose between 10 seconds and 24 hours.'}
-        onAmountChange={next => apply(next, unit)} onUnitChange={next => apply(count, next)} />
+      <TextField label="Every" type="number" inputMode="numeric" min={1} step={1} value={count}
+        error={valid ? undefined : 'Choose between 10 seconds and 24 hours.'}
+        onChange={(event) => apply(event.target.value, unit)} />
+      <Select label="Unit" value={unit} options={UNITS.map(({ value, label }) => ({ value, label }))}
+        onChange={(event) => apply(count, event.target.value as Unit)} />
     </div> : null}
     {everySeconds !== undefined ? <Textarea label="Each loop" rows={3}
       labelHint={<InfoHint label="Each loop">What the agent does on each loop. Leave empty for the default check of the Run.</InfoHint>}

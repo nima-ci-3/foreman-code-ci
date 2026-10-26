@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { MAX_FILE_RETENTION_SECONDS, MIN_FILE_RETENTION_SECONDS } from '@foreman-code/contracts/files'
 import { secondsPerUnit } from './retentionDraft'
-import { Button, Checkbox, ConfirmDialog, DurationField, Icon, IconButton, Tooltip } from '../../shared/ui/nocturne'
+import { Button, Checkbox, ConfirmDialog, Icon, IconButton, Select, TextField, Tooltip } from '../../shared/ui/nocturne'
 import { ApiError } from '../../shared/api/client'
 import { useChatRetentionSettings } from './useChatRetentionSettings'
 import './retentionSettings.css'
@@ -23,12 +23,14 @@ export function ChatRetentionSettings() {
       {(query.isError || journal.error) && <Button size="sm" onClick={() => void settings.refresh()}>Retry</Button>}
     </p> : <>
       <div className="chat-retention-controls">
-        <DurationField label="Duration" labelHidden className="chat-retention-field" amount={draft.amount} unit={draft.unit}
-          units={[{ value: 'hours', label: 'hours' }, { value: 'days', label: 'days' }]} disabled={busy || uncertain}
-          amountProps={{ inputMode: 'decimal', step: 'any', min: MIN_FILE_RETENTION_SECONDS / secondsPerUnit[draft.unit],
-            max: MAX_FILE_RETENTION_SECONDS / secondsPerUnit[draft.unit], 'aria-invalid': durationSeconds === undefined,
-            'aria-describedby': durationSeconds === undefined ? validationId : undefined }}
-          onAmountChange={amount => settings.edit({ ...draft, amount })} onUnitChange={unit => settings.edit({ ...draft, unit })} />
+        <TextField label="Duration" labelHidden className="chat-retention-field" type="number" inputMode="decimal" step="any"
+          min={MIN_FILE_RETENTION_SECONDS / secondsPerUnit[draft.unit]} max={MAX_FILE_RETENTION_SECONDS / secondsPerUnit[draft.unit]}
+          value={draft.amount} disabled={busy || uncertain} aria-invalid={durationSeconds === undefined}
+          aria-describedby={durationSeconds === undefined ? validationId : undefined}
+          onChange={(event) => settings.edit({ ...draft, amount: event.currentTarget.value })} />
+        <Select label="Unit" labelHidden className="chat-retention-field" options={[{ value: 'hours', label: 'hours' }, { value: 'days', label: 'days' }]}
+          value={draft.unit} disabled={busy || uncertain}
+          onChange={(event) => settings.edit({ ...draft, unit: event.currentTarget.value === 'hours' ? 'hours' : 'days' })} />
         <Button size="sm" variant="primary" disabled={settings.saveDisabled} loading={busy}
           onClick={() => void settings.requestSave()}>{uncertain ? 'Retry save' : 'Save'}</Button>
       </div>

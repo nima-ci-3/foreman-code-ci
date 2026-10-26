@@ -1,7 +1,7 @@
+import { createHash } from 'node:crypto'
 import type pg from 'pg'
 import { z } from 'zod'
 import { CI_LOG_MAX_BYTES, CI_TEST_RESULT_LIMITS, CiTestResultsSchema, type CiCachedFile, type CiRunRecord } from '@foreman-code/contracts'
-import { sha256Hex } from '@foreman-code/contracts-node/server-kit'
 import type { CiContext } from './environment.js'
 import { CiResultKeys, type CiResultKey, type CiTestTree } from './resultCache.js'
 
@@ -82,7 +82,7 @@ export async function planCachedSelection(context: CiContext, pool: pg.Pool, inp
     }
     for (const candidates of otherRunner.values()) {
       const order = candidates.map(candidate => ({ ...candidate,
-        rank: sha256Hex(`${keyed.get(candidate.file)!.key}\0${candidate.file}`) }))
+        rank: createHash('sha256').update(`${keyed.get(candidate.file)!.key}\0${candidate.file}`).digest('hex') }))
         .sort((left, right) => left.rank.localeCompare(right.rank))
       const canaries = Math.max(1, Math.ceil(order.length * RUNNER_CANARY_SHARE))
       for (const [index, { file, proof }] of order.entries()) {
