@@ -209,7 +209,9 @@ async function ciWorkspaceFor(call) {
     }
     cursor = page.nextCursor
   } while (cursor)
-  throw new Error('The authenticated MCP connection does not advertise ci_run.')
+  // Operator lists only its core tools; other available tools remain in its discovery catalog.
+  const tool = await call('tool_schema', { name: 'ci_run' })
+  return tool.inputSchema.required?.includes('workspaceId') ? workspaceFor(call) : undefined
 }
 
 /** Test files named on the command line (`pnpm test -- some.test.ts`), relative to the repository root. */
