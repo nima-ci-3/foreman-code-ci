@@ -1,7 +1,45 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { ComputerMaintenance } from './maintenance.js'
-import { fakeComputer, fakeFleet, settle } from '../../../test/helpers/fleetSync.js'
+import { fakeComputer, fakeFleet, pluginRequest, settle } from '../../../test/helpers/fleetSync.js'
 import { fleetPluginId, versionedComputer } from '../../../test/helpers/fleetPluginVersions.js'
+
+it.each(['running', 'completed'] as const)('settles %s plugin work without depending on polling speed', async state => {
+  const computer = fakeComputer()
+  let entered!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const run = computer.ports.run
+  computer.ports.run = async (binary, args, options) => {
+    if (args[0] === 'plugin' && args[1] === 'add') {
+      entered()
+      await gate
+    }
+    return run(binary, args, options)
+  }
+  const task = await computer.maintenance.start(pluginRequest([fleetPluginId]))
+  await started
+  if (state === 'completed') {
+    release()
+    await computer.maintenance.drain()
+  }
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    // Let any polling exhaust itself while the native operation is still in flight.
+    const settled = settle(computer).then(status => ({ status, error: undefined }),
+      (error: unknown) => ({ status: undefined, error }))
+    await vi.runAllTimersAsync()
+    release()
+    const result = await settled
+    if (result.error) throw result.error
+    expect(result.status?.tasks).toContainEqual(expect.objectContaining({ id: task.id, state: 'succeeded' }))
+    expect(computer.codexPlugins.has(fleetPluginId)).toBe(true)
+  } finally {
+    release()
+    vi.useRealTimers()
+    await computer.maintenance.drain()
+  }
+})
 
 it.each(['codex', 'claude'] as const)('reports unavailable %s stdio paths and retries after destination repair', async harness => {
   const computer = fakeComputer()

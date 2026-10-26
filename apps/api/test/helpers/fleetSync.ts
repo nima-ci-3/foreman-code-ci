@@ -110,12 +110,11 @@ export function fakeComputer() {
 }
 
 export async function settle(computer: ReturnType<typeof fakeComputer>) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const status = await computer.maintenance.status(AbortSignal.timeout(1000))
-    if (status.tasks.every(task => task.state !== 'running')) return status
-    await new Promise(resolve => setTimeout(resolve, 1))
-  }
-  throw new Error('Fake maintenance did not settle')
+  // Native plugin staging uses real filesystem I/O; status polling cannot bound its completion.
+  await computer.maintenance.drain()
+  const status = await computer.maintenance.status(AbortSignal.timeout(1000))
+  if (status.tasks.some(task => task.state === 'running')) throw new Error('Fake maintenance did not settle')
+  return status
 }
 
 export function fakeFleet(computer: ReturnType<typeof fakeComputer>, now: () => number = Date.now) {
