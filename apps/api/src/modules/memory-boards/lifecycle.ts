@@ -113,12 +113,13 @@ export async function applyLifecycle(tx: SqlTransaction, authority: MemoryBoardA
   const fact = BoardLifecycleFactSchema.parse(input)
   if (fact.phase === 'accepted' && fact.outstandingRequestIds.length) invalid('Work with outstanding requests cannot complete.')
   if (['blocked','failed','canceled'].includes(fact.phase) && !fact.reason?.trim()) invalid('A negative work fact needs its cause.')
-  await authority.lifecycle(tx,fact.agent,fact.work,fact.execution?.executionId)
+  const keeper = await authority.lifecycle(tx,fact.agent,fact.work,fact.execution?.executionId)
   const workKeys = [...new Set([workKey(fact.work),...(fact.continuationOf ? [workKey(fact.continuationOf)] : [])])].sort()
   for (const key of workKeys) await lockIdentity(tx,`work:${key}`)
   if (fact.phase === 'admitted' && !fact.continuationOf) await lockIdentity(tx,`node:${nodeKey(fact.agent)}`)
   const effect = await beginEffect(tx,'lifecycle',fact.work,fact.sourceEventKey,fact)
   if (effect.replay) return effect.replay
+  if (!keeper) return finishEffect(tx,effect.key,effect.hash,effectReceipt(fact.sourceEventKey,[],[]))
   const matched = await tx.query<{ board_id:string;card_id:string }>(
     `select board_id,card_id from memory_card_bindings where work_key=any($1::text[])
       union select board_id,card_id from memory_card_claims where node_key=$2 and state='armed' and $3::boolean`,
