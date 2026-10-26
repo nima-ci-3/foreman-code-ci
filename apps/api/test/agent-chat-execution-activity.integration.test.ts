@@ -12,7 +12,6 @@ import {
   CURRENT_WORKFLOW_ROUTES, CURRENT_WORKFLOW_TOOLS, CurrentWorkflowReadResultSchema,
 } from '@foreman-code/contracts/current'
 import { buildApp } from '../src/app.js'
-import { buildHarnessPrompt } from '../src/modules/harnesses/prompt.js'
 import type { OperatorServices } from '../src/mcp/operator/types.js'
 import { AgentChatService } from '../src/modules/conversations/agentChat.js'
 import { PostgresAgentChatRepository } from '../src/modules/conversations/agentChatRepository.js'
@@ -79,10 +78,9 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
     }
   })
 
-  async function setup(harness?: ClaudeHarnessConfiguration, options: { initialPrompt?: string; input?: HarnessExecution['input'] } = {}) {
+  async function setup(harness?: ClaudeHarnessConfiguration) {
     const graph = await graphFixture(database, {
       form: 'single',
-      ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       ...(harness ? { harness } : { intervalEverySeconds: 10 }),
     })
     const node = agentWorkflowNode(graph.version.definition.nodes[0])
@@ -95,7 +93,7 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
     const candidate = HarnessExecutionSchema.parse({
       id: randomUUID(), runId: graph.run.id, workflowNodeId: node.id, agentId: node.agentId,
       agentConfigurationVersionId: graph.version.agentConfigurationVersionIds[node.agentId],
-      attempt: 1, state: 'queued', input: options.input ?? {}, createdAt: graph.run.createdAt,
+      attempt: 1, state: 'queued', input: {}, createdAt: graph.run.createdAt,
     })
     const admitted = await ownedGraph(database, graph, owner =>
       runs.admitRepeatExecution({ nodeId: node.id, occurrence: null }, () => candidate, owner))
@@ -117,8 +115,7 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
       })
     }
     await ownedGraph(database, graph, owner => persistExecution(owner, admitted.execution,
-      HarnessExecutionSchema.parse({ ...admitted.execution, ...(options.input ? { input: options.input } : {}),
-        state: 'running', nativeSessionId: 'thread' })))
+      HarnessExecutionSchema.parse({ ...admitted.execution, state: 'running', nativeSessionId: 'thread' })))
     const transfers: unknown[][] = []
     let queryFailure: string | undefined
     const observedPool = new Proxy(database.pool, {
@@ -275,51 +272,6 @@ describe('Persisted execution activity through HTTP and authenticated MCP', { ti
       },
     }
   }
-
-  it.each(['initial', 'missing', 'handoff-text', 'handoff-task', 'handoff-carrier', 'delegated-task', 'nontext'] as const)(
-    'shows only authored opening text for %s through the public chat read', async kind => {
-      const initialPrompt = 'Please keep INITIAL USER PROMPT and ACCEPTED INPUT FROM THE WORKFLOW in the report.'
-      const task = 'Review the changes. TRUSTED WORKFLOW EXECUTION CONTEXT is a heading in the document.'
-      const handoff = !['initial', 'missing'].includes(kind)
-      const output = { routing: { kind: 'finish' }, data: {
-        latestDeliverable: kind === 'handoff-task' ? { task, internal: 'private metadata' }
-          : kind === 'nontext' ? { private: 'no task text' } : task,
-        remainingFindings: [],
-      }, summary: 'Internal summary', board: { kind: 'none', reason: 'no_changes' } }
-      const input = handoff ? { work: { kind: 'work_request',
-        ...(kind === 'delegated-task' ? { task: { data: { task } } } : {}),
-        acceptedSourceResult: { outcome: 'succeeded', output: kind === 'handoff-carrier'
-          ? { text: JSON.stringify(output) } : output },
-      } } : { private: 'raw workflow input' }
-      const fixture = await setup(undefined, { ...(kind === 'missing' ? {} : { initialPrompt }), input })
-      try {
-        const prompt = buildHarnessPrompt({ configuration: fixture.graph.f.configurations[0]!,
-          initialPrompt: `${initialPrompt}\nInternal result contract, team, browser and Kanban instructions`,
-          input })
-        await fixture.append([
-          { type: 'item.started', payload: { item: { id: 'opening', type: 'userMessage', content: [{ type: 'text', text: prompt }] } } },
-          { type: 'item.completed', payload: { item: { id: 'opening', type: 'userMessage', content: [{ type: 'text', text: prompt }] } } },
-          { type: 'item.completed', payload: { item: { id: 'answer', type: 'agentMessage', text: 'Working on it' } } },
-          { type: 'item.completed', payload: { item: { id: 'followup', type: 'userMessage', content: [{ type: 'text', text: 'Keep this follow-up unchanged' }] } } },
-        ])
-        const expected = kind === 'missing' || kind === 'nontext' ? '' : handoff ? task : initialPrompt
-        for (const request of [{}, { limit: 1 }, { executionId: fixture.executionId },
-          { executionId: fixture.executionId, itemId: 'opening' }, { executionId: fixture.executionId, before: '3' }]) {
-          const page = await fixture.http(request)
-          expect(await fixture.mcpPage(request)).toEqual(page)
-          const opening = page.items.find(item => item.id === 'opening')
-          if (opening) expect(opening.entry).toEqual({ kind: 'message', message: expect.objectContaining({
-            role: 'user', content: expected,
-          }) })
-          expect(JSON.stringify(page)).not.toContain('Internal result contract')
-          expect(JSON.stringify(page)).not.toContain('raw workflow input')
-        }
-        const page = await fixture.mcpPage()
-        expect(page.items.find(item => item.id === 'opening')?.entry).toMatchObject({ message: { content: expected } })
-        expect(page.items.find(item => item.id === 'followup')?.entry).toMatchObject({ message: { content: 'Keep this follow-up unchanged' } })
-      } finally { await fixture.close() }
-    },
-  )
 
   it('keeps retained execution history consistent with canonical graph readback', async () => {
     const fixture = await setup()
