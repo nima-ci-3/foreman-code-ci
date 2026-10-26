@@ -30,18 +30,6 @@ export class GitCiCommits implements CiCommits {
     }
   }
 
-  /** Fetch the installed release and initialize the same import graph admissions use, before API readiness. */
-  async warmup(repository: string, commit: string) {
-    const started = performance.now()
-    const signal = AbortSignal.timeout(180_000)
-    await this.context.platform.ensureCommit(this.git, repository, commit, signal)
-    const sourceMs = Math.round(performance.now() - started)
-    await this.resultKeys?.(repository, commit, [{ file: 'apps/api/test/ci-smoke.integration.test.ts',
-      suite: 'integration', part: 'integration' }], signal)
-    this.context.log.info({ repository, commit, sourceMs, keyGraphMs: Math.round(performance.now() - started) - sourceMs },
-      'CI admission source and result graph warmed')
-  }
-
   async infrastructureOnly(repository: string, commit: string) {
     const signal = AbortSignal.timeout(30_000)
     const clone = await this.context.platform.ensureCommit(this.git, repository, commit, signal)
@@ -191,29 +179,17 @@ export class GitCiCommits implements CiCommits {
     snapshot: { baseCommit: string; commit: string; bundle: Buffer | null } | null): Promise<string> {
     const knownCommit = commit ?? snapshot?.commit
     const signal = AbortSignal.timeout(180_000)
-    const started = performance.now()
-    const gitMs: Record<string, number> = {}
-    const git: GitWorktreePorts = { cloneDirectory: repository => this.git.cloneDirectory(repository), git: async (args, options) => {
-      const at = performance.now()
-      try { return await this.git.git(args, options) }
-      finally { gitMs[args[0]!] = (gitMs[args[0]!] ?? 0) + Math.round(performance.now() - at) }
-    } }
-    try {
-      if (knownCommit) {
-        if (!commit && snapshot?.bundle) {
-          const clone = await this.context.platform.ensureCommit(git, repository, snapshot.baseCommit, signal)
-          await this.context.platform.importAgentSnapshot(git, clone, { commit: snapshot.commit, bundle: snapshot.bundle }, signal)
-        } else {
-          await this.context.platform.ensureCommit(git, repository, knownCommit, signal)
-        }
-        return knownCommit
+    if (knownCommit) {
+      if (!commit && snapshot?.bundle) {
+        const clone = await this.context.platform.ensureCommit(this.git, repository, snapshot.baseCommit, signal)
+        await this.context.platform.importAgentSnapshot(this.git, clone, { commit: snapshot.commit, bundle: snapshot.bundle }, signal)
+      } else {
+        await this.context.platform.ensureCommit(this.git, repository, knownCommit, signal)
       }
-      const clone = await this.context.platform.ensureClone(git, repository, signal)
-      return await this.context.platform.fetchRepositoryBranch(git, clone, repository, defaultBranch, signal)
-    } finally {
-      this.context.log.info({ repository, commit: knownCommit, gitMs, totalMs: Math.round(performance.now() - started) },
-        'CI commit resolution timing')
+      return knownCommit
     }
+    const clone = await this.context.platform.ensureClone(this.git, repository, signal)
+    return this.context.platform.fetchRepositoryBranch(this.git, clone, repository, defaultBranch, signal)
   }
 
   publish(repository: string, commit: string): Promise<void> {

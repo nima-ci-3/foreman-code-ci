@@ -1,9 +1,6 @@
 // Main's CI: builds the CircleCI and host CI services that production composes and starts, all with Main's CI context.
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
-import { WorkerCiSmokeSchema } from '@foreman-code/contracts/computer-maintenance'
 import type pg from 'pg'
 import { HostCiService } from '@foreman-code/ci/service'
 import { GitCiCommits } from '@foreman-code/ci/commits'
@@ -88,7 +85,7 @@ export async function createCircleCi(input: {
 }
 
 /** Builds Main's host CI service; the caller starts it and closes it with the app. */
-export async function createHostCi(input: {
+export function createHostCi(input: {
   pool: pg.Pool
   mainId: string
   commands: PostgresCommandCoordinator
@@ -99,23 +96,11 @@ export async function createHostCi(input: {
   readAgentFiles: ReadAgentFiles
   circleCredits: CircleCreditUsage
   circleStandby: CircleStandby
-}): Promise<HostCiService> {
+}): HostCiService {
   const { pool, mainId, commands, devices, workerExecution, clouds, discoverClouds, readAgentFiles, circleCredits,
     circleStandby } = input
-  const commits = new GitCiCommits(mainCiContext)
-  // Development checkouts have no installed-release metadata. Installed APIs warm their exact release before listen;
-  // an already-pushed commit can still need a fetch into Main's clone, and a new result-key thread has no import graph.
-  const metadata = await readFile(fileURLToPath(new URL('../../../../../ci-smoke.json', import.meta.url)), 'utf8')
-    .catch(error => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
-    })
-  if (metadata !== null) {
-    const { repository, commit } = WorkerCiSmokeSchema.parse(JSON.parse(metadata))
-    await commits.warmup(repository, commit)
-  }
   // CI runs directly on build computers (Main included) from GitHub, like self-hosted runners.
-  return new HostCiService(mainCiContext, pool, commands, new RunCiAuthority(pool), commits,
+  return new HostCiService(mainCiContext, pool, commands, new RunCiAuthority(pool), new GitCiCommits(mainCiContext),
     new ProductionHostCiEndpoint(mainCiContext, pool, mainId, devices, new HostCiRunner(mainCiContext),
       clouds, discoverClouds, workerExecution),
     agentSnapshots(mainCiContext, pool, readAgentFiles), {
