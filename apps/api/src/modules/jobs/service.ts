@@ -268,7 +268,13 @@ export class JobService {
         placementOverride: input.placementOverride,
         limits: resources.limits,
       })
-      const checked = await this.ports.preparation.validate(sql, live, workspaceId, spec)
+      let checked = await this.ports.preparation.validate(sql, live, workspaceId, spec)
+      // Automatic specs have no fixed source target to validate. Computer discovery
+      // below validates the source and runtime for each candidate instead.
+      if (isAutoJobSpecRecord(spec) && checked.reasons.length === 1
+        && checked.reasons[0] === 'AUTO_SOURCE_VALIDATION_UNAVAILABLE') {
+        checked = { valid: true, reasons: [], sideEffects: false }
+      }
       const mayWait = checked.reasons.length > 0 && checked.reasons.every(jobCanWait)
       if (!checked.valid && !mayWait) {
         return JobLaunchValidationSchema.parse({ ...checked, canQueue: false })
