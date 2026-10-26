@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.120] - 2026-10-26
+
+- CI proof cache on by default for every check, releases included: a test file reruns only when its own inputs change (its runtime imports, the locked packages it imports, its project's config and tools) or it failed last; `--full` runs everything.
+- Lockfile changes rerun only tests whose locked package trees changed; test-runner changes rerun a 5% canary per part instead of every test.
+- Proof keys no longer pull in whole directories or the repository root, and each file has its own key; proof recording works again.
+- Result keys are computed on a worker thread; type-only imports and release version bumps no longer invalidate proofs.
+- CI: a transient Main database failure before submission requeues the part; one queue order; CircleCI caches every workspace's node_modules.
+- Deploy: the installer retries cancelling the browser drain while the new host starts.
+- Web: removed all interface unit tests (498 files); shared formatters, debounce, inline name editor, duration field, hidden labels, tab strip, plugin catalog controls, Run CI query and memory card list replace duplicated UI code.
+- CI: slow and fast integration tiers share the eligible slots, so an affected round no longer plans a second wave.
+
 ## [0.0.119] - 2026-10-25
 
 - Claude workflow Agents run on paired Worker computers (pre-assigned native session, Main callback authority, Worker MCP).
