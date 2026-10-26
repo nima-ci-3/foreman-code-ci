@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.129] - 2026-10-26
+
 ### Added
 
 - Run checks Foreman Code MCP on every computer and harness the workflow uses; when something is missing, one modal sets it all up and then runs. Choosing a paired computer whose project isn't set up yet sets it up and selects it.
