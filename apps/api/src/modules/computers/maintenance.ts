@@ -219,15 +219,6 @@ export class ComputerMaintenance {
     this.closing = true
   }
 
-  /** Shutdown stops new tasks and waits briefly for running ones. A task still running (a long package or harness
-   * install) is marked interrupted at the next start and retried by upkeep, so it must not hold the API open. */
-  async drainForShutdown(waitMs = 5000): Promise<void> {
-    this.stopAdmission()
-    let timer: NodeJS.Timeout | undefined
-    await Promise.race([this.drain(), new Promise<void>(resolve => { timer = setTimeout(resolve, waitMs) })])
-    clearTimeout(timer)
-  }
-
   private assertOpen(): void {
     if (this.closing) {
       throw new DomainError('COMPUTER_MAINTENANCE_CLOSING', 'Computer maintenance is shutting down.', 503)

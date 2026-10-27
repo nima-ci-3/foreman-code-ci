@@ -221,19 +221,6 @@ describe('computer maintenance', () => {
       .rejects.toMatchObject({ code: 'COMPUTER_PACKAGE_UPDATES_UNAVAILABLE' })
   })
 
-  it('stops waiting at shutdown for a task that is still installing, and admits no new task', async () => {
-    const fake = ports()
-    const run = fake.value.run
-    fake.value.run = async (binary, args, options) => args[0] === 'install'
-      ? new Promise<never>(() => undefined) : run(binary, args, options)
-    const maintenance = new ComputerMaintenance(fake.value)
-    await maintenance.start({ kind: 'update-harnesses', harnesses: ['codex'] })
-    const started = Date.now()
-    await maintenance.drainForShutdown(50)
-    expect(Date.now() - started).toBeLessThan(5000)
-    await expect(maintenance.start({ kind: 'update-system' })).rejects.toMatchObject({ code: 'COMPUTER_MAINTENANCE_CLOSING' })
-  })
-
   it('does not report a harness current when its updater left the old binary in place', async () => {
     const fake = ports()
     const run = fake.value.run
