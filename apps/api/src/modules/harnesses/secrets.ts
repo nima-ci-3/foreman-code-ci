@@ -1,22 +1,12 @@
 import { INSTALLATION_NAMES } from '@foreman-code/contracts/installation-names'
-import { APP_MCP_TOKEN_NAMES } from '@foreman-code/contracts/product'
 import { readProductEnvironment } from '@foreman-code/contracts/product-environment'
 import { appMcpDirectory } from '@foreman-code/contracts/product-environment-node'
 import { accessSync, constants } from 'node:fs'
 import { delimiter, dirname, resolve } from 'node:path'
 import { hostEnvironment } from '../../shared/process.js'
 
-export function isDatabaseCredentialVariable(key: string): boolean {
-  return key === 'DATABASE_URL' || key.endsWith('_DATABASE_URL') || key === 'PGPASSWORD'
-    || key === INSTALLATION_NAMES.environment.PRODUCTION_DB_PASSWORD || key === INSTALLATION_NAMES.privateEnvironment.productDatabasePassword
-}
-
-export function isControllerEnvironmentVariable(key: string): boolean {
-  return key === 'NODE_OPTIONS' || key.startsWith('OPERATOR_')
-    || /^(?:GRAPHQL|FOREMAN_CODE)_(?:OPERATOR|APP|TEST)_/.test(key)
-    || (APP_MCP_TOKEN_NAMES as readonly string[]).includes(key) || key === INSTALLATION_NAMES.environment.MCP_TOKEN
-    || key.endsWith('DATABASE_URL') || isDatabaseCredentialVariable(key)
-}
+export { isControllerEnvironmentVariable, isDatabaseCredentialVariable } from '../../shared/controllerEnvironment.js'
+import { isControllerEnvironmentVariable } from '../../shared/controllerEnvironment.js'
 
 /** Deliberate application-secret delivery boundary, not a host sandbox. */
 export function inheritedAgentEnvironment(source: NodeJS.ProcessEnv = hostEnvironment()): NodeJS.ProcessEnv {
