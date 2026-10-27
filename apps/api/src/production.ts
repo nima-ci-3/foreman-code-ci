@@ -1844,7 +1844,7 @@ function createRuntimeControl({ base, callbacks, started, runtimeState, transpor
       { name: 'source reservation reclamation', run: () => started.jobRuntime?.drainMaterializationReservationReconciliation() },
     ],
     dispose: [
-      { name: 'computer maintenance tasks', run: () => runtimeServices.computerMaintenance?.drain() },
+      { name: 'computer maintenance tasks', run: () => runtimeServices.computerMaintenance?.drainForShutdown() },
       { name: 'worker conversation callback admissions', run: async () => { await workerChats?.close() } },
       { name: 'installed rsync canonical receiver', run: () => entrypoint ? entrypoint.close() : undefined },
       { name: 'workflow artifact byte receiver', run: async () => { await started.workflowArtifacts?.receiver.close() } },

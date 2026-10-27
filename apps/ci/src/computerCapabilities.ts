@@ -32,3 +32,18 @@ export function smallCiRun(run: CiRunRecord): boolean {
   return !run.gate && run.scope === 'affected' && !run.deriveFiles && (run.suite === 'unit' || run.suite === 'integration')
     && testDurationMs <= CLOUD_SETUP_MS
 }
+
+/** Plain words for where a ticket went and why, kept on the ticket so a surprising placement can be explained. */
+export function ciPlacementReason(run: CiRunRecord, computer: HostCiComputer): string {
+  if (run.gate) return `Gate part planned for ${computer.label}.`
+  const time = run.selectionDurationMs !== undefined
+    ? `${(run.selectionDurationMs / 1000).toFixed(1)} s of measured tests`
+    : run.expectedDurationMs !== undefined
+      ? `no measured durations; estimated ${Math.round(Math.max(0, run.expectedDurationMs - CLOUD_SETUP_MS) / 1000)} s`
+      : 'no duration estimate'
+  const small = smallCiRun(run)
+  if (computer.hostRef.kind !== 'cloud') return small ? `Small ${run.suite} run (${time}): build computers take it first.`
+    : `Not a small ${run.suite} run (${time}), but no cloud executor could take it.`
+  return small ? `Small ${run.suite} run (${time}), but no build computer was free.`
+    : `Not a small ${run.suite} run (${time}); larger work goes to the cloud.`
+}
