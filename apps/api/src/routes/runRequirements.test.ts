@@ -14,7 +14,8 @@ const request = { workspaceId: 'workspace', harness: 'codex', agentIds: [], brow
 
 function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: 'missing' | 'installed';
   repository?: boolean; repositoryReady?: boolean; claudeDefault?: boolean; selectionMismatch?: boolean; priorityCodex?: boolean;
-  oldWorker?: boolean; browserMissing?: boolean; selectedProfileSignedIn?: boolean; apostrophePath?: boolean; multipleAgents?: boolean } = {}) {
+  oldWorker?: boolean; browserMissing?: boolean; selectedProfileSignedIn?: boolean; apostrophePath?: boolean; multipleAgents?: boolean
+  ciReady?: boolean } = {}) {
   let preset = options.mcp ?? 'missing'
   let browserReady = !options.browserMissing
   const selectedTarget = options.oldWorker ? { hostRef: { kind: 'device' as const, mainId,
@@ -51,6 +52,8 @@ function fixture(options: { online?: boolean; signedIn?: boolean | null; mcp?: '
       check: async () => ({ proof: { authenticated: true, qualified: true } }) },
     extensions: { native: { options: nativeOptions } },
     agents: { get: async (...args: [unknown, string, string]) => ({ agent: { id: args[2], harnessConfiguration: configuration } }) },
+    ...(options.ciReady === undefined ? {} : { ci: { computers: async () => ({ computers: [
+      { label: 'Build PC', ready: options.ciReady, reasons: options.ciReady ? [] : ['GitHub is signed out on this computer.'] }] }) } }),
     workspaces: { get: async () => ({ workspace: options.repository ? { repository: { owner: 'owner', name: 'public' } } : {},
       locationValidation: { status: 'ready' } }) },
   } as unknown as OperatorServices
@@ -90,6 +93,18 @@ describe('computer Run requirements', () => {
       expect(after.items).toContainEqual(expect.objectContaining({ id: 'sign-in', state: 'missing' }))
       expect(after.items).toContainEqual(expect.objectContaining({ id: 'mcp', state: 'ready' }))
     } finally { await f.app.close() }
+  })
+
+  it('reports CI that no executor can run, with each computer\'s reason', async () => {
+    for (const ready of [false, true]) {
+      const f = fixture({ signedIn: true, mcp: 'installed', ciReady: ready })
+      try {
+        const result = await f.call('check')
+        expect(result.items).toContainEqual(ready ? expect.objectContaining({ id: 'ci', state: 'ready' })
+          : expect.objectContaining({ id: 'ci', state: 'missing', fixable: false,
+            message: expect.stringContaining('Build PC: GitHub is signed out on this computer.') }))
+      } finally { await f.app.close() }
+    }
   })
 
   it('reports unreadable authentication as unknown', async () => {
