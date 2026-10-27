@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { parseClaudeAuthStatus } from '../provider-accounts/index.js'
-import { isControllerEnvironmentVariable } from '../../shared/controllerEnvironment.js'
+import { isControllerEnvironmentVariable } from '../harnesses/index.js'
 import type { MaintenancePorts } from './maintenancePorts.js'
 
 /** Read subscription authentication from the selected host-local profile without opening a native turn. */
