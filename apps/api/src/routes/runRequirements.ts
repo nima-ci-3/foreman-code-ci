@@ -559,7 +559,21 @@ export async function runRequirements(services: OperatorServices, principal: Man
     }
     return RunRequirementsResultSchema.parse(checked)
   }
+  if (services.ci) items.push(await ciRequirement(services.ci, principal, input.workspaceId))
   return RunRequirementsResultSchema.parse({ target, items })
+}
+
+/** CI an Agent may start during its work. Ready while any executor is; otherwise each computer's own reasons
+ * (GitHub signed out, git or corepack missing, cloud account unavailable) say what to fix. */
+async function ciRequirement(ci: NonNullable<OperatorServices['ci']>, principal: ManagementPrincipal,
+  workspaceId: string): Promise<RunRequirement> {
+  try {
+    const { computers } = await ci.computers(principal, { workspaceId })
+    const ready = computers.filter(computer => computer.ready)
+    if (ready.length) return item('ci', 'ready', `CI is ready on ${ready.length} ${ready.length === 1 ? 'executor' : 'executors'}.`)
+    const reasons = computers.slice(0, 10).map(computer => `${computer.label}: ${computer.reasons.join('; ') || 'not ready'}`)
+    return item('ci', 'missing', `No CI computer is ready. ${reasons.join(' · ') || 'Connect a build computer or a cloud CI account.'}`)
+  } catch (error) { return item('ci', 'unknown', `Could not check CI: ${errorText(error)}`) }
 }
 
 export function registerRunRequirementsRoutes(app: FastifyInstance, services: OperatorServices): void {
