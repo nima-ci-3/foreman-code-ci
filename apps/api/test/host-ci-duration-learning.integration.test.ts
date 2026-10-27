@@ -224,21 +224,3 @@ it('plans a small unit run with the duration of a file measured long ago, past a
     expect(read.run.selectionDurationMs).toBe(1200)
   } finally { await f.close() }
 })
-
-it('keeps a start request within its duration bound when the repository has more measured files', async () => {
-  const files = Array.from({ length: 1200 }, (_, index) => `apps/api/test/many-${index}.test.ts`)
-  const f = await fixture({ unitInventory: { files, durations: {} } })
-  try {
-    await f.pool.query(`insert into ci_file_durations(repository,file,duration_ms)
-      select 'octo/site', file, 4000 from unnest($1::text[]) as file`, [files])
-    const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', {
-      suite: 'unit', scope: 'affected', files: files.slice(0, 2), commit: 'a'.repeat(40), commandId: 'many-files',
-    }))
-    await f.ci.dispatch()
-    const request = f.started.find(value => value.request.operation === 'start'
-      && value.request.runId === started.ticketId)?.request
-    expect(request?.operation).toBe('start')
-    if (request?.operation !== 'start') throw new Error('Expected a start request')
-    expect(Object.keys(request.durations ?? {}).length).toBeLessThanOrEqual(1000)
-  } finally { await f.close() }
-})

@@ -401,16 +401,6 @@ export class FleetMaintenanceService {
     await this.local.drain()
   }
 
-  /** Shutdown waits at most waitMs for background syncs and local tasks; unfinished ones resume after restart. */
-  async drainForShutdown(waitMs = 5000): Promise<void> {
-    this.closing = true
-    let timer: NodeJS.Timeout | undefined
-    await Promise.race([Promise.allSettled([...this.backgroundTasks]),
-      new Promise<void>(resolve => { timer = setTimeout(resolve, waitMs) })])
-    clearTimeout(timer)
-    await this.local.drainForShutdown(Math.max(0, waitMs / 2))
-  }
-
   private trackBackground(action: () => Promise<void>): Promise<void> {
     if (this.closing) return Promise.resolve()
     const task = action().finally(() => this.backgroundTasks.delete(task))
