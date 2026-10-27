@@ -800,7 +800,7 @@ export class HostCiService {
   private async learnedDurations(repository: string) {
     const rows = (await this.pool.query<{ file: string; duration_ms: number; peak_ms: number }>(`select file,duration_ms,
       coalesce((select max(ms) from unnest(recent_durations_ms) as ms),duration_ms) as peak_ms
-      from ci_file_durations where repository=$1 order by updated_at desc,file limit 20000`, [repository])).rows
+      from ci_file_durations where repository=$1 order by updated_at desc,file limit 1000`, [repository])).rows
     return rows.length ? {
       durations: Object.fromEntries(rows.map(row => [row.file, row.duration_ms])),
       durationPeaks: Object.fromEntries(rows.map(row => [row.file, row.peak_ms])),
