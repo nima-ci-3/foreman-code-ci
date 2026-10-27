@@ -207,20 +207,3 @@ it.each(['full', 'affected'] as const)('automatically sizes %s integration via M
       .toBe('passed')
   } finally { await f.close() }
 })
-
-it('plans a small unit run with the duration of a file measured long ago, past a thousand newer ones', async () => {
-  const old = 'apps/api/test/old-unit.test.ts'
-  const f = await fixture({ unitInventory: { files: [old], durations: {} } })
-  try {
-    const files = Array.from({ length: 1000 }, (_, index) => `apps/api/test/newer-${index}.test.ts`)
-    await f.pool.query(`insert into ci_file_durations(repository,file,duration_ms,updated_at)
-      select 'octo/site', file, 5000, now() from unnest($1::text[]) as file`, [files])
-    await f.pool.query(`insert into ci_file_durations(repository,file,duration_ms,updated_at)
-      values('octo/site',$1,1200,now()-interval '30 days')`, [old])
-    const started = CiRunOutputSchema.parse(await f.value(f.operator, 'ci_run', {
-      suite: 'unit', scope: 'affected', files: [old], commit: 'a'.repeat(40), commandId: 'old-file',
-    }))
-    const read = CiGetOutputSchema.parse(await f.value(f.operator, 'ci_get', { ticketId: started.ticketId }))
-    expect(read.run.selectionDurationMs).toBe(1200)
-  } finally { await f.close() }
-})

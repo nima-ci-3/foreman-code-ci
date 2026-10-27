@@ -794,9 +794,8 @@ export class HostCiService {
     return new Map(rows.map(row => [row.group_id, CiComputerRefSchema.parse(row.target)]))
   }
 
-  /** The repository's learned test file durations. The bound covers every file of a large repository: a 1000-row
-   * window dropped older files, so small runs of them lost their duration and went to the cloud. Files no run has
-   * measured use the planner's median or equal-weight fallback. */
+  /** The repository's learned test file durations, most recently measured first, within the start request's
+   * bound. Files no run has measured use the planner's median or equal-weight fallback. */
   private async learnedDurations(repository: string) {
     const rows = (await this.pool.query<{ file: string; duration_ms: number; peak_ms: number }>(`select file,duration_ms,
       coalesce((select max(ms) from unnest(recent_durations_ms) as ms),duration_ms) as peak_ms

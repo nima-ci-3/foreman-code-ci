@@ -296,8 +296,6 @@ export const CiRunRecordSchema = z.object({
   scope: CiScopeSchema.default('full'), files: CiSelectedFilesSchema.default([]),
   selection: CiSelectionSchema.optional(),
   priority: CiPrioritySchema.default('normal'), priorityReason: CiPriorityReasonSchema.default('normal'),
-  /** Why the dispatcher chose a build computer or the cloud for this ticket. */
-  placementReason: z.string().max(500).optional(),
   gate: z.boolean().optional(), integrationShards: z.number().int().min(1).max(64).optional(),
   /** An omitted caller selection is computed on the runner; an explicit empty list is already complete. */
   deriveFiles: z.boolean().optional(), defaultBranch: WorkspaceRepositorySchema.shape.defaultBranch.optional(),

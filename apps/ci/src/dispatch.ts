@@ -1,7 +1,6 @@
 import type pg from 'pg'
 import { isDeepStrictEqual } from 'node:util'
 import { CiRunRecordSchema, type CiHostRequest, type CiRunRecord } from '@foreman-code/contracts'
-import { ciPlacementReason } from './computerCapabilities.js'
 import type { HostCiComputer } from './service.js'
 import type { CiContext, SqlQuery } from './environment.js'
 import { errorMessage } from '@foreman-code/contracts-node/server-kit'
@@ -27,7 +26,6 @@ export async function claimCiDispatch(pool: SqlQuery, run: CiRunRecord, computer
     computer: { hostRef: computer.hostRef, label: computer.label }, dispatchRequest: request,
     dispatchAttempts: computer.hostRef.kind === 'cloud' ? 0 : (run.dispatchAttempts ?? 0) + 1,
     dispatchedAt: new Date().toISOString(),
-    placementReason: ciPlacementReason(run, computer),
     ...(computer.hostRef.kind !== 'cloud' ? { dispatchHostKey: computer.key } : {}) })
   const saved = await pool.query(`update ci_runs set state=$2, host_key=$3, record=$4::jsonb
     where id=$1 and state='queued' and host_key is null and record=$5::jsonb`,
